@@ -1,6 +1,6 @@
 # 辅助评标专家系统 —— 端到端架构设计
 
-> 版本：v4.0
+> 版本：v5.0
 > 设计日期：2026-02-20
 > 更新日期：2026-02-20
 > 状态：已批准
@@ -21,6 +21,7 @@
 | **LangGraph** | 40k+ | Agent 工作流编排 | **直接使用** - Evaluator-Optimizer、interrupt |
 
 详细研究报告见：
+- `docs/research/2026-02-20-architecture-pattern-research.md` ⭐ 架构模式选型
 - `docs/research/2026-02-20-end-to-end-design-research.md` ⭐ 端到端设计研究
 - `docs/research/2026-02-20-lightrag-research.md`
 - `docs/research/2026-02-20-agentic-procure-audit-ai-research.md`
@@ -29,10 +30,18 @@
 
 ---
 
-## 〇.1 v4.0 更新要点
+## 〇.1 v5.0 更新要点
 
-基于端到端设计研究，本版本主要优化：
+基于架构模式选型研究，本版本主要更新：
 
+| 更新项 | 说明 |
+|--------|------|
+| **架构模式** | 从分层单体升级为**模块化单体** |
+| **模块划分** | 按领域划分：evaluation/documents/retrieval/compliance/workflow |
+| **四层架构** | Domain → Application → Infrastructure → API |
+| **事件驱动** | 模块间通过内存事件总线通信 |
+
+v4.0 要点保留：
 | 优化项 | 说明 |
 |--------|------|
 | **三路检索协作** | Vector + SQL + Graph 三路检索架构 |
@@ -88,9 +97,10 @@
 
 ## 二、系统整体架构
 
-### 2.1 架构选型：分层单体架构（三路检索协作）
+### 2.1 架构选型：模块化单体架构（三路检索协作）
 
-> **设计来源**: 2026 企业级 RAG 最佳实践
+> **设计来源**: 2026 企业级 RAG 最佳实践 + DDD 领域驱动设计
+> **详细研究**: `docs/research/2026-02-20-architecture-pattern-research.md`
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -178,15 +188,65 @@
 - **Human-in-the-Loop**: interrupt 机制实现人工审核介入
 - **DSPy + LangGraph**: 黄金组合，准确率 ↑40%，成本 ↓35%
 
-### 2.2 选型理由
+### 2.2 选型理由：为什么选择模块化单体
 
-| 维度 | 分层单体 | 微服务 | 模块化单体 |
-|------|----------|--------|-----------|
+| 维度 | 分层单体 | 微服务 | 模块化单体 ⭐ |
+|------|----------|--------|---------------|
 | **复杂度** | ✅ 低 | ❌ 高 | ⚠️ 中 |
 | **开发速度** | ✅ 快 | ❌ 慢 | ⚠️ 中 |
-| **MVP适配** | ✅ 高 | ❌ 低 | ⚠️ 中 |
+| **MVP适配** | ✅ 高 | ❌ 低 | ✅ 高 |
 | **运维成本** | ✅ 低 | ❌ 高 | ✅ 低 |
 | **可演进性** | ⚠️ 中 | ✅ 高 | ✅ 高 |
+| **模块边界** | ❌ 模糊 | ✅ 清晰 | ✅ 清晰（DDD） |
+| **独立测试** | ❌ 难 | ✅ 易 | ✅ 易 |
+| **团队分工** | ⚠️ 共享 | ✅ 独立 | ✅ 模块所有权 |
+
+**选择模块化单体的核心原因：**
+1. **业务复杂度高**：评标系统包含多个限界上下文（评标、文档、检索、合规）
+2. **清晰的模块边界**：便于团队分工和独立测试
+3. **单一部署单元**：运维简单，避免分布式复杂性
+4. **可演进到微服务**：需要时可按模块拆分
+
+### 2.3 模块划分（按领域）
+
+```
+src/modules/
+├── evaluation/           # 评标核心模块
+│   └── 职责：评分计算、报告生成、人工审核流程
+├── documents/            # 文档管理模块
+│   └── 职责：上传、解析、分块、存储
+├── retrieval/            # RAG 检索模块
+│   └── 职责：向量检索、图谱查询、重排序
+├── compliance/           # 合规审查模块
+│   └── 职责：资质校验、合规检测、风险预警
+├── workflow/             # 工作流编排模块
+│   └── 职责：LangGraph 编排、状态管理
+└── users/                # 用户管理模块
+    └── 职责：认证、授权、审计日志
+```
+
+### 2.4 模块内部结构（四层架构）
+
+每个模块遵循四层架构：
+
+```
+src/modules/evaluation/
+├── domain/                  # 领域层（纯 Python，无框架依赖）
+│   ├── entities.py          # 实体：BidEvaluation, Score, Report
+│   ├── value_objects.py     # 值对象：Confidence, Criterion, Evidence
+│   └── events.py            # 领域事件：ScoreCalculated, ReviewRequested
+├── application/             # 应用层（编排）
+│   ├── services.py          # 应用服务
+│   ├── commands.py          # 命令：CalculateScoreCommand
+│   └── queries.py           # 查询：GetEvaluationQuery
+├── infrastructure/          # 基础设施层（外部依赖）
+│   ├── repositories.py      # 仓储实现
+│   ├── adapters.py          # 外部服务适配器（LangGraph, DSPy）
+│   └── models.py            # ORM 模型
+└── api/                     # 接口层
+    ├── router.py            # FastAPI 路由
+    └── schemas.py           # Pydantic 模型
+```
 
 ---
 
