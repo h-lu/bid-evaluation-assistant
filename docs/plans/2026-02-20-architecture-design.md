@@ -1,8 +1,24 @@
 # 辅助评标专家系统 —— 端到端架构设计
 
-> 版本：v1.0
+> 版本：v2.0
 > 设计日期：2026-02-20
+> 更新日期：2026-02-20
 > 状态：已批准
+
+---
+
+## 〇、研究来源说明
+
+本设计参考了以下 GitHub 项目的深入研究：
+
+| 项目 | 研究重点 | 借鉴内容 |
+|------|----------|----------|
+| **Agentic-Procure-Audit-AI** | Agent架构、评分算法 | RGSG工作流、TypedDict状态管理、评分可解释性 |
+| **RAGFlow** | 文档解析、RAG架构 | 解析器注册表、位置追踪、混合检索、上下文附加 |
+
+详细研究报告见：
+- `docs/research/2026-02-20-agentic-procure-audit-ai-research.md`
+- `docs/research/2026-02-20-ragflow-research.md`
 
 ---
 
@@ -104,46 +120,67 @@
 
 ## 三、核心模块设计
 
-### 3.1 文档解析模块
+### 3.1 文档解析模块（解析器注册表模式）
+
+> **设计来源**: RAGFlow 解析器架构
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    文档解析模块                              │
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
-│   PDF/图片输入                                               │
+│   PDF/图片/Word输入                                          │
 │        │                                                    │
 │        ▼                                                    │
-│   ┌─────────────┐                                           │
-│   │ 格式检测器  │ ──→ PDF? 图片? Word?                      │
-│   └─────┬───────┘                                           │
-│         │                                                   │
-│   ┌─────┴───────┬───────────────┐                          │
-│   ▼             ▼               ▼                          │
-│ ┌─────┐    ┌─────────┐    ┌─────────┐                      │
-│ │MinerU│    │PaddleOCR│    │python-docx│                    │
-│ │(PDF)│    │(扫描件) │    │ (Word)  │                      │
-│ └──┬──┘    └────┬────┘    └────┬────┘                      │
-│    │            │              │                           │
-│    └────────────┴──────────────┘                           │
-│                 │                                           │
-│                 ▼                                           │
-│         ┌─────────────┐                                     │
-│         │ Content List│  ← 统一输出格式                     │
-│         │   (JSON)    │                                     │
-│         └──────┬──────┘                                     │
-│                │                                            │
-│                ▼                                            │
-│         ┌─────────────┐                                     │
-│         │  Chunker    │  ← RAG分块器                        │
-│         └──────┬──────┘                                     │
-│                │                                            │
-│                ▼                                            │
-│    ┌────────────────────────┐                              │
-│    │ 文本块 + 表格块 + 图片块 │                              │
-│    └────────────────────────┘                              │
+│   ┌─────────────────────────────────────────────┐          │
+│   │          Parser Registry (解析器注册表)      │          │
+│   │  ┌─────────┐ ┌─────────┐ ┌─────────┐       │          │
+│   │  │ MinerU  │ │PaddleOCR│ │DOCX     │ ...   │          │
+│   │  │(PDF优先)│ │(扫描件) │ │Parser   │       │          │
+│   │  └─────────┘ └─────────┘ └─────────┘       │          │
+│   └─────────────────────────────────────────────┘          │
+│        │                                                    │
+│        ▼                                                    │
+│   ┌─────────────────────────────────────────────┐          │
+│   │          Chunker (分块器)                    │          │
+│   │  ┌────────────────────────────────────────┐ │          │
+│   │  │ naive_merge_with_images()              │ │          │
+│   │  │ - 保留表格上下文 (table_context_size)   │ │          │
+│   │  │ - 保留图片上下文 (image_context_size)   │ │          │
+│   │  │ - 位置追踪 (add_positions)             │ │          │
+│   │  └────────────────────────────────────────┘ │          │
+│   └─────────────────────────────────────────────┘          │
+│        │                                                    │
+│        ▼                                                    │
+│   ┌─────────────────────────────────────────────┐          │
+│   │  Chunk 输出结构                              │          │
+│   │  {                                          │          │
+│   │    "content": "文本内容...",                │          │
+│   │    "positions": [(page, start, end), ...],  │ ← 溯源引用│
+│   │    "metadata": {...},                       │          │
+│   │    "table_context": "...",  // 可选         │          │
+│   │    "image_context": "..."   // 可选         │          │
+│   │  }                                          │          │
+│   └─────────────────────────────────────────────┘          │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
+```
+
+**解析器注册表模式（策略模式 + 配置驱动）:**
+
+```python
+# 设计模式：开闭原则 - 新增解析器只需注册，无需修改现有代码
+PARSERS = {
+    "mineru": by_mineru,        # MinerU PDF解析（优先）
+    "paddleocr": by_paddleocr,  # 扫描件OCR
+    "docx": by_docx,            # Word文档
+    "plaintext": by_plaintext,  # 纯文本（默认回退）
+}
+
+def chunk(filename: str, parser_id: str = "mineru", **kwargs):
+    """主入口：根据配置选择解析器"""
+    parser_func = PARSERS.get(parser_id, by_plaintext)
+    return parser_func(filename, **kwargs)
 ```
 
 **分块策略（2026最佳实践）：**
@@ -155,7 +192,9 @@
 | 招标文件 | 按章节递归切分 | 500 tokens | 保留层级 |
 | 法规条文 | 按条款切分 | 300 tokens | 独立引用 |
 
-### 3.2 RAG检索模块
+### 3.2 RAG检索模块（混合检索 + 位置追踪）
+
+> **设计来源**: RAGFlow 混合检索、Agentic-Procure-Audit-AI 检索策略
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -169,36 +208,55 @@
 │   │ 查询理解    │ ──→ 意图识别 / 实体抽取                    │
 │   └─────┬───────┘                                           │
 │         │                                                   │
-│   ┌─────┴───────┐                                          │
-│   ▼             ▼                                           │
-│ ┌─────┐    ┌─────────┐                                     │
-│ │向量  │    │  BM25   │                                     │
-│ │检索  │    │ 检索    │                                     │
-│ │(BGE)│    │(精确)   │                                     │
-│ └──┬──┘    └────┬────┘                                     │
-│    │            │                                           │
-│    └─────┬──────┘                                           │
-│          ▼                                                  │
-│   ┌─────────────┐                                           │
-│   │  RRF融合    │  ← α=0.3稀疏/稠密平衡                     │
-│   └──────┬──────┘                                           │
-│          │                                                  │
-│          ▼                                                  │
-│   ┌─────────────┐                                           │
-│   │  Reranker   │  ← BGE-Reranker-v2-m3                     │
-│   └──────┬──────┘                                           │
-│          │                                                  │
-│          ▼                                                  │
-│   Top-K 相关文档                                            │
+│   ┌─────┴───────────────────┐                              │
+│   ▼                         ▼                              │
+│ ┌─────────────┐       ┌─────────────┐                      │
+│ │  向量检索   │       │  BM25检索   │                      │
+│ │  (BGE-M3)   │       │  (精确匹配)  │                      │
+│ │  稠密向量   │       │  稀疏向量   │                      │
+│ └──────┬──────┘       └──────┬──────┘                      │
+│        │                      │                            │
+│        └──────────┬───────────┘                            │
+│                   ▼                                        │
+│   ┌───────────────────────────────────────┐                │
+│   │        RRF融合 (Reciprocal Rank)       │                │
+│   │  score = Σ 1/(k + rank_i), k=60       │                │
+│   │  α=0.3 稀疏/稠密平衡                   │                │
+│   └───────────────────┬───────────────────┘                │
+│                       ▼                                    │
+│   ┌───────────────────────────────────────┐                │
+│   │        Reranker (BGE-Reranker-v2)      │                │
+│   │        重排序 Top-50 → Top-10          │                │
+│   └───────────────────┬───────────────────┘                │
+│                       ▼                                    │
+│   ┌───────────────────────────────────────┐                │
+│   │  检索结果 + 位置信息（溯源引用）        │                │
+│   │  [{                                    │                │
+│   │    "content": "...",                  │                │
+│   │    "score": 0.92,                     │                │
+│   │    "positions": [(page, start, end)], │ ← 定位原文     │
+│   │    "doc_id": "bid_001",               │                │
+│   │    "metadata": {...}                  │                │
+│   │  }]                                   │                │
+│   └───────────────────────────────────────┘                │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### 3.3 多Agent模块（LangGraph状态机）
+**混合检索优势：**
+- **向量检索**: 语义相似，处理同义词、改写
+- **BM25检索**: 精确匹配，专业术语、型号、编号
+- **RRF融合**: 结合两者优势，提升召回率
+
+### 3.3 多Agent模块（RGSG工作流 + LangGraph状态机）
+
+> **设计来源**: Agentic-Procure-Audit-AI 的 RGSG 模式
+
+**RGSG = Retrieve - Grade - Search - Generate（自适应检索循环）**
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│              LangGraph 状态机工作流                             │
+│              LangGraph 状态机工作流 (RGSG 模式)                  │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │   StateGraph<BidEvaluationState>                               │
@@ -207,49 +265,92 @@
 │   │ START   │                                                   │
 │   └────┬────┘                                                   │
 │        ▼                                                        │
-│   ┌─────────────┐                                               │
-│   │  解析文档   │  document_parser_node                         │
-│   └──────┬──────┘                                               │
-│          ▼                                                      │
-│   ┌─────────────┐                                               │
-│   │ 合规审查    │  compliance_agent_node                        │
-│   └──────┬──────┘                                               │
+│   ┌─────────────────┐                                           │
+│   │  Retrieve 节点   │  ← 向量检索 + BM25                        │
+│   │  retrieve_node  │                                           │
+│   └────────┬────────┘                                           │
+│            │                                                    │
+│            ▼                                                    │
+│   ┌─────────────────┐                                           │
+│   │   Grade 节点     │  ← LLM评估检索结果相关性                  │
+│   │   grade_node    │                                           │
+│   └────────┬────────┘                                           │
+│            │                                                    │
+│      ┌─────┴─────┐                                              │
+│      ▼           ▼                                              │
+│   sufficient   needs_search                                     │
+│      │           │                                              │
+│      │           ▼                                              │
+│      │    ┌─────────────────┐                                   │
+│      │    │  Search 节点     │  ← 网络搜索/补充检索              │
+│      │    │  web_search     │                                   │
+│      │    └────────┬────────┘                                   │
+│      │             │                                            │
+│      │             │ (iteration++, 最多3次)                     │
+│      │             └──────────────┐                             │
+│      │                            │                             │
+│      ▼                            ▼                             │
+│   ┌─────────────────────────────────┐                          │
+│   │        Generate 节点             │  ← 生成最终评估           │
+│   │        generate_node            │                          │
+│   └────────────────┬────────────────┘                          │
+│                    │                                            │
+│                    ▼                                            │
+│   ┌─────────────────────────────────┐                          │
+│   │       异常检测 + 人工审核决策     │                          │
+│   └────────────────┬────────────────┘                          │
+│                    │                                            │
+│              ┌─────┴─────┐                                      │
+│            正常        异常                                     │
+│              │           │                                      │
+│              ▼           ▼                                      │
+│   ┌─────────────┐  ┌─────────────┐                             │
+│   │  生成报告   │  │ 人工审核队列 │                             │
+│   └──────┬──────┘  └─────────────┘                             │
 │          │                                                      │
-│    ┌─────┴─────┐                                                │
-│    ▼           ▼                                                │
-│  通过        不通过 → 报告                                       │
-│    │                                                            │
-│    ▼                                                            │
-│   ┌─────────────┐                                               │
-│   │ 并行评审    │  technical + commercial                       │
-│   └──────┬──────┘                                               │
-│          │                                                      │
-│          ▼                                                      │
-│   ┌─────────────┐                                               │
-│   │Self-Reflect │  ← 置信度检查                                 │
-│   └──────┬──────┘                                               │
-│          │                                                      │
-│    ┌─────┴─────┐                                                │
-│  ≥0.75       <0.75 → 补充检索                                   │
-│    │                                                            │
-│    ▼                                                            │
-│   ┌─────────────┐                                               │
-│   │ 异常检测    │  anomaly_detection_node                       │
-│   └──────┬──────┘                                               │
-│          │                                                      │
-│    ┌─────┴─────┐                                                │
-│  正常        异常 → 人工审核                                     │
-│    │                                                            │
-│    ▼                                                            │
-│   ┌─────────────┐                                               │
-│   │ 生成报告    │  report_generator_node                        │
-│   └──────┬──────┘                                               │
 │          ▼                                                      │
 │   ┌─────────┐                                                   │
 │   │   END   │                                                   │
 │   └─────────┘                                                   │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
+```
+
+**TypedDict 状态设计（支持字段累积）:**
+
+```python
+from typing import Annotated, TypedDict
+
+def add_lists(left: list, right: list) -> list:
+    """列表累积函数"""
+    return left + right
+
+class BidEvaluationState(TypedDict, total=False):
+    # 输入
+    tender_id: str
+    bid_documents: list[dict]
+
+    # RGSG 检索结果
+    retrieved_chunks: list[dict]
+    web_search_results: list[dict]
+
+    # 累积字段（自动追加）- 使用 Annotated[list, add_lists]
+    reasoning_steps: Annotated[list[str], add_lists]   # 推理步骤追踪
+    search_queries: Annotated[list[str], add_lists]    # 搜索历史
+    citations: Annotated[list[dict], add_lists]        # 引用来源
+
+    # RGSG 决策字段
+    grade_decision: str        # "sufficient" | "needs_search"
+    relevance_score: float     # 0.0-1.0
+    iteration: int             # 当前迭代次数
+
+    # 评分（含可解释性）
+    technical_score: ScoreWithReasoning
+    total_score: ScoreWithReasoning
+
+    # 控制
+    max_iterations: int
+    errors: Annotated[list[str], add_lists]
 ```
 
 **Agent职责分工：**
@@ -261,6 +362,83 @@
 | Technical | 技术评审 | Qwen-Max | 深度分析 |
 | Commercial | 商务评审 | Qwen-Turbo | 计算型 |
 | Reviewer | 终审评估 | DeepSeek | 综合推理 |
+
+### 3.4 评分可解释性设计
+
+> **设计来源**: Agentic-Procure-Audit-AI 评分算法
+
+**核心原则**: 每个评分必须包含 **score + reasoning + evidence** 三元组，确保AI决策透明可审计。
+
+```python
+class ScoreWithReasoning(TypedDict):
+    """评分结果（含可解释性）"""
+    score: float              # 分数 0-100
+    reasoning: str            # 评分理由（为什么给这个分）
+    evidence: list[str]       # 证据来源（标书原文引用）
+    confidence: float         # 置信度 0-1
+```
+
+**多维度评分框架（四维评分）：**
+
+| 维度 | 权重 | 评估内容 | 评分依据 |
+|------|------|----------|----------|
+| **技术能力** | 35% | 技术方案、产品参数、创新性 | 技术参数表、产品注册证 |
+| **商务条件** | 25% | 价格、付款条款、交货期 | 报价单、商务条款 |
+| **资质信誉** | 25% | 企业资质、业绩、认证 | 营业执照、资质证书、业绩证明 |
+| **风险因素** | 15% | 供应链风险、合规风险 | 信用报告、历史表现 |
+
+**LLM 驱动的评分实现：**
+
+```python
+async def grade_supplier(
+    supplier_name: str,
+    bid_data: dict,
+    web_research: list[dict] = None
+) -> ScoreWithReasoning:
+    """
+    LLM 驱动的供应商评分（带可解释性）
+    """
+    prompt = f"""
+    作为医疗器械评标专家，请对以下供应商进行评分。
+
+    供应商: {supplier_name}
+    投标数据: {json.dumps(bid_data, ensure_ascii=False)}
+    补充信息: {json.dumps(web_research, ensure_ascii=False)}
+
+    请输出 JSON 格式：
+    {{
+        "technical_score": <0-100>,
+        "technical_reasoning": "<评分理由，详细说明为什么给这个分数>",
+        "technical_evidence": ["<证据1：标书第X页>", "<证据2：...>"],
+
+        "commercial_score": <0-100>,
+        "commercial_reasoning": "<评分理由>",
+        "commercial_evidence": ["<证据列表>"],
+
+        "qualification_score": <0-100>,
+        "qualification_reasoning": "<评分理由>",
+        "qualification_evidence": ["<证据列表>"],
+
+        "risk_score": <0-100>,
+        "risk_reasoning": "<评分理由>",
+        "risk_evidence": ["<证据列表>"],
+
+        "overall_assessment": "<综合评价>",
+        "recommendation": "<APPROVED / REVIEW / REJECTED>"
+    }}
+    """
+
+    result = await llm.ainvoke(prompt)
+    return parse_score_result(result)
+```
+
+**推荐决策逻辑：**
+
+| 总分区间 | 推荐结果 | 说明 |
+|----------|----------|------|
+| ≥ 70 | APPROVED | 推荐中标 |
+| 50-69 | REVIEW | 需要进一步审查 |
+| < 50 | REJECTED | 不推荐 |
 
 ---
 
@@ -609,6 +787,103 @@ bid-evaluation-assistant/
 
 ---
 
+## 十、关键设计模式总结
+
+> 本节总结了从 GitHub 研究项目中借鉴的核心设计模式
+
+### 10.1 RGSG 工作流模式
+
+**来源**: Agentic-Procure-Audit-AI
+
+```
+Retrieve → Grade → Search → Generate
+    ↑          │
+    └──────────┘ (迭代最多3次)
+```
+
+| 节点 | 职责 | 输出 |
+|------|------|------|
+| Retrieve | 向量 + BM25 混合检索 | retrieved_chunks |
+| Grade | LLM 评估检索结果相关性 | grade_decision, relevance_score |
+| Search | 本地不足时网络搜索 | web_search_results |
+| Generate | 综合生成最终评估 | final_answer |
+
+**适用场景**: 自适应检索，确保答案有据可依
+
+### 10.2 TypedDict 状态管理
+
+**来源**: Agentic-Procure-Audit-AI / LangGraph 最佳实践
+
+```python
+# 关键：使用 Annotated[list, add] 实现字段累积
+class State(TypedDict):
+    # 普通字段 - 直接覆盖
+    query: str
+
+    # 累积字段 - 自动追加
+    reasoning_steps: Annotated[list[str], add]
+    citations: Annotated[list[dict], add]
+```
+
+**优势**: 跨节点自动累积，无需手动合并
+
+### 10.3 解析器注册表模式
+
+**来源**: RAGFlow
+
+```python
+PARSERS = {
+    "mineru": by_mineru,
+    "paddleocr": by_paddleocr,
+    "docx": by_docx,
+}
+
+def chunk(filename, parser_id="mineru", **kwargs):
+    return PARSERS.get(parser_id, default)(filename, **kwargs)
+```
+
+**优势**: 开闭原则，新增解析器只需注册，无需修改现有代码
+
+### 10.4 位置追踪机制
+
+**来源**: RAGFlow
+
+```python
+@dataclass
+class Chunk:
+    content: str
+    positions: list[tuple[int, int, int]]  # [(page, start, end)]
+```
+
+**应用**: 评标报告引用标书原文时可定位到具体页码和位置
+
+### 10.5 评分可解释性
+
+**来源**: Agentic-Procure-Audit-AI
+
+```python
+class ScoreWithReasoning(TypedDict):
+    score: float          # 分数
+    reasoning: str        # 评分理由
+    evidence: list[str]   # 证据来源
+    confidence: float     # 置信度
+```
+
+**原则**: 每个评分必须可追溯、可解释、可审计
+
+### 10.6 混合检索 + RRF 融合
+
+**来源**: RAGFlow / 2026 最佳实践
+
+```
+向量检索 ──┬──→ RRF融合 ──→ Reranker ──→ Top-K
+BM25检索 ──┘
+```
+
+**RRF 公式**: `score = Σ 1/(k + rank_i)`, k=60
+
+---
+
 ## 十、附录
 
 ### 10.1 核心依赖
@@ -640,13 +915,23 @@ dependencies = [
 
 ### 10.2 参考资料
 
+**开源项目（直接使用）：**
 - MinerU: https://github.com/opendatalab/MinerU
+- PaddleOCR: https://github.com/PaddlePaddle/PaddleOCR
+- ChromaDB: https://github.com/chroma-core/chroma
 - LangGraph: https://github.com/langchain-ai/langgraph
 - RAGAS: https://github.com/explodinggradients/ragas
 - DeepEval: https://github.com/confident-ai/deepeval
 - Langfuse: https://github.com/langfuse/langfuse
 
+**研究项目（借鉴设计）：**
+- Agentic-Procure-Audit-AI: https://github.com/MrAliHasan/Agentic-Procure-Audit-AI
+  - 借鉴：RGSG工作流、TypedDict状态管理、评分可解释性、四维评分框架
+- RAGFlow: https://github.com/infiniflow/ragflow
+  - 借鉴：解析器注册表模式、位置追踪机制、混合检索、上下文附加
+
 ---
 
-*设计文档版本：v1.0*
+*设计文档版本：v2.0*
 *最后更新：2026-02-20*
+*更新内容：融入 GitHub 项目研究发现的关键设计模式*
