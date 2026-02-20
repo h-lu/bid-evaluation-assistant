@@ -1,6 +1,6 @@
 # 辅助评标专家系统 —— 端到端架构设计
 
-> 版本：v5.1
+> 版本：v5.2
 > 设计日期：2026-02-20
 > 更新日期：2026-02-20
 > 状态：已批准
@@ -10,6 +10,8 @@
 ## 〇、研究来源说明
 
 本设计参考了以下 GitHub 项目的深入研究：
+
+### 〇.0 核心技术来源
 
 | 项目 | Star | 可信度 | 研究重点 | 借鉴/使用方式 |
 |------|------|--------|----------|---------------|
@@ -24,6 +26,19 @@
 
 > ⚠️ **重要**: Yuxi-Know 虽然技术栈与我们相似，但 Star 数仅约 10+，社区验证不足，需谨慎参考其设计。详见 `docs/research/2026-02-20-yuxi-know-vs-rag-anything-analysis.md`
 
+### 〇.0.1 v5.2 新增研究来源（2026-02-20）
+
+> **来源文档**: `docs/research/2026-02-20-agentic-procure-audit-ai-analysis.md`
+
+| 项目 | Star | 可信度 | 借鉴内容 | 本文档应用章节 |
+|------|------|--------|----------|----------------|
+| **yibiao-simple** | 中 | ⭐⭐⭐⭐ | 招标文件解析、目录生成 | 3.1 文档解析模块 |
+| **ProposalLLM** | 低 | ⭐⭐⭐ | 点对点应答格式、需求对应表 | **3.4.1 评标报告格式** ⭐新增 |
+| **kotaemon** | 高 | ⭐⭐⭐⭐⭐ | LightRAG集成、高级溯源引用 | **3.5 溯源引用展示** ⭐新增 |
+| **RAGFlow** | 非常高 | ⭐⭐⭐⭐⭐ | MinerU集成、模板化分块 | 3.1 文档解析模块 |
+| **RAGAS** | 高 | ⭐⭐⭐⭐⭐ | RAG评估框架 | 6.2 评估指标 |
+| **RAGChecker** | 高 | ⭐⭐⭐⭐⭐ | 三层诊断、幻觉检测 | **6.2.1 细粒度诊断** ⭐新增 |
+
 详细研究报告见：
 - `docs/research/2026-02-20-architecture-pattern-research.md` ⭐ 架构模式选型
 - `docs/research/2026-02-20-end-to-end-design-research.md` ⭐ 端到端设计研究
@@ -37,7 +52,22 @@
 
 ---
 
-## 〇.1 v5.1 更新要点
+## 〇.1 版本更新要点
+
+### v5.2 更新要点（2026-02-20）
+
+> **来源文档**: `docs/research/2026-02-20-agentic-procure-audit-ai-analysis.md`
+
+基于 6 个新 GitHub 项目研究，本版本新增：
+
+| 更新项 | 来源项目 | 说明 |
+|--------|----------|------|
+| **点对点应答格式** | ProposalLLM | 评标报告核心输出格式：要求 vs 响应对照表 → 详见 **3.4.1** |
+| **高级溯源引用展示** | kotaemon | PDF 查看器 + bbox 高亮实现方案 → 详见 **3.5** |
+| **RAGChecker 三层诊断** | Amazon RAGChecker | 细粒度评估：Overall/Retriever/Generator → 详见 **6.2.1** |
+| **研究来源表扩展** | 6个新项目 | 明确标注来源，便于后续验证 → 详见 **〇.0.1** |
+
+### v5.1 更新要点
 
 基于 Yuxi-Know 与 RAG-Anything 对比研究，本版本更新：
 
@@ -890,6 +920,315 @@ async def grade_supplier(
 | 50-69 | REVIEW | 需要进一步审查 |
 | < 50 | REJECTED | 不推荐 |
 
+### 3.4.1 评标报告输出格式（点对点应答）⭐ v5.2 新增
+
+> **来源**: ProposalLLM - `docs/research/2026-02-20-agentic-procure-audit-ai-analysis.md` 第 3.2 节
+> **借鉴价值**: ⭐⭐⭐⭐⭐ 评标报告核心格式，每个评分项必须有"要求 vs 响应"对照
+
+**核心原则**: 评标报告采用**点对点应答格式**，每项评分必须有：
+1. 招标要求（来自招标文件）
+2. 投标响应（来自投标文件）
+3. 符合度判定（完全符合/部分符合/不符合）
+4. 评分 + 评分理由
+
+**报告格式定义：**
+
+```python
+# 来源: ProposalLLM 点对点应答模式
+from typing import List, Literal
+from pydantic import BaseModel
+
+class PointToPointItem(BaseModel):
+    """点对点应答项"""
+    criterion_id: str                    # 评分项ID
+    criterion_name: str                  # 评分项名称
+    requirement: str                     # 招标要求（原文）
+    requirement_source: str              # 来源：招标文件第X页
+    response: str                        # 投标响应（原文）
+    response_source: str                 # 来源：投标文件第X页
+    compliance_status: Literal["full", "partial", "none"]  # 符合度
+    score: float                         # 得分
+    max_score: float                     # 满分
+    reasoning: str                       # 评分理由
+    evidence: List[str]                  # 证据列表
+
+class BidEvaluationReport(BaseModel):
+    """评标报告（点对点应答格式）"""
+    tender_id: str
+    supplier_name: str
+    evaluation_date: str
+
+    # 资格审查
+    qualification_items: List[PointToPointItem]
+    qualification_score: float
+    qualification_passed: bool
+
+    # 符合性审查
+    compliance_items: List[PointToPointItem]
+    compliance_score: float
+    compliance_passed: bool
+
+    # 技术评分
+    technical_items: List[PointToPointItem]
+    technical_score: float
+    technical_max: float
+
+    # 商务评分
+    commercial_items: List[PointToPointItem]
+    commercial_score: float
+    commercial_max: float
+
+    # 综合结论
+    total_score: float
+    recommendation: str
+    key_findings: List[str]
+    risk_alerts: List[str]
+```
+
+**报告展示示例：**
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                           评标报告（点对点应答格式）                                   │
+│                    来源: ProposalLLM 点对点应答模式                                  │
+├─────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                     │
+│  一、资格审查                                                                       │
+│  ┌────┬──────────────┬────────────────┬────────────────┬────────┬───────┬────────┐ │
+│  │序号│  评审项       │   招标要求      │   投标响应      │ 符合度 │ 得分  │ 理由   │ │
+│  ├────┼──────────────┼────────────────┼────────────────┼────────┼───────┼────────┤ │
+│  │ 1  │ 注册资本      │ ≥1000万元      │ 5000万元        │ ✓完全 │ 10/10 │ 超出要求│ │
+│  │    │              │[招标文件P5]    │[投标文件P12]    │        │       │        │ │
+│  ├────┼──────────────┼────────────────┼────────────────┼────────┼───────┼────────┤ │
+│  │ 2  │ 营业执照      │ 有效期内        │ 有效至2030年    │ ✓完全 │ 10/10 │ 符合   │ │
+│  │    │              │[招标文件P5]    │[投标文件P10]    │        │       │        │ │
+│  ├────┼──────────────┼────────────────┼────────────────┼────────┼───────┼────────┤ │
+│  │ 3  │ ISO9001认证   │ 有效期内        │ 有效至2027年    │ ✓完全 │ 10/10 │ 符合   │ │
+│  │    │              │[招标文件P6]    │[投标文件P25]    │        │       │        │ │
+│  └────┴──────────────┴────────────────┴────────────────┴────────┴───────┴────────┘ │
+│                                                                                     │
+│  二、技术评分                                                                       │
+│  ┌────┬──────────────┬────────────────┬────────────────┬────────┬───────┬────────┐ │
+│  │ 1  │ 产品精度      │ ≤0.01mm        │ 0.005mm        │ ✓完全 │ 15/15 │ 优于要求│ │
+│  │    │              │[技术规范P8]    │[技术方案P5]     │        │       │        │ │
+│  ├────┼──────────────┼────────────────┼────────────────┼────────┼───────┼────────┤ │
+│  │ 2  │ 售后服务      │ 24小时响应     │ 12小时响应      │ ✓完全 │ 10/10 │ 优于要求│ │
+│  │    │              │[招标文件P15]   │[服务方案P2]     │        │       │        │ │
+│  └────┴──────────────┴────────────────┴────────────────┴────────┴───────┴────────┘ │
+│                                                                                     │
+│  三、综合结论                                                                       │
+│  ┌─────────────────────────────────────────────────────────────────────────────────┐│
+│  │ 总分: 92/100                                                                    ││
+│  │ 推荐结果: ✓ APPROVED                                                            ││
+│  │ 关键发现:                                                                        ││
+│  │   • 技术参数全面优于招标要求                                                     ││
+│  │   • 商务报价具有竞争力                                                           ││
+│  │   • 资质证书齐全有效                                                             ││
+│  └─────────────────────────────────────────────────────────────────────────────────┘│
+│                                                                                     │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**实现要点：**
+
+| 要点 | 说明 |
+|------|------|
+| **要求来源溯源** | 每项招标要求必须标注来源（招标文件第X页） |
+| **响应来源溯源** | 每项投标响应必须标注来源（投标文件第X页） |
+| **符合度判定** | 自动判定 + 人工确认：完全符合/部分符合/不符合 |
+| **评分可解释** | 每项评分必须有评分理由 |
+| **证据链** | 支持点击跳转到原文（配合 3.5 溯源引用展示） |
+
+### 3.5 溯源引用展示（PDF 查看器 + 高亮）⭐ v5.2 新增
+
+> **来源**: kotaemon - `docs/research/2026-02-20-agentic-procure-audit-ai-analysis.md` 第 3.3 节
+> **借鉴价值**: ⭐⭐⭐⭐⭐ 高级溯源引用，浏览器内 PDF 查看器 + 高亮显示
+
+**功能描述**: 用户点击评标报告中的引用链接时，打开 PDF 查看器并高亮显示引用内容。
+
+**前端架构：**
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                         溯源引用展示系统                                             │
+│                    来源: kotaemon 高级溯源引用                                       │
+├─────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                     │
+│   评标报告界面                                                                      │
+│   ┌─────────────────────────────────────────────────────────────────────────────┐  │
+│   │ 评分项: 注册资本                                                            │  │
+│   │ 投标响应: "注册资本5000万元人民币"  [📄 查看原文] ← 点击                     │  │
+│   └─────────────────────────────────────────────────────────────────────────────┘  │
+│                                            │                                        │
+│                                            ▼                                        │
+│   ┌─────────────────────────────────────────────────────────────────────────────┐  │
+│   │                        PDF 查看器 (侧边栏/弹窗)                              │  │
+│   │  ┌─────────────────────────────────────────────────────────────────────┐    │  │
+│   │  │  工具栏: [缩放] [翻页] [下载] [关闭]                                │    │  │
+│   │  └─────────────────────────────────────────────────────────────────────┘    │  │
+│   │  ┌─────────────────────────────────────────────────────────────────────┐    │  │
+│   │  │                                                                       │    │  │
+│   │  │  ... 营业执照 ...                                                    │    │  │
+│   │  │                                                                       │    │  │
+│   │  │  ╔══════════════════════════════════════════════════════════════╗    │    │  │
+│   │  │  ║  注册资本：5000万元人民币                                    ║    │    │  │
+│   │  │  ║  (高亮显示引用内容)                                          ║    │    │  │
+│   │  │  ╚══════════════════════════════════════════════════════════════╝    │    │  │
+│   │  │                                                                       │    │  │
+│   │  │  ... 其他内容 ...                                                    │    │  │
+│   │  │                                                                       │    │  │
+│   │  └─────────────────────────────────────────────────────────────────────┘    │  │
+│   │                                                                               │  │
+│   │  页码: 12 / 50        来源: 投标文件-供应商A.pdf                             │  │
+│   └─────────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                     │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**技术实现：**
+
+```typescript
+// 前端实现 (Vue3)
+// 来源: kotaemon PDF 查看器 + bbox 高亮
+
+interface CitationLink {
+  docId: string;           // 文档ID
+  pageNumber: number;      // 页码
+  bbox: [number, number, number, number];  // [x0, y0, x1, y1] 边界框
+  text: string;            // 引用文本
+}
+
+// PDF 查看器组件
+const PdfViewerWithHighlight = defineComponent({
+  props: {
+    citation: CitationLink,  // 溯源引用信息
+  },
+  setup(props) {
+    const pdfContainer = ref<HTMLElement>();
+
+    onMounted(async () => {
+      // 1. 加载 PDF (使用 PDF.js)
+      const pdf = await pdfjsLib.getDocument(`/api/documents/${props.citation.docId}`);
+      const page = await pdf.getPage(props.citation.pageNumber);
+
+      // 2. 渲染 PDF 页面
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d');
+      await page.render({ canvasContext: context, viewport }).promise;
+
+      // 3. 添加高亮覆盖层
+      const highlightOverlay = createHighlightOverlay(props.citation.bbox, viewport);
+      pdfContainer.value.appendChild(highlightOverlay);
+
+      // 4. 滚动到高亮位置
+      scrollToHighlight(highlightOverlay);
+    });
+
+    return () => h('div', { ref: pdfContainer, class: 'pdf-viewer' });
+  }
+});
+
+// 高亮覆盖层生成
+function createHighlightOverlay(
+  bbox: [number, number, number, number],
+  viewport: PDFPageViewport
+): HTMLElement {
+  const [x0, y0, x1, y1] = bbox;
+  const overlay = document.createElement('div');
+  overlay.className = 'highlight-overlay';
+  overlay.style.cssText = `
+    position: absolute;
+    left: ${viewport.convertToViewportPoint(x0, y0)[0]}px;
+    top: ${viewport.convertToViewportPoint(x0, y0)[1]}px;
+    width: ${x1 - x0}px;
+    height: ${y1 - y0}px;
+    background: rgba(255, 235, 59, 0.4);  // 黄色半透明
+    border: 2px solid #FFC107;
+    pointer-events: none;
+  `;
+  return overlay;
+}
+```
+
+**后端 API 设计：**
+
+```python
+# 来源: kotaemon 溯源引用 + MinerU bbox 数据
+# 文件: backend/src/api/citations.py
+
+from fastapi import APIRouter
+from typing import Tuple
+
+router = APIRouter(prefix="/api/v1/citations")
+
+class CitationResponse(BaseModel):
+    """溯源引用响应"""
+    doc_id: str
+    filename: str
+    page_number: int
+    bbox: Tuple[float, float, float, float]  # [x0, y0, x1, y1]
+    text: str
+    context: str  # 前后文
+
+@router.get("/{chunk_id}/source")
+async def get_citation_source(chunk_id: str) -> CitationResponse:
+    """
+    获取引用的源文档信息
+
+    数据来源: MinerU content_list.json 中的 bbox 字段
+    """
+    # 从向量数据库获取 chunk 元数据
+    chunk = await vector_store.get(chunk_id)
+
+    # 解析元数据中的位置信息
+    positions = chunk.metadata.get("positions", [])
+    if not positions:
+        raise CitationNotFound(chunk_id)
+
+    # 返回第一个位置（最相关）
+    pos = positions[0]
+    return CitationResponse(
+        doc_id=chunk.metadata["doc_id"],
+        filename=chunk.metadata["filename"],
+        page_number=pos["page"],
+        bbox=pos["bbox"],  # [x0, y0, x1, y1]
+        text=chunk.content,
+        context=get_surrounding_text(chunk)
+    )
+```
+
+**关键依赖：**
+
+| 依赖 | 用途 | 说明 |
+|------|------|------|
+| **PDF.js** | PDF 渲染 | 前端 PDF 查看器核心 |
+| **bbox 数据** | 位置定位 | 来自 MinerU content_list.json |
+| **坐标转换** | PDF 坐标 → 屏幕坐标 | PDF.js viewport.convertToViewportPoint |
+
+**用户体验流程：**
+
+```
+用户点击 [📄 查看原文]
+    │
+    ▼
+前端调用 /api/v1/citations/{chunk_id}/source
+    │
+    ▼
+后端返回 { doc_id, page_number, bbox, text }
+    │
+    ▼
+前端打开 PDF 查看器（侧边栏或弹窗）
+    │
+    ▼
+加载 PDF 并定位到指定页码
+    │
+    ▼
+使用 bbox 绘制高亮覆盖层
+    │
+    ▼
+滚动到高亮位置
+```
+
 ---
 
 ## 四、LLM服务抽象层
@@ -1097,14 +1436,189 @@ workflow:
 | Faithfulness | 生成忠实度 | ≥ 0.90 |
 | Answer Relevancy | 回答相关性 | ≥ 0.85 |
 
-### 6.2 DeepEval评估指标
+### 6.2.1 RAGChecker 细粒度诊断 ⭐ v5.2 新增
+
+> **来源**: Amazon RAGChecker - `docs/research/2026-02-20-agentic-procure-audit-ai-analysis.md` 第 3.6 节
+> **借鉴价值**: ⭐⭐⭐⭐⭐ 三层指标诊断，可精确定位 RAG 系统问题
+
+**核心特点**: 三层指标体系，区分检索层和生成层问题
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                         RAGChecker 三层指标体系                                       │
+│                    来源: Amazon Science RAGChecker                                   │
+├─────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                     │
+│   ┌─────────────────────────────────────────────────────────────────────────────┐  │
+│   │                    Overall Metrics (整体层)                                  │  │
+│   │  • Precision: 73.3% - 答案中正确声明的比例                                  │  │
+│   │  • Recall: 62.5% - 正确声明被覆盖的比例                                     │  │
+│   │  • F1: 67.3% - 综合指标                                                     │  │
+│   └─────────────────────────────────────────────────────────────────────────────┘  │
+│                                    │                                               │
+│                    ┌───────────────┴───────────────┐                              │
+│                    ▼                               ▼                              │
+│   ┌─────────────────────────────┐   ┌─────────────────────────────────────────┐  │
+│   │   Retriever Metrics (检索层) │   │        Generator Metrics (生成层)       │  │
+│   ├─────────────────────────────┤   ├─────────────────────────────────────────┤  │
+│   │ • Claim Recall: 61.4%       │   │ • Context Utilization: 87.5%            │  │
+│   │   检索到的声明覆盖率         │   │   检索上下文的利用率                    │  │
+│   │                             │   │                                         │  │
+│   │ • Context Precision: 87.5%  │   │ • Noise Sensitivity: 22.5%              │  │
+│   │   检索上下文的精确度         │   │   噪声敏感度（越低越好）                │  │
+│   │                             │   │                                         │  │
+│   │                             │   │ • Hallucination: 4.2%                   │  │
+│   │                             │   │   幻觉率（越低越好）⭐                   │  │
+│   │                             │   │                                         │  │
+│   │                             │   │ • Faithfulness: 70.8%                   │  │
+│   │                             │   │   忠实度（基于上下文的程度）            │  │
+│   └─────────────────────────────┘   └─────────────────────────────────────────┘  │
+│                                                                                     │
+│   核心方法: Claim-level Entailment (声明级别蕴含)                                   │
+│   将答案拆解为独立声明，逐一验证是否被上下文支持                                    │
+│                                                                                     │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**诊断流程：**
+
+```python
+# 来源: RAGChecker 官方示例
+# 文件: backend/src/evaluation/ragchecker.py
+
+from ragchecker import RAGResults, RAGChecker
+from typing import Dict, List
+
+class RAGCheckerDiagnosis:
+    """RAGChecker 细粒度诊断服务"""
+
+    def __init__(self, evaluator_model: str = "gpt-4o"):
+        self.checker = RAGChecker(
+            evaluator_model=evaluator_model,
+            batch_size=10
+        )
+
+    async def diagnose(self, test_cases: List[Dict]) -> Dict:
+        """
+        运行细粒度诊断
+
+        返回三层指标和优化建议
+        """
+        # 准备 RAG 结果
+        rag_results = RAGResults.from_dict({
+            "results": test_cases
+        })
+
+        # 运行评估
+        metrics = await self.checker.evaluate(rag_results)
+
+        # 生成诊断报告
+        diagnosis = {
+            "overall_metrics": metrics["overall_metrics"],
+            "retriever_metrics": metrics["retriever_metrics"],
+            "generator_metrics": metrics["generator_metrics"],
+            "recommendations": self._generate_recommendations(metrics)
+        }
+
+        return diagnosis
+
+    def _generate_recommendations(self, metrics: Dict) -> List[str]:
+        """根据指标生成优化建议"""
+        recommendations = []
+
+        # 检索层诊断
+        retriever = metrics["retriever_metrics"]
+        if retriever["claim_recall"] < 0.6:
+            recommendations.append(
+                "⚠️ 检索层: Claim Recall < 60%，建议优化检索策略："
+                "\n  - 增加检索 top-k 数量"
+                "\n  - 优化查询重写"
+                "\n  - 检查 Embedding 质量"
+            )
+
+        if retriever["context_precision"] < 0.8:
+            recommendations.append(
+                "⚠️ 检索层: Context Precision < 80%，建议："
+                "\n  - 优化 Reranker 模型"
+                "\n  - 调整相似度阈值"
+            )
+
+        # 生成层诊断
+        generator = metrics["generator_metrics"]
+        if generator["hallucination"] > 0.1:
+            recommendations.append(
+                "🚨 生成层: Hallucination > 10%，严重问题！建议："
+                "\n  - 强化 Prompt 约束"
+                "\n  - 启用 Grounded Generation"
+                "\n  - 检查 LLM 模型选择"
+            )
+
+        if generator["context_utilization"] < 0.7:
+            recommendations.append(
+                "⚠️ 生成层: Context Utilization < 70%，建议："
+                "\n  - 优化上下文组织"
+                "\n  - 检查上下文长度限制"
+            )
+
+        return recommendations
+```
+
+**与 RAGAS 组合使用策略：**
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                         评估框架组合策略                                             │
+│                    来源: docs/research/2026-02-20-agentic-procure-audit-ai-analysis.md                              │
+├─────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                     │
+│   开发阶段 (RAGAS 快速迭代):                                                        │
+│   ┌─────────────────────────────────────────────────────────────────────────────┐  │
+│   │  • 每次 CI/CD 自动运行                                                       │  │
+│   │  • 基础指标监控: Context Precision, Faithfulness                            │  │
+│   │  • 阈值: ≥ 0.80                                                             │  │
+│   │  • 耗时: ~30s / 100 样本                                                    │  │
+│   └─────────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                     │
+│   问题诊断 (RAGChecker 细粒度):                                                     │
+│   ┌─────────────────────────────────────────────────────────────────────────────┐  │
+│   │  • 当 RAGAS 指标低于阈值时触发                                               │  │
+│   │  • 三层诊断: 精确定位检索层 vs 生成层问题                                    │  │
+│   │  • 输出优化建议                                                             │  │
+│   │  • 耗时: ~2min / 100 样本                                                   │  │
+│   └─────────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                     │
+│   决策流程:                                                                         │
+│                                                                                     │
+│   RAGAS 整体评估 ──→ 通过? ──→ ✅ 继续                                            │
+│         │                                                                           │
+│         └──→ 未通过 ──→ RAGChecker 细粒度诊断                                       │
+│                              │                                                      │
+│                              ├──→ Retriever 问题 ──→ 优化检索策略                   │
+│                              │                                                      │
+│                              └──→ Generator 问题 ──→ 优化生成策略                   │
+│                                                                                     │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**指标阈值参考：**
+
+| 指标层 | 指标名称 | 健康阈值 | 警告阈值 | 危险阈值 |
+|--------|----------|----------|----------|----------|
+| **Overall** | F1 | ≥ 0.70 | 0.60-0.70 | < 0.60 |
+| **Retriever** | Claim Recall | ≥ 0.70 | 0.60-0.70 | < 0.60 |
+| **Retriever** | Context Precision | ≥ 0.80 | 0.70-0.80 | < 0.70 |
+| **Generator** | Hallucination | < 0.05 | 0.05-0.10 | > 0.10 ⚠️ |
+| **Generator** | Faithfulness | ≥ 0.85 | 0.75-0.85 | < 0.75 |
+| **Generator** | Context Utilization | ≥ 0.80 | 0.70-0.80 | < 0.70 |
+
+### 6.3 DeepEval评估指标
 
 | 指标 | 说明 | 阈值 |
 |------|------|------|
 | Hallucination | 幻觉率 | < 0.05 |
 | Tool Call Accuracy | 工具调用准确率 | ≥ 0.90 |
 
-### 6.3 可观测性（Langfuse）
+### 6.4 可观测性（Langfuse）
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -1529,7 +2043,7 @@ dependencies = [
 ### 10.2 参考资料
 
 **直接使用的开源项目：**
-- LightRAG: https://github.com/HKUDS/LightRAG ⭐⭐⭐⭐⭐ (30k+ stars)
+- LightRAG: https://github.com/HKUDs/LightRAG ⭐⭐⭐⭐⭐ (30k+ stars)
   - 使用：双层检索、知识图谱、向量检索融合
 - MinerU: https://github.com/opendatalab/MinerU ⭐⭐⭐⭐⭐ (50k+ stars)
   - 使用：复杂 PDF 解析
@@ -1550,6 +2064,24 @@ dependencies = [
 - RAGFlow: https://github.com/infiniflow/ragflow ⭐⭐⭐⭐⭐ (35k+ stars)
   - 借鉴：解析器注册表模式、位置追踪机制
 
+**v5.2 新增借鉴项目（2026-02-20）：**
+> 来源: `docs/research/2026-02-20-agentic-procure-audit-ai-analysis.md`
+
+- **ProposalLLM**: https://github.com/William-GuoWei/ProposalLLM ⭐⭐⭐
+  - 借鉴：**点对点应答格式** → 详见 3.4.1 评标报告输出格式
+  - 借鉴：需求对应表驱动生成
+- **kotaemon**: https://github.com/Cinnamon/kotaemon ⭐⭐⭐⭐⭐
+  - 借鉴：**高级溯源引用展示** → 详见 3.5 PDF 查看器 + 高亮
+  - 借鉴：LightRAG 集成方式、混合检索策略
+- **RAGChecker**: https://github.com/amazon-science/RAGChecker ⭐⭐⭐⭐⭐ (Amazon Science)
+  - 借鉴：**三层细粒度诊断** → 详见 6.2.1 RAGChecker 诊断
+  - 借鉴：Hallucination 检测、Claim-level 评估
+- **yibiao-simple**: https://github.com/yibiaoai/yibiao-simple ⭐⭐⭐⭐
+  - 借鉴：招标文件解析流程、目录生成策略
+- **RAGAS**: https://github.com/explodinggradients/ragas ⭐⭐⭐⭐⭐
+  - 借鉴：RAG 评估框架、测试数据生成
+  - 注：已在 v5.0 中采用
+
 **谨慎参考的项目：**
 - Yuxi-Know: https://github.com/xerrors/Yuxi-Know ⭐⭐ (~10 stars)
   - 状态：社区验证不足，Beta 阶段
@@ -1559,6 +2091,6 @@ dependencies = [
 
 ---
 
-*设计文档版本：v5.1*
+*设计文档版本：v5.2*
 *最后更新：2026-02-20*
-*更新内容：整合 Yuxi-Know vs RAG-Anything 对比研究，明确技术决策依据*
+*更新内容：新增点对点应答格式(ProposalLLM)、溯源引用展示(kotaemon)、RAGChecker诊断；完善研究来源标注*
