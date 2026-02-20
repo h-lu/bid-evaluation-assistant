@@ -1,6 +1,6 @@
 # 辅助评标专家系统 —— 端到端架构设计
 
-> 版本：v5.0
+> 版本：v5.1
 > 设计日期：2026-02-20
 > 更新日期：2026-02-20
 > 状态：已批准
@@ -11,18 +11,25 @@
 
 本设计参考了以下 GitHub 项目的深入研究：
 
-| 项目 | Star | 研究重点 | 借鉴/使用方式 |
-|------|------|----------|---------------|
-| **LightRAG** | 30k+ | 轻量级知识图谱 RAG | **直接使用** - 双层检索、知识图谱增强 |
-| **Agentic-Procure-Audit-AI** | - | Agent架构、评分算法 | 借鉴设计 - RGSG工作流、评分可解释性 |
-| **RAGFlow** | 35k+ | 文档解析、RAG架构 | 借鉴设计 - 解析器注册表、位置追踪 |
-| **DSPy** | 20k+ | Prompt 优化 | **直接使用** - 评分模型自动优化 |
-| **Docling** | 42k+ | 多格式文档解析 | **直接使用** - Word/Excel 解析 |
-| **LangGraph** | 40k+ | Agent 工作流编排 | **直接使用** - Evaluator-Optimizer、interrupt |
+| 项目 | Star | 可信度 | 研究重点 | 借鉴/使用方式 |
+|------|------|--------|----------|---------------|
+| **LightRAG** | 30k+ | ⭐⭐⭐⭐⭐ | 轻量级知识图谱 RAG | **直接使用** - 双层检索、知识图谱增强 |
+| **RAG-Anything** | 1k+ | ⭐⭐⭐⭐⭐ | 多模态 RAG 框架 | **借鉴设计** - 多模态处理、内容分类 |
+| **Agentic-Procure-Audit-AI** | - | ⭐⭐⭐ | Agent架构、评分算法 | 借鉴设计 - RGSG工作流、评分可解释性 |
+| **RAGFlow** | 35k+ | ⭐⭐⭐⭐⭐ | 文档解析、RAG架构 | 借鉴设计 - 解析器注册表、位置追踪 |
+| **DSPy** | 20k+ | ⭐⭐⭐⭐⭐ | Prompt 优化 | **直接使用** - 评分模型自动优化 |
+| **Docling** | 42k+ | ⭐⭐⭐⭐⭐ | 多格式文档解析 | **直接使用** - Word/Excel 解析 |
+| **LangGraph** | 40k+ | ⭐⭐⭐⭐⭐ | Agent 工作流编排 | **直接使用** - Evaluator-Optimizer、interrupt |
+| **Yuxi-Know** | ~10 | ⭐⭐ | 知识库平台 | **谨慎参考** - 社区验证不足 |
+
+> ⚠️ **重要**: Yuxi-Know 虽然技术栈与我们相似，但 Star 数仅约 10+，社区验证不足，需谨慎参考其设计。详见 `docs/research/2026-02-20-yuxi-know-vs-rag-anything-analysis.md`
 
 详细研究报告见：
 - `docs/research/2026-02-20-architecture-pattern-research.md` ⭐ 架构模式选型
 - `docs/research/2026-02-20-end-to-end-design-research.md` ⭐ 端到端设计研究
+- `docs/research/2026-02-20-yuxi-know-vs-rag-anything-analysis.md` ⭐ **新增** Yuxi-Know vs RAG-Anything 对比分析
+- `docs/research/2026-02-20-mineru-github-projects.md` ⭐ **新增** MinerU 相关项目研究
+- `docs/research/2026-02-20-mineru-output-processing.md` ⭐ **新增** MinerU 输出处理研究
 - `docs/research/2026-02-20-lightrag-research.md`
 - `docs/research/2026-02-20-agentic-procure-audit-ai-research.md`
 - `docs/research/2026-02-20-ragflow-research.md`
@@ -30,25 +37,38 @@
 
 ---
 
-## 〇.1 v5.0 更新要点
+## 〇.1 v5.1 更新要点
 
-基于架构模式选型研究，本版本主要更新：
+基于 Yuxi-Know 与 RAG-Anything 对比研究，本版本更新：
 
 | 更新项 | 说明 |
 |--------|------|
-| **架构模式** | 从分层单体升级为**模块化单体** |
-| **模块划分** | 按领域划分：evaluation/documents/retrieval/compliance/workflow |
-| **四层架构** | Domain → Application → Infrastructure → API |
-| **事件驱动** | 模块间通过内存事件总线通信 |
+| **多模态处理** | 借鉴 RAG-Anything 的图片/表格/公式分类处理模式 |
+| **图谱存储决策** | 使用 LightRAG 内置图谱，**不采用 Neo4j**（避免过度设计） |
+| **向量库决策** | 使用 ChromaDB，**不采用 Milvus**（文档量不大时更轻量） |
+| **Yuxi-Know 评估** | Star 仅 10+，**谨慎参考**，不采用其完整微服务架构 |
+| **MinerU 输出处理** | 使用 content_list.json + 位置信息保留方案 |
 
-v4.0 要点保留：
-| 优化项 | 说明 |
+v5.0 要点保留：
+| 更新项 | 说明 |
 |--------|------|
+| **架构模式** | 模块化单体（按领域划分） |
+| **四层架构** | Domain → Application → Infrastructure → API |
 | **三路检索协作** | Vector + SQL + Graph 三路检索架构 |
 | **Evaluator-Optimizer** | 评分迭代优化模式 |
 | **Human-in-the-Loop** | interrupt 机制实现人工审核 |
 | **分块策略优化** | 512 token + 15-20% overlap 黄金配置 |
-| **评估闭环** | 五步评估监控体系 |
+
+### 〇.2 关键技术决策（基于研究验证）
+
+| 决策项 | 选择 | 不选择 | 理由 |
+|--------|------|--------|------|
+| **图谱存储** | LightRAG 内置 | ~~Neo4j~~ | 评标场景不需要重量级图数据库 |
+| **向量数据库** | ChromaDB | ~~Milvus~~ | 文档量不大，轻量方案更合适 |
+| **工作流编排** | LangGraph | - | 适合评标复杂流程 |
+| **文档解析** | MinerU + Docling | - | 复杂PDF用MinerU，Office用Docling |
+| **架构风格** | 模块化单体 | ~~微服务~~ | 运维简单，可演进 |
+| **Yuxi-Know 设计** | 部分借鉴 | ~~完全采用~~ | 社区验证不足，需谨慎 |
 
 ---
 
@@ -75,23 +95,32 @@ v4.0 要点保留：
 
 ### 1.3 技术选型（2026最佳实践）
 
-| 层级 | 技术选型 | 说明 |
-|------|----------|------|
-| **文档解析** | MinerU 2.5 + Docling + PaddleOCR | PDF/Word/Excel/扫描件全覆盖 |
-| **RAG 框架** | **LightRAG** ⭐ | 双层检索 + 知识图谱增强 |
-| **Embedding** | BGE-M3 | 多模式（稠密+稀疏+ColBERT） |
-| **向量数据库** | ChromaDB（LightRAG 原生支持） | 向量存储 |
-| **知识图谱** | NetworkX（开发）/ Neo4j（生产） | 供应商关系、产品对比 |
-| **Reranker** | BGE-Reranker-v2-m3 | 重排序 |
-| **Agent框架** | LangGraph | 状态机工作流（RGSG模式） |
-| **Prompt优化** | **DSPy** ⭐ | 自动优化评分 Prompt |
-| **LLM** | DeepSeek / Qwen | 按职责分工 |
-| **评估** | RAGAS + DeepEval | RAG评估 |
-| **可观测性** | Langfuse | 私有化部署 |
-| **后端API** | FastAPI + Pydantic v2 | 异步框架 |
-| **前端** | Vue3 + Element Plus + Pinia | 评标界面 |
+| 层级 | 技术选型 | 说明 | 决策依据 |
+|------|----------|------|----------|
+| **文档解析** | MinerU 2.5 + Docling | PDF/Word/Excel全覆盖 | RAG-Anything 模式 |
+| **RAG 框架** | **LightRAG** ⭐ | 双层检索 + 内置知识图谱 | 30k+ stars，学术验证 |
+| **Embedding** | BGE-M3 | 多模式（稠密+稀疏+ColBERT） | 行业标准 |
+| **向量数据库** | **ChromaDB** ⭐ | 轻量级向量存储 | 不采用Milvus（过度设计） |
+| **知识图谱** | **LightRAG 内置** ⭐ | 基于NetworkX | 不采用Neo4j（过度设计） |
+| **Reranker** | BGE-Reranker-v2-m3 | 重排序 | 行业标准 |
+| **Agent框架** | **LangGraph** ⭐ | 状态机工作流 | Evaluator-Optimizer模式 |
+| **Prompt优化** | **DSPy** ⭐ | 自动优化评分 Prompt | 准确率↑40% |
+| **LLM** | DeepSeek / Qwen | 按职责分工 | 性价比高 |
+| **评估** | RAGAS + DeepEval | RAG评估 | 五步评估闭环 |
+| **可观测性** | Langfuse | 私有化部署 | 开源、完整追踪 |
+| **后端API** | FastAPI + Pydantic v2 | 异步框架 | 行业标准 |
+| **前端** | Vue3 + Element Plus + Pinia | 评标界面 | 企业级UI |
 
-> ⭐ 标记为本版本新增的核心组件
+> ⭐ 标记为本版本核心组件
+
+**技术决策说明：**
+
+| 决策 | 选择 | 不选择 | 理由（基于研究） |
+|------|------|--------|------------------|
+| 图谱存储 | LightRAG 内置 | ~~Neo4j~~ | Yuxi-Know 使用 Neo4j 但社区验证不足；LightRAG 内置图谱足够评标场景 |
+| 向量数据库 | ChromaDB | ~~Milvus~~ | 文档量 < 10万时 ChromaDB 更轻量；Milvus 适合大规模生产 |
+| 架构风格 | 模块化单体 | ~~微服务~~ | 单一部署单元，运维简单，可演进到微服务 |
+| 多模态处理 | 分类处理模式 | - | 借鉴 RAG-Anything：图片/表格/公式独立处理器 |
 
 ---
 
@@ -174,8 +203,9 @@ v4.0 要点保留：
 │  │  │(可切换)  │  │ (向量库) │  │(关系+SQL)│  │ (缓存)   │            │   │
 │  │  └──────────┘  └──────────┘  └──────────┘  └──────────┘            │   │
 │  │  ┌──────────┐  ┌──────────┐  ┌──────────┐                          │   │
-│  │  │ NetworkX │  │  Neo4j   │  │ Langfuse │  ← 可观测性              │   │
-│  │  │ (开发)   │  │ (生产)   │  │ (监控)   │                          │   │
+│  │  │ NetworkX │  │ ~~Neo4j~~│  │ Langfuse │  ← 可观测性              │   │
+│  │  │(LightRAG│  │  不采用   │  │ (监控)   │                          │   │
+│  │  │内置图谱)│  │          │  │          │                          │   │
 │  │  └──────────┘  └──────────┘  └──────────┘                          │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
 │                                                                             │
@@ -254,7 +284,8 @@ src/modules/evaluation/
 
 ### 3.1 文档解析模块（解析器注册表模式）
 
-> **设计来源**: RAGFlow 解析器架构
+> **设计来源**: RAGFlow 解析器架构 + RAG-Anything 多模态处理
+> **详细研究**: `docs/research/2026-02-20-mineru-output-processing.md`
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -267,35 +298,124 @@ src/modules/evaluation/
 │   ┌─────────────────────────────────────────────┐          │
 │   │          Parser Registry (解析器注册表)      │          │
 │   │  ┌─────────┐ ┌─────────┐ ┌─────────┐       │          │
-│   │  │ MinerU  │ │PaddleOCR│ │DOCX     │ ...   │          │
-│   │  │(PDF优先)│ │(扫描件) │ │Parser   │       │          │
+│   │  │ MinerU  │ │ Docling │ │PaddleOCR│       │          │
+│   │  │(复杂PDF)│ │(Office) │ │(扫描件) │       │          │
 │   │  └─────────┘ └─────────┘ └─────────┘       │          │
 │   └─────────────────────────────────────────────┘          │
 │        │                                                    │
 │        ▼                                                    │
 │   ┌─────────────────────────────────────────────┐          │
-│   │          Chunker (分块器)                    │          │
+│   │   MinerU 输出处理 (content_list.json)        │          │
 │   │  ┌────────────────────────────────────────┐ │          │
-│   │  │ naive_merge_with_images()              │ │          │
-│   │  │ - 保留表格上下文 (table_context_size)   │ │          │
-│   │  │ - 保留图片上下文 (image_context_size)   │ │          │
-│   │  │ - 位置追踪 (add_positions)             │ │          │
+│   │  │ • 保留位置信息 (page_idx, bbox)         │ │          │
+│   │  │ • 内容类型分类 (text/table/image/formula)│ │          │
+│   │  │ • 标题层级提取 (section, heading_path)  │ │          │
 │   │  └────────────────────────────────────────┘ │          │
 │   └─────────────────────────────────────────────┘          │
 │        │                                                    │
 │        ▼                                                    │
 │   ┌─────────────────────────────────────────────┐          │
-│   │  Chunk 输出结构                              │          │
+│   │   多模态内容处理器 (借鉴 RAG-Anything)        │          │
+│   │  ┌─────────┐ ┌─────────┐ ┌─────────┐       │          │
+│   │  │  Text   │ │  Table  │ │  Image  │       │          │
+│   │  │Processor│ │Processor│ │Processor│       │          │
+│   │  └─────────┘ └─────────┘ └─────────┘       │          │
+│   └─────────────────────────────────────────────┘          │
+│        │                                                    │
+│        ▼                                                    │
+│   ┌─────────────────────────────────────────────┐          │
+│   │          Chunker (结构感知分块器)             │          │
+│   │  ┌────────────────────────────────────────┐ │          │
+│   │  │ • 512 token + 15-20% overlap           │ │          │
+│   │  │ • 保留位置追踪 (add_positions)          │ │          │
+│   │  │ • 标题层级保留 (heading_path)          │ │          │
+│   │  └────────────────────────────────────────┘ │          │
+│   └─────────────────────────────────────────────┘          │
+│        │                                                    │
+│        ▼                                                    │
+│   ┌─────────────────────────────────────────────┐          │
+│   │  Chunk 输出结构（用于溯源引用）               │          │
 │   │  {                                          │          │
+│   │    "id": "chunk_xxx",                       │          │
 │   │    "content": "文本内容...",                │          │
-│   │    "positions": [(page, start, end), ...],  │ ← 溯源引用│
-│   │    "metadata": {...},                       │          │
-│   │    "table_context": "...",  // 可选         │          │
-│   │    "image_context": "..."   // 可选         │          │
+│   │    "metadata": {                            │          │
+│   │      "pages": [1, 2],                       │ ← 溯源引用│
+│   │      "positions": [{"page":1,"bbox":[...]}],│          │
+│   │      "section": "2.2 技术评审标准",         │          │
+│   │      "heading_path": ["2.评审","2.2技术"],  │          │
+│   │      "chunk_type": "text"                   │          │
+│   │    }                                        │          │
 │   │  }                                          │          │
 │   └─────────────────────────────────────────────┘          │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
+```
+
+**MinerU 输出处理（基于研究）：**
+
+> **关键发现**: JSON (content_list.json) 包含完整位置信息，是溯源的基础
+
+```python
+# 来源: docs/research/2026-02-20-mineru-output-processing.md
+class MinerUProcessor:
+    """MinerU content_list.json 处理器"""
+
+    def process(self, content_list_path: str) -> List[Dict]:
+        """
+        处理 MinerU 输出，保留位置信息用于溯源
+
+        输出格式包含：
+        - pages: 页码列表
+        - positions: [{page, bbox}] 位置信息
+        - section: 当前章节
+        - heading_path: 标题路径
+        - chunk_type: 内容类型
+        """
+        with open(content_list_path, 'r', encoding='utf-8') as f:
+            items = json.load(f)
+
+        # 按页码和位置排序
+        sorted_items = sorted(
+            items,
+            key=lambda x: (x.get('page_idx', 0), x.get('bbox', [0])[1] if x.get('bbox') else 0)
+        )
+
+        chunks = []
+        current_chunk = self._init_chunk()
+        heading_stack = []
+
+        for item in sorted_items:
+            text = item.get('text', '').strip()
+            if not text:
+                continue
+
+            page = item.get('page_idx', 0)
+            bbox = item.get('bbox', [0, 0, 0, 0])
+            item_type = item.get('type', 'text')
+
+            # 更新标题栈
+            if item_type in ['title', 'section_header']:
+                heading_stack.append(text)
+
+            # 检查是否需要分块
+            if len(current_chunk['content']) + len(text) > self.chunk_size:
+                if current_chunk['content']:
+                    chunks.append(self._finalize_chunk(current_chunk))
+                current_chunk = self._init_chunk(
+                    overlap_text=current_chunk['content'][-self.overlap:]
+                )
+
+            # 添加内容
+            current_chunk['content'] += text + '\n'
+            current_chunk['positions'].append({
+                'page': page,
+                'bbox': bbox,
+                'text_len': len(text)
+            })
+            current_chunk['pages'].add(page)
+            current_chunk['heading_stack'] = heading_stack.copy()
+
+        return chunks
 ```
 
 **解析器注册表模式（策略模式 + 配置驱动）:**
@@ -303,31 +423,31 @@ src/modules/evaluation/
 ```python
 # 设计模式：开闭原则 - 新增解析器只需注册，无需修改现有代码
 PARSERS = {
-    "mineru": by_mineru,        # MinerU PDF解析（优先）
+    "mineru": by_mineru,        # MinerU PDF解析（复杂布局）
+    "docling": by_docling,      # Word/Excel 解析
     "paddleocr": by_paddleocr,  # 扫描件OCR
-    "docx": by_docx,            # Word文档
-    "plaintext": by_plaintext,  # 纯文本（默认回退）
 }
 
-def chunk(filename: str, parser_id: str = "mineru", **kwargs):
+def chunk(filename: str, parser_id: str = "auto", **kwargs):
     """主入口：根据配置选择解析器"""
-    parser_func = PARSERS.get(parser_id, by_plaintext)
+    if parser_id == "auto":
+        parser_id = auto_detect_parser(filename)
+    parser_func = PARSERS.get(parser_id, by_mineru)
     return parser_func(filename, **kwargs)
 ```
 
 **分块策略（2026最佳实践 - 基于研究验证）：**
 
 > **关键发现**：512 token 比 1024 token 的 MRR 指标高 **12-18%**
+> **Overlap 黄金区间**：15-20%（工程实践验证）
 
 | 文档类型 | Chunk Size | Overlap | 切分算法 | 理由 |
 |---------|-----------|---------|---------|------|
-| **投标文件** | **512 token** | **15-20%** | 递归字符 | 工程黄金配置 |
-| 技术参数表 | 按参数项 | 0% | 结构感知 | 独立检索 |
+| **投标文件** | **512 token** | **15-20%** | 结构感知 | 工程黄金配置 |
+| 技术参数表 | 按表格 | 0% | 整表切分 | 保持完整性 |
 | 产品注册证 | 整页 | N/A | 原子切分 | 原子性文档 |
 | 法规条文 | 256-300 token | 15% | 递归字符 | 独立引用 |
 | 报价单 | 按行/项 | 0% | 结构感知 | SQL 精确查询 |
-
-**Overlap 黄金区间**：15-20%（工程实践验证）
 
 ### 3.2 RAG检索模块（LightRAG 双层检索 + 知识图谱）
 
@@ -485,16 +605,17 @@ class LightRAGService:
 └───────────────┘
 ```
 
-**与 RAGFlow 方案对比：**
+**与 Yuxi-Know 方案对比：**
 
-| 方面 | 原方案 (RAGFlow 混合检索) | 新方案 (LightRAG) |
-|------|---------------------------|-------------------|
-| **集成方式** | 借鉴设计，自实现 | pip 安装，直接使用 ✅ |
-| **知识图谱** | 无 | 内置轻量级 KG ✅ |
-| **双层检索** | 无 | Low-Level + High-Level ✅ |
-| **向量存储** | ChromaDB | ChromaDB（兼容）✅ |
-| **增量更新** | 需自实现 | 原生支持 ✅ |
-| **法律文档** | - | 84.8% 胜率 ✅ |
+| 方面 | Yuxi-Know 方案 | 我们的方案 | 说明 |
+|------|----------------|------------|------|
+| **图谱存储** | Neo4j（重量级） | LightRAG 内置（NetworkX） | 不需要额外部署 |
+| **向量存储** | Milvus（重量级） | ChromaDB（轻量） | 文档量不大时更合适 |
+| **工作流** | LangGraph | LangGraph | 相同 |
+| **RAG 引擎** | LightRAG | LightRAG | 相同 |
+| **可信度** | ⭐⭐（10+ stars） | ⭐⭐⭐⭐⭐（30k+ stars） | 优先参考 LightRAG 官方 |
+
+> **重要决策**: Yuxi-Know 虽然技术栈相似，但社区验证不足（~10 stars），其 Neo4j + Milvus 架构过于复杂，不适合当前阶段。
 
 ### 3.3 多Agent模块（Evaluator-Optimizer + Human-in-the-Loop）
 
@@ -1045,6 +1166,8 @@ workflow:
 
 ### 8.1 Docker Compose部署
 
+> **架构简化**: 不采用 Yuxi-Know 的 Neo4j + Milvus + MinIO 复杂架构，使用轻量化方案
+
 ```yaml
 version: '3.8'
 
@@ -1070,8 +1193,10 @@ services:
       - db
       - chroma
       - redis
+    volumes:
+      - ./data:/app/data  # 持久化数据
 
-  # PostgreSQL
+  # PostgreSQL（关系数据 + SQL 检索）
   db:
     image: postgres:15
     environment:
@@ -1080,7 +1205,8 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
-  # ChromaDB
+  # ChromaDB（向量存储 - 轻量方案）
+  # 不采用 Milvus：文档量 < 10万时 ChromaDB 足够
   chroma:
     image: chromadb/chroma:latest
     ports:
@@ -1088,24 +1214,36 @@ services:
     volumes:
       - chroma_data:/chroma/chroma
 
-  # Redis
+  # Redis（缓存 + 会话）
   redis:
     image: redis:7-alpine
     ports:
       - "6379:6379"
 
-  # Langfuse (可观测性)
+  # Langfuse（可观测性 - 可选）
   langfuse:
     image: langfuse/langfuse:latest
     ports:
       - "3000:3000"
     environment:
       - DATABASE_URL=postgresql://postgres:password@db:5432/langfuse
+    profiles:
+      - observability  # 可选启动
 
 volumes:
   postgres_data:
   chroma_data:
 ```
+
+**与 Yuxi-Know 部署对比：**
+
+| 服务 | Yuxi-Know | 我们的方案 | 说明 |
+|------|-----------|------------|------|
+| 图数据库 | Neo4j | ~~不部署~~ | LightRAG 内置 NetworkX |
+| 向量库 | Milvus | ChromaDB | 轻量化，部署简单 |
+| 对象存储 | MinIO | ~~不部署~~ | 本地文件系统足够 |
+| 图数据库 | PostgreSQL | PostgreSQL | 相同 |
+| 缓存 | - | Redis | 新增缓存层 |
 
 ### 8.2 目录结构
 
@@ -1345,7 +1483,7 @@ class ScoreWithReasoning(TypedDict):
 # pyproject.toml
 [project]
 name = "bid-evaluation-assistant"
-version = "3.0.0"
+version = "5.1.0"
 requires-python = ">=3.11"
 
 dependencies = [
@@ -1356,12 +1494,12 @@ dependencies = [
 
     # 文档解析
     "magic-pdf[full]>=0.7.0",      # MinerU PDF解析
-    "docling>=1.0.0",               # IBM 多格式解析 ⭐
-    "paddleocr>=2.8.0",             # 扫描件 OCR
+    "docling>=1.0.0",               # IBM 多格式解析
+    # "paddleocr>=2.8.0",           # 扫描件 OCR（可选）
 
     # RAG 核心
-    "lightrag-hku>=0.1.0",          # LightRAG 双层检索 ⭐
-    "chromadb>=0.5.0",              # 向量存储
+    "lightrag-hku>=0.1.0",          # LightRAG 双层检索（含内置图谱）
+    "chromadb>=0.5.0",              # 向量存储（轻量方案）
     "flagembedding>=1.2.0",         # BGE Embedding
 
     # Agent 框架
@@ -1369,14 +1507,15 @@ dependencies = [
     "langchain>=0.3.0",
 
     # Prompt 优化
-    "dspy>=2.5.0",                  # DSPy 自动优化 ⭐
+    "dspy>=2.5.0",                  # DSPy 自动优化
 
     # LLM
     "openai>=1.50.0",
     "dashscope>=1.20.0",            # 通义千问
 
-    # 知识图谱（可选，生产环境）
-    # "neo4j>=5.0.0",
+    # 不采用的依赖（基于研究决策）
+    # "neo4j>=5.0.0",               # 不需要，LightRAG 内置图谱
+    # "pymilvus>=2.0.0",            # 不需要，ChromaDB 足够
 
     # 评估
     "ragas>=0.1.0",
@@ -1390,27 +1529,36 @@ dependencies = [
 ### 10.2 参考资料
 
 **直接使用的开源项目：**
-- LightRAG: https://github.com/HKUDS/LightRAG ⭐
+- LightRAG: https://github.com/HKUDS/LightRAG ⭐⭐⭐⭐⭐ (30k+ stars)
   - 使用：双层检索、知识图谱、向量检索融合
-- MinerU: https://github.com/opendatalab/MinerU
+- MinerU: https://github.com/opendatalab/MinerU ⭐⭐⭐⭐⭐ (50k+ stars)
   - 使用：复杂 PDF 解析
-- Docling: https://github.com/docling-project/docling ⭐
+- Docling: https://github.com/docling-project/docling ⭐⭐⭐⭐⭐ (42k+ stars)
   - 使用：Word/Excel/多格式解析
-- DSPy: https://github.com/stanfordnlp/dspy ⭐
+- DSPy: https://github.com/stanfordnlp/dspy ⭐⭐⭐⭐⭐ (20k+ stars)
   - 使用：Prompt 自动优化
-- ChromaDB: https://github.com/chroma-core/chroma
+- ChromaDB: https://github.com/chroma-core/chroma ⭐⭐⭐⭐⭐
   - 使用：向量存储（LightRAG 原生支持）
-- LangGraph: https://github.com/langchain-ai/langgraph
+- LangGraph: https://github.com/langchain-ai/langgraph ⭐⭐⭐⭐⭐ (40k+ stars)
   - 使用：Agent 工作流编排
 
 **借鉴设计的项目：**
-- Agentic-Procure-Audit-AI: https://github.com/MrAliHasan/Agentic-Procure-Audit-AI
+- RAG-Anything: https://github.com/HKUDS/RAG-Anything ⭐⭐⭐⭐⭐ (1k+ stars, 学术背书)
+  - 借鉴：多模态内容处理、内容分类器、VLM 增强
+- Agentic-Procure-Audit-AI: https://github.com/MrAliHasan/Agentic-Procure-Audit-AI ⭐⭐⭐
   - 借鉴：RGSG 工作流、评分可解释性
-- RAGFlow: https://github.com/infiniflow/ragflow
+- RAGFlow: https://github.com/infiniflow/ragflow ⭐⭐⭐⭐⭐ (35k+ stars)
   - 借鉴：解析器注册表模式、位置追踪机制
+
+**谨慎参考的项目：**
+- Yuxi-Know: https://github.com/xerrors/Yuxi-Know ⭐⭐ (~10 stars)
+  - 状态：社区验证不足，Beta 阶段
+  - 可借鉴：LangGraph 工作流模式、多解析器策略
+  - 不采用：Neo4j + Milvus + MinIO 复杂架构
+  - 详见：`docs/research/2026-02-20-yuxi-know-vs-rag-anything-analysis.md`
 
 ---
 
-*设计文档版本：v4.0*
+*设计文档版本：v5.1*
 *最后更新：2026-02-20*
-*更新内容：三路检索协作、Evaluator-Optimizer、Human-in-the-Loop、五步评估闭环*
+*更新内容：整合 Yuxi-Know vs RAG-Anything 对比研究，明确技术决策依据*
