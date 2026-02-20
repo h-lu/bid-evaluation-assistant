@@ -269,32 +269,578 @@ class BidVariables(BaseModel):
 
 ---
 
-## 三、GitHub 类似项目
+## 三、GitHub 类似项目详细分析
 
-### 3.1 直接相关项目
+### 3.1 yibiao-simple（开源标书智能体）⭐⭐⭐⭐⭐
 
-| 项目 | GitHub | 描述 | 可借鉴点 |
-|------|--------|------|----------|
-| **yibiao-simple** | [yibiaoai/yibiao-simple](https://github.com/yibiaoai/yibiao-simple) | 开源标书智能体 | 招标文件解析、内容生成 |
-| **ProposalLLM** | [William-GuoWei/ProposalLLM](https://github.com/William-GuoWei/ProposalLLM) | 中文标书生成工具 | LLM 标书生成 |
-| **kotaemon** | [Cinnamon/kotaemon](https://github.com/Cinnamon/kotaemon) | RAG 文档对话工具 | 文档解析与问答 |
-| **RAGFlow** | [infiniflow/RAGFlow](https://github.com/infiniflow/RAGFlow) | 开源 RAG 引擎 | 深度文档理解 |
+**项目地址**: https://github.com/yibiaoai/yibiao-simple
 
-### 3.2 RAG 评估框架
+#### 基本信息
 
-| 项目 | GitHub | 用途 |
-|------|--------|------|
-| **RAGAS** | [explodinggradients/ragas](https://github.com/explodinggradients/ragas) | RAG 管道评估 |
-| **RAGChecker** | [amazon-science/RAGChecker](https://github.com/amazon-science/RAGChecker) | 细粒度诊断框架 |
-| **RAGEval** | [OpenBMB/RAGEval](https://github.com/OpenBMB/RAGEval) | 场景特定评估 |
+| 维度 | 信息 |
+|------|------|
+| **定位** | 开源 AI 标书编写工具 |
+| **商业产品** | yibiao.pro（商业 SaaS） |
+| **可信度** | ⭐⭐⭐⭐ 有商业产品背书 |
 
-### 3.3 Agent 框架
+#### 技术架构
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    yibiao-simple 架构                        │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│   前端: React 18+ + TypeScript + Tailwind CSS              │
+│   后端: FastAPI + Python 3.8+                               │
+│   AI: OpenAI SDK (兼容 OpenAI API)                          │
+│   部署: PyInstaller 单文件打包                               │
+│                                                             │
+│   推荐模型: DeepSeek (性价比高)                              │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### 核心功能
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    功能流程                                  │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│   招标文件上传                                               │
+│       │                                                     │
+│       ▼                                                     │
+│   ┌─────────────────────────────────────────────────────┐  │
+│   │          智能文档解析                                │  │
+│   │  • 自动分析招标文件结构                              │  │
+│   │  • 提取关键信息                                      │  │
+│   │  • 识别技术评分要求                                  │  │
+│   └─────────────────────────────────────────────────────┘  │
+│       │                                                     │
+│       ▼                                                     │
+│   ┌─────────────────────────────────────────────────────┐  │
+│   │          AI 生成目录                                 │  │
+│   │  • 基于招标文件智能生成                              │  │
+│   │  • 专业三级目录结构                                  │  │
+│   │  • 符合行业标准                                      │  │
+│   └─────────────────────────────────────────────────────┘  │
+│       │                                                     │
+│       ▼                                                     │
+│   ┌─────────────────────────────────────────────────────┐  │
+│   │          内容自动生成                                │  │
+│   │  • 为每个章节生成针对性内容                          │  │
+│   │  • 高质量、专业化表述                                │  │
+│   │  • 支持人工微调                                      │  │
+│   └─────────────────────────────────────────────────────┘  │
+│       │                                                     │
+│       ▼                                                     │
+│   一键导出 Word → 自由编辑                                  │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### 可借鉴点
+
+| 功能 | 借鉴价值 | 说明 |
+|------|----------|------|
+| **招标文件解析** | ⭐⭐⭐⭐⭐ | 提取关键信息和技术评分要求 |
+| **AI 生成目录** | ⭐⭐⭐⭐ | 智能生成结构化大纲 |
+| **内容生成** | ⭐⭐⭐⭐ | 针对性内容生成策略 |
+| **Word 导出** | ⭐⭐⭐ | 报告输出格式 |
+| **React + FastAPI** | ⭐⭐⭐⭐ | 与我们技术栈一致 |
+
+---
+
+### 3.2 ProposalLLM（中文标书生成工具）⭐⭐⭐⭐
+
+**项目地址**: https://github.com/William-GuoWei/ProposalLLM
+
+#### 基本信息
+
+| 维度 | 信息 |
+|------|------|
+| **定位** | LLM 驱动的中文标书生成工具 |
+| **特点** | 点对点应答格式 |
+| **支持模型** | ChatGPT / 百度千帆 (ERNIE-Speed-8K) |
+| **可信度** | ⭐⭐⭐ 个人项目，功能专注 |
+
+#### 核心功能
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    ProposalLLM 功能                          │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│   1. 需求对应表驱动                                          │
+│      • 根据产品需求对应表自动生成                            │
+│      • 点对点应答格式标书                                    │
+│                                                             │
+│   2. 产品说明书复用                                          │
+│      • 自动匹配产品功能                                      │
+│      • 拷贝产品说明书相关内容                                │
+│                                                             │
+│   3. 技术需求偏离表                                          │
+│      • 自动填写需求对应表                                    │
+│      • 点对点应答                                            │
+│                                                             │
+│   4. 产品手册拆解                                           │
+│      • 拆解为可复用的细节文档                                │
+│      • 支持后续标书复用                                      │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### 代码示例
+
+```python
+# ProposalLLM 核心流程
+from docx import Document
+import openai  # 或百度千帆
+
+class ProposalGenerator:
+    """标书生成器"""
+
+    def __init__(self, model="ernie-speed-8k"):
+        self.model = model
+
+    def generate_proposal(
+        self,
+        requirement_table: dict,  # 需求对应表
+        product_manual: str,      # 产品说明书
+        output_path: str
+    ):
+        """生成标书"""
+        doc = Document()
+
+        for req in requirement_table["requirements"]:
+            # 1. 匹配产品功能
+            matched_content = self.match_product_content(
+                req, product_manual
+            )
+
+            # 2. 生成点对点应答
+            response = self.generate_response(req, matched_content)
+
+            # 3. 写入文档
+            doc.add_heading(req["title"], level=2)
+            doc.add_paragraph(response)
+
+        doc.save(output_path)
+
+    def generate_response(self, requirement: dict, product_content: str) -> str:
+        """使用 LLM 生成应答"""
+        prompt = f"""
+        需求：{requirement["description"]}
+
+        产品相关内容：{product_content}
+
+        请生成符合需求的点对点应答内容。
+        """
+        return self.llm_call(prompt)
+```
+
+#### 可借鉴点
+
+| 功能 | 借鉴价值 | 说明 |
+|------|----------|------|
+| **点对点应答** | ⭐⭐⭐⭐⭐ | 评标报告的核心格式 |
+| **需求对应表** | ⭐⭐⭐⭐ | 评分标准 vs 投标响应 |
+| **产品手册拆解** | ⭐⭐⭐ | 知识库复用策略 |
+| **百度千帆支持** | ⭐⭐⭐ | 国产模型备选 |
+
+---
+
+### 3.3 kotaemon（RAG 文档对话工具）⭐⭐⭐⭐⭐
+
+**项目地址**: https://github.com/Cinnamon/kotaemon
+
+#### 基本信息
+
+| 维度 | 信息 |
+|------|------|
+| **定位** | 开源 RAG 文档对话工具 |
+| **Stars** | 高（活跃项目） |
+| **特点** | 支持 GraphRAG、LightRAG、NanoGraphRAG |
+| **UI** | Gradio |
+| **可信度** | ⭐⭐⭐⭐⭐ 社区活跃，功能完善 |
+
+#### 技术架构
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    kotaemon 架构                             │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│   UI 层: Gradio (Web 界面)                                  │
+│                                                             │
+│   RAG 层:                                                   │
+│   ┌─────────────────────────────────────────────────────┐  │
+│   │          Hybrid RAG Pipeline                         │  │
+│   │  • 全文检索 + 向量检索                               │  │
+│   │  • Re-ranking 重排序                                 │  │
+│   │  • 多模态 QA 支持                                    │  │
+│   └─────────────────────────────────────────────────────┘  │
+│                                                             │
+│   GraphRAG 支持:                                            │
+│   • GraphRAG (Microsoft)                                    │
+│   • LightRAG (HKUDS)                                        │
+│   • NanoGraphRAG (轻量版)                                   │
+│                                                             │
+│   Agent 推理:                                               │
+│   • ReAct Agent                                             │
+│   • ReWOO Agent                                             │
+│                                                             │
+│   溯源引用:                                                 │
+│   • 高级引用功能                                            │
+│   • 浏览器内 PDF 查看器                                     │
+│   • 高亮显示来源                                            │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### LightRAG 集成方式
+
+```bash
+# 安装 LightRAG
+pip install git+https://github.com/HKUDS/LightRAG.git
+
+# 启动 kotaemon 并启用 LightRAG
+USE_LIGHTRAG=true python app.py
+```
+
+#### 核心功能
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    kotaemon 功能亮点                         │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│   1. 混合 RAG 管道                                          │
+│      ┌───────────┐    ┌───────────┐    ┌───────────┐       │
+│      │  全文检索  │    │  向量检索  │    │  图谱检索  │       │
+│      └─────┬─────┘    └─────┬─────┘    └─────┬─────┘       │
+│            │                │                │              │
+│            └────────────────┼────────────────┘              │
+│                             ▼                               │
+│                    ┌───────────────┐                        │
+│                    │  Re-ranking   │                        │
+│                    └───────────────┘                        │
+│                                                             │
+│   2. 多模态 QA                                              │
+│      • 图片理解                                             │
+│      • 表格解析                                             │
+│      • 图表分析                                             │
+│                                                             │
+│   3. 高级溯源引用                                           │
+│      • 浏览器内 PDF 查看器                                  │
+│      • 高亮显示来源段落                                     │
+│      • 精确页码定位                                         │
+│                                                             │
+│   4. 复杂推理支持                                           │
+│      • ReAct (推理+行动)                                    │
+│      • ReWOO (规划+执行)                                    │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### 可借鉴点
+
+| 功能 | 借鉴价值 | 说明 |
+|------|----------|------|
+| **LightRAG 集成** | ⭐⭐⭐⭐⭐ | 与我们选型完全一致 |
+| **混合检索** | ⭐⭐⭐⭐⭐ | 全文 + 向量 + 图谱 |
+| **高级溯源引用** | ⭐⭐⭐⭐⭐ | PDF 查看器 + 高亮 |
+| **多模态 QA** | ⭐⭐⭐⭐ | 图片/表格/图表 |
+| **Re-ranking** | ⭐⭐⭐⭐ | 重排序策略 |
+
+---
+
+### 3.4 RAGFlow（开源 RAG 引擎）⭐⭐⭐⭐⭐
+
+**项目地址**: https://github.com/infiniflow/RAGFlow
+
+#### 基本信息
+
+| 维度 | 信息 |
+|------|------|
+| **定位** | 开源 RAG 引擎 |
+| **Stars** | 非常高（行业领先） |
+| **特点** | 深度文档理解、模板化分块 |
+| **部署** | Docker (~2GB 镜像) |
+| **可信度** | ⭐⭐⭐⭐⭐ 行业领先，持续更新 |
+
+#### 重要更新时间线
+
+| 日期 | 更新内容 |
+|------|----------|
+| **2025-10-23** | 支持 MinerU & Docling 文档解析 |
+| **2025-08-01** | 支持 Agentic Workflow 和 MCP |
+| **2025-06-15** | 支持多模态文档处理 |
+
+#### 技术架构
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    RAGFlow 架构                              │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│   文档解析层:                                               │
+│   ┌─────────────────────────────────────────────────────┐  │
+│   │  MinerU  │  Docling  │  原生解析器  │  OCR          │  │
+│   └─────────────────────────────────────────────────────┘  │
+│                                                             │
+│   深度文档理解:                                             │
+│   • 智能布局分析                                            │
+│   • 表格结构识别                                            │
+│   • 图片内容提取                                            │
+│                                                             │
+│   模板化分块 (关键特性!):                                   │
+│   ┌─────────────────────────────────────────────────────┐  │
+│   │          Template-based Chunking                    │  │
+│   │  • 智能且可解释                                      │  │
+│   │  • 根据文档类型选择模板                              │  │
+│   │  • 保留语义边界                                      │  │
+│   └─────────────────────────────────────────────────────┘  │
+│                                                             │
+│   Agentic Workflow:                                         │
+│   • Agent 编排                                              │
+│   • MCP 协议支持                                            │
+│   • 工具调用                                                │
+│                                                             │
+│   引用溯源:                                                 │
+│   • Grounded citations                                      │
+│   • 减少幻觉                                                │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### 支持的文档格式
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    支持的格式                                │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│   文档: Word, PDF, TXT, Markdown                           │
+│   演示: PowerPoint, Slides                                  │
+│   表格: Excel                                               │
+│   图片: JPG, PNG, 扫描件                                   │
+│                                                             │
+│   特殊处理:                                                 │
+│   • 扫描件 OCR                                              │
+│   • 复杂表格                                                │
+│   • 嵌入图片                                                │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### 可借鉴点
+
+| 功能 | 借鉴价值 | 说明 |
+|------|----------|------|
+| **MinerU 集成** | ⭐⭐⭐⭐⭐ | 与我们选型一致 |
+| **模板化分块** | ⭐⭐⭐⭐⭐ | **核心借鉴点！** |
+| **Agentic Workflow** | ⭐⭐⭐⭐ | Agent 编排思路 |
+| **MCP 协议** | ⭐⭐⭐ | 工具标准化 |
+| **Grounded citations** | ⭐⭐⭐⭐⭐ | 减少幻觉，精确溯源 |
+
+---
+
+### 3.5 RAGAS（RAG 评估框架）⭐⭐⭐⭐⭐
+
+**项目地址**: https://github.com/explodinggradients/ragas
+
+#### 基本信息
+
+| 维度 | 信息 |
+|------|------|
+| **定位** | LLM 应用评估框架 |
+| **特点** | 客观指标、测试数据生成 |
+| **集成** | LangChain 原生支持 |
+| **可信度** | ⭐⭐⭐⭐⭐ 行业标准 |
+
+#### 核心功能
+
+```python
+# RAGAS 使用示例
+from ragas import SingleTurnSample
+from ragas.metrics import AspectCritic, LLMContextRecall
+from ragas.llms import LangchainLLMWrapper
+from langchain_openai import ChatOpenAI
+
+# 初始化评估 LLM
+evaluator_llm = LangchainLLMWrapper(ChatOpenAI(model="gpt-4o"))
+
+# 定义评估指标
+metrics = [
+    AspectCritic(
+        name="summary_accuracy",
+        llm=evaluator_llm,
+        definition="Verify if the summary is accurate."
+    ),
+    LLMContextRecall(llm=evaluator_llm),
+]
+
+# 测试数据
+test_data = {
+    "user_input": "评标标准是什么？",
+    "response": "根据招标文件，评标标准包括...",
+    "retrieved_contexts": ["招标文件第5页...", "技术规范第2页..."],
+    "reference": "评标标准包括价格、技术、商务三个方面..."
+}
+
+# 评估
+sample = SingleTurnSample(**test_data)
+for metric in metrics:
+    score = await metric.single_turn_ascore(sample)
+    print(f"{metric.name}: {score}")
+```
+
+#### 评估指标体系
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    RAGAS 评估指标                            │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│   检索质量指标:                                             │
+│   • Context Precision (上下文精确度)                        │
+│   • Context Recall (上下文召回率)                           │
+│   • Context Relevancy (上下文相关性)                        │
+│                                                             │
+│   生成质量指标:                                             │
+│   • Faithfulness (忠实度) - 是否基于上下文                  │
+│   • Answer Relevancy (答案相关性)                           │
+│   • Answer Correctness (答案正确性)                         │
+│                                                             │
+│   自定义指标:                                               │
+│   • AspectCritic (方面评估)                                 │
+│   • SimpleCriteria (简单标准)                               │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### 可借鉴点
+
+| 功能 | 借鉴价值 | 说明 |
+|------|----------|------|
+| **Context Precision** | ⭐⭐⭐⭐⭐ | 检索精确度评估 |
+| **Faithfulness** | ⭐⭐⭐⭐⭐ | 生成忠实度评估 |
+| **测试数据生成** | ⭐⭐⭐⭐ | 自动生成测试用例 |
+| **LangChain 集成** | ⭐⭐⭐⭐ | 与 LangGraph 兼容 |
+
+---
+
+### 3.6 RAGChecker（Amazon 细粒度诊断框架）⭐⭐⭐⭐⭐
+
+**项目地址**: https://github.com/amazon-science/RAGChecker
+
+#### 基本信息
+
+| 维度 | 信息 |
+|------|------|
+| **定位** | 细粒度 RAG 诊断框架 |
+| **来源** | Amazon Science |
+| **特点** | 三层指标、Claim-level 评估 |
+| **可信度** | ⭐⭐⭐⭐⭐ 学术 + 工业验证 |
+
+#### 核心特点：三层指标体系
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    RAGChecker 三层指标                       │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│   ┌─────────────────────────────────────────────────────┐  │
+│   │              Overall Metrics (整体层)                │  │
+│   │  • Precision: 73.3%                                 │  │
+│   │  • Recall: 62.5%                                    │  │
+│   │  • F1: 67.3%                                        │  │
+│   └─────────────────────────────────────────────────────┘  │
+│                           │                                 │
+│           ┌───────────────┴───────────────┐                │
+│           ▼                               ▼                 │
+│   ┌───────────────────┐         ┌───────────────────┐      │
+│   │  Retriever Metrics │         │  Generator Metrics │     │
+│   │    (检索层)        │         │    (生成层)        │     │
+│   ├───────────────────┤         ├───────────────────┤      │
+│   │ • Claim Recall    │         │ • Context Utilization │   │
+│   │   61.4%           │         │   87.5%               │   │
+│   │ • Context         │         │ • Noise Sensitivity   │   │
+│   │   Precision 87.5% │         │   22.5%               │   │
+│   │                   │         │ • Hallucination 4.2%  │   │
+│   │                   │         │ • Faithfulness 70.8%  │   │
+│   └───────────────────┘         └───────────────────┘      │
+│                                                             │
+│   核心方法: Claim-level Entailment (声明级别蕴含)           │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### 使用示例
+
+```python
+# RAGChecker 使用示例
+from ragchecker import RAGResults, RAGChecker
+
+# 准备测试数据
+rag_results = RAGResults.from_dict({
+    "results": [
+        {
+            "query": "投标保证金是多少？",
+            "response": "根据招标文件，投标保证金为合同金额的2%...",
+            "retrieved_contexts": ["招标文件第10页: 保证金为合同金额2%..."],
+            "ground_truth": "投标保证金为合同金额的2%"
+        }
+    ]
+})
+
+# 运行评估
+checker = RAGChecker(
+    evaluator_model="gpt-4o",
+    batch_size=10
+)
+metrics = checker.evaluate(rag_results)
+
+# 输出结果
+print(f"Overall F1: {metrics['overall_metrics']['f1']}")
+print(f"Retriever Claim Recall: {metrics['retriever_metrics']['claim_recall']}")
+print(f"Generator Faithfulness: {metrics['generator_metrics']['faithfulness']}")
+print(f"Hallucination Rate: {metrics['generator_metrics']['hallucination']}")
+```
+
+#### 可借鉴点
+
+| 功能 | 借鉴价值 | 说明 |
+|------|----------|------|
+| **三层诊断** | ⭐⭐⭐⭐⭐ | 区分检索/生成问题 |
+| **Claim-level 评估** | ⭐⭐⭐⭐⭐ | 细粒度精确评估 |
+| **Hallucination 检测** | ⭐⭐⭐⭐⭐ | 幻觉率量化 |
+| **Context Utilization** | ⭐⭐⭐⭐ | 上下文利用效率 |
+
+---
+
+### 3.7 项目对比汇总
+
+| 项目 | Stars | 可信度 | 与评标相关度 | 核心借鉴点 |
+|------|-------|--------|--------------|------------|
+| **yibiao-simple** | 中 | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | 招标文件解析、目录生成 |
+| **ProposalLLM** | 低 | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | 点对点应答、需求对应表 |
+| **kotaemon** | 高 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | LightRAG 集成、溯源引用 |
+| **RAGFlow** | 非常高 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | MinerU 集成、模板化分块 |
+| **RAGAS** | 高 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | RAG 评估、测试生成 |
+| **RAGChecker** | 高 | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ | 细粒度诊断、幻觉检测 |
+
+---
+
+### 3.8 其他相关项目
 
 | 项目 | 用途 |
 |------|------|
 | **LangGraph** | Agent 工作流编排 |
 | **phidata** | LLM Agent 框架 |
 | **Haystack** | 端到端 QA 系统 |
+| **RAGEval** | 场景特定评估 |
 
 ---
 
@@ -334,22 +880,32 @@ class BidVariables(BaseModel):
 | **多维度评分 + 推理** | Agentic-Procure-Audit-AI | 评标结果附带详细理由 |
 | **结构化变量提取** | Agentic-Procure-Audit-AI | 自动提取投标关键信息 |
 | **Human-in-the-Loop** | Agentic-Procure-Audit-AI | LangGraph interrupt 机制 |
+| **点对点应答格式** | ProposalLLM | 评分标准 vs 投标响应对照表 |
+| **模板化分块** | RAGFlow | 根据文档类型选择分块模板 |
+| **高级溯源引用** | kotaemon | PDF 查看器 + 高亮显示 |
 
-### 5.2 可选借鉴 ⭐⭐⭐
+### 5.2 可选借鉴 ⭐⭐⭐⭐
 
 | 设计 | 来源 | 借鉴方式 |
 |------|------|----------|
 | **100% 本地化** | Agentic-Procure-Audit-AI | 可选部署模式 |
 | **Streamlit UI** | Agentic-Procure-Audit-AI | 快速原型验证 |
 | **RAGAS 评估** | RAGAS | 检索质量评估 |
+| **RAGChecker 诊断** | RAGChecker | 三层指标诊断 |
+| **需求对应表** | ProposalLLM | 评分项 vs 投标响应映射 |
+| **产品手册拆解** | ProposalLLM | 知识库复用策略 |
+| **混合检索** | kotaemon | 全文 + 向量 + 图谱 |
+| **MCP 协议** | RAGFlow | 工具调用标准化 |
 
 ### 5.3 不采用的设计
 
 | 设计 | 来源 | 不采用理由 |
 |------|------|------------|
 | **Tesseract OCR** | Agentic-Procure-Audit-AI | MinerU 更适合中文 PDF |
-| **DeepSeek-R1** | Agentic-Procure-Audit-AI | 根据实际需求选择 LLM |
+| **DeepSeek-R1 强制** | Agentic-Procure-Audit-AI | 根据实际需求选择 LLM |
 | **单一 ChromaDB** | Agentic-Procure-Audit-AI | 我们用 LightRAG 内置存储 |
+| **百度千帆** | ProposalLLM | 保持模型可选性 |
+| **Docker 大镜像** | RAGFlow | 我们需要轻量部署 |
 
 ---
 
@@ -529,5 +1085,62 @@ class BidVariables(BaseModel):
 
 ---
 
-*文档版本：v1.0*
-*创建日期：2026-02-20*
+## 九、评估框架集成建议
+
+### 9.1 RAGAS + RAGChecker 组合使用
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    评估框架集成                              │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│   开发阶段 (RAGAS):                                         │
+│   ┌─────────────────────────────────────────────────────┐  │
+│   │  • 快速迭代评估                                      │  │
+│   │  • 自动生成测试数据                                  │  │
+│   │  • 基础指标监控                                      │  │
+│   └─────────────────────────────────────────────────────┘  │
+│                                                             │
+│   生产阶段 (RAGChecker):                                    │
+│   ┌─────────────────────────────────────────────────────┐  │
+│   │  • 细粒度诊断                                        │  │
+│   │  • 幻觉检测                                          │  │
+│   │  • 三层指标分析                                      │  │
+│   └─────────────────────────────────────────────────────┘  │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 9.2 推荐的评估流程
+
+```python
+# 评估流程示例
+class EvaluationPipeline:
+    """评标系统评估流程"""
+
+    async def evaluate(self, test_cases: List[dict]):
+        results = {}
+
+        # 1. RAGAS 快速评估
+        ragas_scores = await self.ragas_evaluate(test_cases)
+        results["ragas"] = ragas_scores
+
+        # 2. RAGChecker 细粒度诊断
+        if ragas_scores["overall"] < 0.8:
+            checker_results = await self.ragchecker_diagnose(test_cases)
+            results["diagnosis"] = checker_results
+
+            # 根据诊断结果定位问题
+            if checker_results["retriever_metrics"]["claim_recall"] < 0.6:
+                results["recommendation"] = "优化检索策略"
+            elif checker_results["generator_metrics"]["hallucination"] > 0.1:
+                results["recommendation"] = "优化生成约束"
+
+        return results
+```
+
+---
+
+*文档版本：v2.0*
+*更新日期：2026-02-20*
+*更新内容：添加 6 个 GitHub 项目的详细分析、评估框架集成建议*
