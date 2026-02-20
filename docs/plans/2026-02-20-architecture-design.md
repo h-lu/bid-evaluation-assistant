@@ -1,6 +1,6 @@
 # 辅助评标专家系统 —— 端到端架构设计
 
-> 版本：v2.0
+> 版本：v3.0
 > 设计日期：2026-02-20
 > 更新日期：2026-02-20
 > 状态：已批准
@@ -11,14 +11,19 @@
 
 本设计参考了以下 GitHub 项目的深入研究：
 
-| 项目 | 研究重点 | 借鉴内容 |
-|------|----------|----------|
-| **Agentic-Procure-Audit-AI** | Agent架构、评分算法 | RGSG工作流、TypedDict状态管理、评分可解释性 |
-| **RAGFlow** | 文档解析、RAG架构 | 解析器注册表、位置追踪、混合检索、上下文附加 |
+| 项目 | Star | 研究重点 | 借鉴/使用方式 |
+|------|------|----------|---------------|
+| **LightRAG** | 30k+ | 轻量级知识图谱 RAG | **直接使用** - 双层检索、知识图谱增强 |
+| **Agentic-Procure-Audit-AI** | - | Agent架构、评分算法 | 借鉴设计 - RGSG工作流、评分可解释性 |
+| **RAGFlow** | 35k+ | 文档解析、RAG架构 | 借鉴设计 - 解析器注册表、位置追踪 |
+| **DSPy** | 20k+ | Prompt 优化 | **直接使用** - 评分模型自动优化 |
+| **Docling** | 42k+ | 多格式文档解析 | **直接使用** - Word/Excel 解析 |
 
 详细研究报告见：
+- `docs/research/2026-02-20-lightrag-research.md` ⭐ 新增
 - `docs/research/2026-02-20-agentic-procure-audit-ai-research.md`
 - `docs/research/2026-02-20-ragflow-research.md`
+- `docs/research/2026-02-20-github-projects-round2.md`
 
 ---
 
@@ -47,26 +52,31 @@
 
 | 层级 | 技术选型 | 说明 |
 |------|----------|------|
-| **文档解析** | MinerU 2.5 + PaddleOCR | PDF解析、扫描件识别 |
+| **文档解析** | MinerU 2.5 + Docling + PaddleOCR | PDF/Word/Excel/扫描件全覆盖 |
+| **RAG 框架** | **LightRAG** ⭐ | 双层检索 + 知识图谱增强 |
 | **Embedding** | BGE-M3 | 多模式（稠密+稀疏+ColBERT） |
-| **向量数据库** | ChromaDB（开发）/ Milvus（生产） | 向量存储 |
+| **向量数据库** | ChromaDB（LightRAG 原生支持） | 向量存储 |
+| **知识图谱** | NetworkX（开发）/ Neo4j（生产） | 供应商关系、产品对比 |
 | **Reranker** | BGE-Reranker-v2-m3 | 重排序 |
-| **Agent框架** | LangGraph + CrewAI | 状态机工作流 |
+| **Agent框架** | LangGraph | 状态机工作流（RGSG模式） |
+| **Prompt优化** | **DSPy** ⭐ | 自动优化评分 Prompt |
 | **LLM** | DeepSeek / Qwen | 按职责分工 |
 | **评估** | RAGAS + DeepEval | RAG评估 |
 | **可观测性** | Langfuse | 私有化部署 |
 | **后端API** | FastAPI + Pydantic v2 | 异步框架 |
 | **前端** | Vue3 + Element Plus + Pinia | 评标界面 |
 
+> ⭐ 标记为本版本新增的核心组件
+
 ---
 
 ## 二、系统整体架构
 
-### 2.1 架构选型：分层单体架构
+### 2.1 架构选型：分层单体架构（混合集成模式）
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                              系统整体架构                                     │
+│                     系统整体架构 v3.0（LightRAG 集成版）                       │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
@@ -85,14 +95,31 @@
 │                                    │                                        │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
 │  │                         业务服务层                                    │   │
-│  │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐            │   │
-│  │  │ 文档解析  │  │ RAG检索   │  │ Agent编排 │  │ 评分计算  │            │   │
-│  │  │ Service  │  │ Service  │  │ Service  │  │ Service  │            │   │
-│  │  └──────────┘  └──────────┘  └──────────┘  └──────────┘            │   │
-│  │  ┌──────────┐  ┌──────────┐  ┌──────────┐                          │   │
-│  │  │ 用户管理  │  │ 项目管理  │  │ 报告生成  │                          │   │
-│  │  │ Service  │  │ Service  │  │ Service  │                          │   │
-│  │  └──────────┘  └──────────┘  └──────────┘                          │   │
+│  │  ┌──────────────────────────────────────────────────────────────┐   │   │
+│  │  │              文档解析 Service (MinerU + Docling)               │   │   │
+│  │  │  PDF ──→ MinerU    Word/Excel ──→ Docling    扫描件 ──→ OCR   │   │   │
+│  │  └──────────────────────────────────────────────────────────────┘   │   │
+│  │                                │ Chunks + 位置信息                    │   │
+│  │                                ▼                                      │   │
+│  │  ┌──────────────────────────────────────────────────────────────┐   │   │
+│  │  │              RAG 检索 Service (LightRAG) ⭐                    │   │   │
+│  │  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐           │   │   │
+│  │  │  │ 双层检索     │  │ 知识图谱     │  │ 向量检索     │           │   │   │
+│  │  │  │ Low/High    │  │ NetworkX    │  │ ChromaDB    │           │   │   │
+│  │  │  └─────────────┘  └─────────────┘  └─────────────┘           │   │   │
+│  │  └──────────────────────────────────────────────────────────────┘   │   │
+│  │                                │ 检索结果                             │   │
+│  │                                ▼                                      │   │
+│  │  ┌──────────────────────────────────────────────────────────────┐   │   │
+│  │  │              Agent 编排 Service (LangGraph)                    │   │   │
+│  │  │  RGSG 工作流: Retrieve → Grade → Search → Generate            │   │   │
+│  │  └──────────────────────────────────────────────────────────────┘   │   │
+│  │                                │ 评分结果                             │   │
+│  │                                ▼                                      │   │
+│  │  ┌──────────────────────────────────────────────────────────────┐   │   │
+│  │  │              评分 Service (DSPy 优化) ⭐                        │   │   │
+│  │  │  MIPROv2 自动优化 Prompt → 评分准确率 +15%                     │   │   │
+│  │  └──────────────────────────────────────────────────────────────┘   │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
 │                                    │                                        │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
@@ -101,10 +128,19 @@
 │  │  │ LLM抽象层 │  │ ChromaDB │  │PostgreSQL│  │  Redis   │            │   │
 │  │  │(可切换)  │  │ (向量库) │  │ (关系库) │  │ (缓存)   │            │   │
 │  │  └──────────┘  └──────────┘  └──────────┘  └──────────┘            │   │
+│  │  ┌──────────┐  ┌──────────┐                                        │   │
+│  │  │ NetworkX │  │  Neo4j   │  ← 知识图谱存储（开发/生产）            │   │
+│  │  │ (开发)   │  │ (生产)   │                                        │   │
+│  │  └──────────┘  └──────────┘                                        │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
+
+**架构亮点：**
+- **混合集成模式**: MinerU/Docling 解析 + LightRAG 检索 + LangGraph 编排
+- **各取所长**: 每个组件都是该领域的最佳选择
+- **无缝集成**: LightRAG 原生支持 ChromaDB，可直接复用现有向量存储
 
 ### 2.2 选型理由
 
@@ -192,61 +228,172 @@ def chunk(filename: str, parser_id: str = "mineru", **kwargs):
 | 招标文件 | 按章节递归切分 | 500 tokens | 保留层级 |
 | 法规条文 | 按条款切分 | 300 tokens | 独立引用 |
 
-### 3.2 RAG检索模块（混合检索 + 位置追踪）
+### 3.2 RAG检索模块（LightRAG 双层检索 + 知识图谱）
 
-> **设计来源**: RAGFlow 混合检索、Agentic-Procure-Audit-AI 检索策略
+> **核心组件**: LightRAG（pip 安装，直接使用）
+
+**LightRAG 双层检索架构：**
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    RAG检索模块                               │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│   用户查询                                                   │
-│       │                                                     │
-│       ▼                                                     │
-│   ┌─────────────┐                                           │
-│   │ 查询理解    │ ──→ 意图识别 / 实体抽取                    │
-│   └─────┬───────┘                                           │
-│         │                                                   │
-│   ┌─────┴───────────────────┐                              │
-│   ▼                         ▼                              │
-│ ┌─────────────┐       ┌─────────────┐                      │
-│ │  向量检索   │       │  BM25检索   │                      │
-│ │  (BGE-M3)   │       │  (精确匹配)  │                      │
-│ │  稠密向量   │       │  稀疏向量   │                      │
-│ └──────┬──────┘       └──────┬──────┘                      │
-│        │                      │                            │
-│        └──────────┬───────────┘                            │
-│                   ▼                                        │
-│   ┌───────────────────────────────────────┐                │
-│   │        RRF融合 (Reciprocal Rank)       │                │
-│   │  score = Σ 1/(k + rank_i), k=60       │                │
-│   │  α=0.3 稀疏/稠密平衡                   │                │
-│   └───────────────────┬───────────────────┘                │
-│                       ▼                                    │
-│   ┌───────────────────────────────────────┐                │
-│   │        Reranker (BGE-Reranker-v2)      │                │
-│   │        重排序 Top-50 → Top-10          │                │
-│   └───────────────────┬───────────────────┘                │
-│                       ▼                                    │
-│   ┌───────────────────────────────────────┐                │
-│   │  检索结果 + 位置信息（溯源引用）        │                │
-│   │  [{                                    │                │
-│   │    "content": "...",                  │                │
-│   │    "score": 0.92,                     │                │
-│   │    "positions": [(page, start, end)], │ ← 定位原文     │
-│   │    "doc_id": "bid_001",               │                │
-│   │    "metadata": {...}                  │                │
-│   │  }]                                   │                │
-│   └───────────────────────────────────────┘                │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    LightRAG 检索模块                                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   用户查询（来自 LangGraph Agent）                                           │
+│       │                                                                     │
+│       ▼                                                                     │
+│   ┌─────────────────────────────────────────────────────────────────────┐  │
+│   │                    查询模式选择                                       │  │
+│   │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐                  │  │
+│   │  │   Local     │  │   Global    │  │   Hybrid    │                  │  │
+│   │  │  (低层检索)  │  │  (高层检索)  │  │  (混合检索)  │  ← 推荐         │  │
+│   │  └─────────────┘  └─────────────┘  └─────────────┘                  │  │
+│   └─────────────────────────────────────────────────────────────────────┘  │
+│       │                                                                     │
+│       ├─────────────────────────────────────────────────────────┐          │
+│       │                                                         │          │
+│       ▼                                                         ▼          │
+│   ┌─────────────────────────────┐     ┌─────────────────────────────┐    │
+│   │      Low-Level Retrieval    │     │      High-Level Retrieval   │    │
+│   │      (低层：具体细节)        │     │      (高层：全局理解)        │    │
+│   │                             │     │                             │    │
+│   │  • 实体匹配                  │     │  • 主题/概念检索            │    │
+│   │  • 关系查询                  │     │  • 社区发现                 │    │
+│   │  • 精确属性                  │     │  • 全局摘要                 │    │
+│   │                             │     │                             │    │
+│   │  示例：                      │     │  示例：                      │    │
+│   │  "供应商A的注册资金？"       │     │  "哪家供应商综合实力最强？"  │    │
+│   │  "产品X的技术参数？"         │     │  "各供应商的技术方案对比"    │    │
+│   └──────────────┬──────────────┘     └──────────────┬──────────────┘    │
+│                  │                                   │                    │
+│                  └─────────────────┬─────────────────┘                    │
+│                                    ▼                                      │
+│   ┌─────────────────────────────────────────────────────────────────────┐  │
+│   │                      知识图谱 + 向量检索融合                          │  │
+│   │                                                                     │  │
+│   │   ┌─────────────┐           ┌─────────────┐                        │  │
+│   │   │ Knowledge   │           │   Vector    │                        │  │
+│   │   │   Graph     │           │   Search    │                        │  │
+│   │   │ (NetworkX)  │           │ (ChromaDB)  │                        │  │
+│   │   └──────┬──────┘           └──────┬──────┘                        │  │
+│   │          │                         │                                │  │
+│   │          └───────────┬─────────────┘                                │  │
+│   │                      ▼                                              │  │
+│   │              ┌─────────────┐                                        │  │
+│   │              │   Reranker  │  ← BGE-Reranker-v2-m3                  │  │
+│   │              └──────┬──────┘                                        │  │
+│   │                     ▼                                               │  │
+│   │              Top-K Context                                          │  │
+│   └─────────────────────────────────────────────────────────────────────┘  │
+│                                    │                                      │
+│                                    ▼                                      │
+│   ┌─────────────────────────────────────────────────────────────────────┐  │
+│   │  检索结果（返回给 LangGraph）                                         │  │
+│   │  {                                                                  │  │
+│   │    "context": "相关文本内容...",                                    │  │
+│   │    "entities": ["供应商A", "产品X"],     ← 知识图谱实体              │  │
+│   │    "relations": [("供应商A", "生产", "产品X")],  ← 实体关系         │  │
+│   │    "sources": [{"doc_id": "...", "page": 5}],  ← 溯源引用           │  │
+│   │    "confidence": 0.92                                               │  │
+│   │  }                                                                  │  │
+│   └─────────────────────────────────────────────────────────────────────┘  │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**混合检索优势：**
-- **向量检索**: 语义相似，处理同义词、改写
-- **BM25检索**: 精确匹配，专业术语、型号、编号
-- **RRF融合**: 结合两者优势，提升召回率
+**LightRAG 集成代码：**
+
+```python
+# backend/src/rag/lightrag_service.py
+from lightrag import LightRAG
+from lightrag.types import QueryMode
+
+class LightRAGService:
+    """LightRAG 检索服务 - 供 LangGraph Agent 调用"""
+
+    def __init__(self, working_dir: str, llm_model: str = "deepseek-chat"):
+        self.rag = LightRAG(
+            working_dir=working_dir,
+            llm_model=llm_model,
+            embedding_model="BAAI/bge-m3",
+            # 使用我们已有的 ChromaDB
+            vector_storage="chromadb",
+        )
+
+    async def insert_chunks(self, chunks: list[dict]):
+        """插入解析后的文档块（来自 MinerU/Docling）"""
+        for chunk in chunks:
+            await self.rag.ainsert(
+                chunk["content"],
+                metadata={
+                    "doc_id": chunk.get("doc_id"),
+                    "positions": chunk.get("positions"),
+                }
+            )
+
+    async def retrieve(
+        self,
+        query: str,
+        mode: QueryMode = QueryMode.HYBRID
+    ) -> dict:
+        """检索接口 - 供 LangGraph Retrieve 节点调用"""
+        result = await self.rag.aquery(query, mode=mode)
+        return {
+            "context": result.context,
+            "entities": result.entities,
+            "relations": result.relations,
+            "sources": result.sources,
+            "confidence": result.confidence,
+        }
+
+    async def get_supplier_graph(self, supplier_name: str) -> dict:
+        """获取供应商知识图谱（可视化用）"""
+        return await self.rag.aget_entity_graph(supplier_name)
+```
+
+**检索模式选择指南：**
+
+| 模式 | 适用场景 | 示例查询 |
+|------|----------|----------|
+| **Local** | 查询具体实体、精确信息 | "供应商A的注册资金是多少？" |
+| **Global** | 全局理解、对比分析 | "各供应商的技术方案有何差异？" |
+| **Hybrid** | 综合查询（推荐） | "评估供应商A的综合实力" |
+
+**知识图谱在评标中的应用：**
+
+```
+供应商关系图谱示例：
+
+     ┌─────────────┐
+     │   供应商A   │
+     └──────┬──────┘
+            │
+    ┌───────┼───────┐
+    │       │       │
+    ▼       ▼       ▼
+┌───────┐ ┌───────┐ ┌───────┐
+│ 产品X │ │ 产品Y │ │ 资质Z │
+│价格:1万│ │价格:2万│ │ISO9001│
+└───────┘ └───────┘ └───────┘
+    │
+    ▼
+┌───────────────┐
+│ 技术参数表     │
+│ 精度: 0.01mm  │
+│ 功率: 500W    │
+└───────────────┘
+```
+
+**与 RAGFlow 方案对比：**
+
+| 方面 | 原方案 (RAGFlow 混合检索) | 新方案 (LightRAG) |
+|------|---------------------------|-------------------|
+| **集成方式** | 借鉴设计，自实现 | pip 安装，直接使用 ✅ |
+| **知识图谱** | 无 | 内置轻量级 KG ✅ |
+| **双层检索** | 无 | Low-Level + High-Level ✅ |
+| **向量存储** | ChromaDB | ChromaDB（兼容）✅ |
+| **增量更新** | 需自实现 | 原生支持 ✅ |
+| **法律文档** | - | 84.8% 胜率 ✅ |
 
 ### 3.3 多Agent模块（RGSG工作流 + LangGraph状态机）
 
@@ -789,9 +936,39 @@ bid-evaluation-assistant/
 
 ## 十、关键设计模式总结
 
-> 本节总结了从 GitHub 研究项目中借鉴的核心设计模式
+> 本节总结了核心技术组件和借鉴的设计模式
 
-### 10.1 RGSG 工作流模式
+### 10.1 LightRAG 双层检索 ⭐（直接使用）
+
+**来源**: LightRAG (港大 HKUDS)
+
+```
+                    Query
+                      │
+          ┌───────────┼───────────┐
+          ▼           ▼           ▼
+      Local       Global       Hybrid
+    (低层检索)   (高层检索)   (混合检索)
+          │           │           │
+          ▼           ▼           ▼
+    具体实体      全局概念     综合结果
+    精确属性      主题摘要
+          │           │           │
+          └───────────┼───────────┘
+                      ▼
+              知识图谱 + 向量检索
+                      ▼
+                  Reranker
+                      ▼
+                 Top-K Context
+```
+
+**招投标应用：**
+- **Local**: "供应商A的注册资金是多少？"
+- **Global**: "哪家供应商综合实力最强？"
+- **Hybrid**: "评估供应商A并与其他对比"
+
+### 10.2 RGSG 工作流模式（借鉴设计）
 
 **来源**: Agentic-Procure-Audit-AI
 
@@ -801,16 +978,36 @@ Retrieve → Grade → Search → Generate
     └──────────┘ (迭代最多3次)
 ```
 
-| 节点 | 职责 | 输出 |
-|------|------|------|
-| Retrieve | 向量 + BM25 混合检索 | retrieved_chunks |
-| Grade | LLM 评估检索结果相关性 | grade_decision, relevance_score |
-| Search | 本地不足时网络搜索 | web_search_results |
-| Generate | 综合生成最终评估 | final_answer |
+| 节点 | 职责 | LightRAG 集成 |
+|------|------|---------------|
+| Retrieve | 检索相关上下文 | `lightrag.retrieve(query, mode=HYBRID)` |
+| Grade | 评估检索结果相关性 | LLM 评估 |
+| Search | 补充搜索 | 网络搜索/图谱扩展 |
+| Generate | 生成最终评估 | LLM 生成 |
 
-**适用场景**: 自适应检索，确保答案有据可依
+### 10.3 DSPy Prompt 优化 ⭐（直接使用）
 
-### 10.2 TypedDict 状态管理
+**来源**: Stanford DSPy
+
+```python
+import dspy
+
+# 定义评分模块
+class BidScorer(dspy.Module):
+    def __init__(self):
+        self.score = dspy.Predict("context, criteria -> score, reasoning")
+
+    def forward(self, context, criteria):
+        return self.score(context=context, criteria=criteria)
+
+# 使用 MIPROv2 自动优化（准确率 +15%）
+optimizer = dspy.MIPROv2(metric=accuracy_metric, auto="light")
+optimized_scorer = optimizer.compile(BidScorer(), trainset=train_data)
+```
+
+**优势**: 不再手动调 Prompt，自动优化评分准确率
+
+### 10.4 TypedDict 状态管理（借鉴设计）
 
 **来源**: Agentic-Procure-Audit-AI / LangGraph 最佳实践
 
@@ -825,26 +1022,22 @@ class State(TypedDict):
     citations: Annotated[list[dict], add]
 ```
 
-**优势**: 跨节点自动累积，无需手动合并
-
-### 10.3 解析器注册表模式
+### 10.5 解析器注册表模式（借鉴设计）
 
 **来源**: RAGFlow
 
 ```python
 PARSERS = {
-    "mineru": by_mineru,
-    "paddleocr": by_paddleocr,
-    "docx": by_docx,
+    "mineru": by_mineru,      # PDF 复杂布局
+    "docling": by_docling,    # Word/Excel
+    "paddleocr": by_paddleocr, # 扫描件
 }
 
 def chunk(filename, parser_id="mineru", **kwargs):
     return PARSERS.get(parser_id, default)(filename, **kwargs)
 ```
 
-**优势**: 开闭原则，新增解析器只需注册，无需修改现有代码
-
-### 10.4 位置追踪机制
+### 10.6 位置追踪机制（借鉴设计）
 
 **来源**: RAGFlow
 
@@ -857,7 +1050,7 @@ class Chunk:
 
 **应用**: 评标报告引用标书原文时可定位到具体页码和位置
 
-### 10.5 评分可解释性
+### 10.7 评分可解释性（借鉴设计）
 
 **来源**: Agentic-Procure-Audit-AI
 
@@ -871,17 +1064,6 @@ class ScoreWithReasoning(TypedDict):
 
 **原则**: 每个评分必须可追溯、可解释、可审计
 
-### 10.6 混合检索 + RRF 融合
-
-**来源**: RAGFlow / 2026 最佳实践
-
-```
-向量检索 ──┬──→ RRF融合 ──→ Reranker ──→ Top-K
-BM25检索 ──┘
-```
-
-**RRF 公式**: `score = Σ 1/(k + rank_i)`, k=60
-
 ---
 
 ## 十、附录
@@ -892,46 +1074,72 @@ BM25检索 ──┘
 # pyproject.toml
 [project]
 name = "bid-evaluation-assistant"
-version = "1.0.0"
+version = "3.0.0"
 requires-python = ">=3.11"
 
 dependencies = [
+    # Web 框架
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
     "pydantic>=2.10.0",
-    "magic-pdf[full]>=0.7.0",
-    "paddleocr>=2.8.0",
-    "chromadb>=0.5.0",
-    "flagembedding>=1.2.0",
+
+    # 文档解析
+    "magic-pdf[full]>=0.7.0",      # MinerU PDF解析
+    "docling>=1.0.0",               # IBM 多格式解析 ⭐
+    "paddleocr>=2.8.0",             # 扫描件 OCR
+
+    # RAG 核心
+    "lightrag-hku>=0.1.0",          # LightRAG 双层检索 ⭐
+    "chromadb>=0.5.0",              # 向量存储
+    "flagembedding>=1.2.0",         # BGE Embedding
+
+    # Agent 框架
     "langgraph>=0.2.0",
     "langchain>=0.3.0",
+
+    # Prompt 优化
+    "dspy>=2.5.0",                  # DSPy 自动优化 ⭐
+
+    # LLM
     "openai>=1.50.0",
-    "dashscope>=1.20.0",
+    "dashscope>=1.20.0",            # 通义千问
+
+    # 知识图谱（可选，生产环境）
+    # "neo4j>=5.0.0",
+
+    # 评估
     "ragas>=0.1.0",
     "deepeval>=0.21.0",
+
+    # 可观测性
     "langfuse>=2.0.0",
 ]
 ```
 
 ### 10.2 参考资料
 
-**开源项目（直接使用）：**
+**直接使用的开源项目：**
+- LightRAG: https://github.com/HKUDS/LightRAG ⭐
+  - 使用：双层检索、知识图谱、向量检索融合
 - MinerU: https://github.com/opendatalab/MinerU
-- PaddleOCR: https://github.com/PaddlePaddle/PaddleOCR
+  - 使用：复杂 PDF 解析
+- Docling: https://github.com/docling-project/docling ⭐
+  - 使用：Word/Excel/多格式解析
+- DSPy: https://github.com/stanfordnlp/dspy ⭐
+  - 使用：Prompt 自动优化
 - ChromaDB: https://github.com/chroma-core/chroma
+  - 使用：向量存储（LightRAG 原生支持）
 - LangGraph: https://github.com/langchain-ai/langgraph
-- RAGAS: https://github.com/explodinggradients/ragas
-- DeepEval: https://github.com/confident-ai/deepeval
-- Langfuse: https://github.com/langfuse/langfuse
+  - 使用：Agent 工作流编排
 
-**研究项目（借鉴设计）：**
+**借鉴设计的项目：**
 - Agentic-Procure-Audit-AI: https://github.com/MrAliHasan/Agentic-Procure-Audit-AI
-  - 借鉴：RGSG工作流、TypedDict状态管理、评分可解释性、四维评分框架
+  - 借鉴：RGSG 工作流、评分可解释性
 - RAGFlow: https://github.com/infiniflow/ragflow
-  - 借鉴：解析器注册表模式、位置追踪机制、混合检索、上下文附加
+  - 借鉴：解析器注册表模式、位置追踪机制
 
 ---
 
-*设计文档版本：v2.0*
+*设计文档版本：v3.0*
 *最后更新：2026-02-20*
-*更新内容：融入 GitHub 项目研究发现的关键设计模式*
+*更新内容：集成 LightRAG、DSPy、Docling，采用混合架构方案*
