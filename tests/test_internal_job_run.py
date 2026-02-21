@@ -52,3 +52,10 @@ def test_internal_run_job_failure_paths_to_dlq_then_failed(client):
     assert job["status"] == "failed"
     dlq = store.get_dlq_item(data["dlq_id"], tenant_id="tenant_default")
     assert dlq is not None
+
+
+def test_internal_run_requires_internal_header(client):
+    job_id = _create_parse_job(client)
+    resp = client.post(f"/api/v1/internal/jobs/{job_id}/run")
+    assert resp.status_code == 403
+    assert resp.json()["error"]["code"] == "AUTH_FORBIDDEN"

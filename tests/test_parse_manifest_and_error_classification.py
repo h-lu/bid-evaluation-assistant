@@ -91,3 +91,10 @@ def test_parse_success_updates_manifest_status(client):
     manifest = manifest_resp.json()["data"]
     assert manifest["status"] == "succeeded"
     assert manifest["error_code"] is None
+
+
+def test_internal_parse_manifest_requires_internal_header(client):
+    _, job_id, _ = _upload_and_create_parse_job(client)
+    resp = client.get(f"/api/v1/internal/parse-manifests/{job_id}")
+    assert resp.status_code == 403
+    assert resp.json()["error"]["code"] == "AUTH_FORBIDDEN"

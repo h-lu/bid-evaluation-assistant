@@ -63,13 +63,13 @@
 说明：以下为 `codex/gate-c-api-skeleton` 分支的最小可运行证据。
 
 1. 运行命令：`pytest -v`
-2. 测试结果：`46 passed`
+2. 测试结果：`48 passed`
 3. 覆盖范围：
    - B-1：统一响应包络、幂等、`202 + job_id`、`resume_token`、citation source、DLQ 运维接口
    - B-2：任务初始状态、`jobs/{job_id}` 状态查询契约、状态机流转、`cancel` 语义、内部回放接口
    - B-4：`documents/{document_id}/parse` 异步受理契约、parse manifest 最小字段、解析失败错误码分类
    - B-4：`content_list/context_list` 发现、bbox 归一化、`utf-8 -> gb18030` 编码回退
-   - B-3：租户隔离最小验证（跨租户阻断）
+   - B-3：租户隔离最小验证（跨租户阻断）与内部调试端点访问控制
 4. 证据测试文件：
    - `tests/test_response_envelope.py`
    - `tests/test_idempotency.py`
