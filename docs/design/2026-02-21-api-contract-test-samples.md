@@ -25,6 +25,7 @@
 9. `GET /api/v1/dlq/items`
 10. `POST /api/v1/dlq/items/{item_id}/requeue`
 11. `POST /api/v1/dlq/items/{item_id}/discard`
+12. `POST /api/v1/retrieval/query`
 
 ## 3. 执行约定
 
@@ -66,6 +67,9 @@
 | `CT-027` | `POST /dlq/items/{item_id}/requeue` | 缺失幂等键 | 不带 `Idempotency-Key` | `400` | `error.code=IDEMPOTENCY_MISSING` |
 | `CT-028` | `POST /dlq/items/{item_id}/discard` | 缺失幂等键 | 不带 `Idempotency-Key` | `400` | `error.code=IDEMPOTENCY_MISSING` |
 | `CT-029` | `POST /dlq/items/{item_id}/requeue` | 幂等重放 | 同 key + 同 body | `202` | 返回相同 `job_id` |
+| `CT-030` | `POST /retrieval/query` | 模式选择（relation） | `query_type=relation` | `200` | `data.selected_mode=global` |
+| `CT-031` | `POST /retrieval/query` | 高风险强制 mix | `query_type=fact + high_risk=true` | `200` | `data.selected_mode=mix` |
+| `CT-032` | `POST /retrieval/query` | 租户/项目过滤 | 混合租户与项目样本 | `200` | 仅返回当前租户且 `project_id` 命中项 |
 
 ## 5. 关键断言模板
 
@@ -112,7 +116,7 @@
 3. 异步任务契约：`CT-001/005/007/009/011/013/018/021/023`。
 4. `resume_token` 与 citation schema：`CT-013/014/015`。
 5. B-2 状态机运维动作（cancel/DLQ）：`CT-011/012/017/018/019/020/022`。
-6. 多租户隔离：`CT-024/025/026`。
+6. 多租户隔离：`CT-024/025/026/032`。
 
 ## 8. 后续自动化建议
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Literal
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -37,6 +38,16 @@ class DlqDiscardRequest(BaseModel):
 
 class InternalTransitionRequest(BaseModel):
     new_status: str
+
+
+class RetrievalQueryRequest(BaseModel):
+    project_id: str
+    supplier_id: str
+    query: str = Field(min_length=1)
+    query_type: Literal["fact", "relation", "comparison", "summary", "risk"]
+    high_risk: bool = False
+    top_k: int = Field(default=20, ge=1, le=100)
+    doc_scope: list[Literal["tender", "bid", "attachment"]] = Field(default_factory=list)
 
 
 def success_envelope(data: Any, trace_id: str, message: str = "ok") -> dict[str, Any]:

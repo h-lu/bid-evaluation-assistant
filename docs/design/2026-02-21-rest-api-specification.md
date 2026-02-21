@@ -281,6 +281,59 @@
 }
 ```
 
+### 5.6 `POST /retrieval/query`
+
+请求体：
+
+```json
+{
+  "project_id": "prj_xxx",
+  "supplier_id": "sup_xxx",
+  "query": "投标文件中与交付周期相关的承诺",
+  "query_type": "relation",
+  "top_k": 20,
+  "doc_scope": ["bid"]
+}
+```
+
+响应 `200`：
+
+```json
+{
+  "success": true,
+  "data": {
+    "query": "投标文件中与交付周期相关的承诺",
+    "query_type": "relation",
+    "selected_mode": "global",
+    "degraded": false,
+    "items": [
+      {
+        "chunk_id": "ck_xxx",
+        "score_raw": 0.82,
+        "score_rerank": 0.89,
+        "reason": "matched relation intent",
+        "metadata": {
+          "project_id": "prj_xxx",
+          "supplier_id": "sup_xxx",
+          "doc_type": "bid",
+          "page": 8,
+          "bbox": [120.2, 310.0, 520.8, 365.4]
+        }
+      }
+    ],
+    "total": 1
+  },
+  "meta": {
+    "trace_id": "trace_xxx"
+  }
+}
+```
+
+错误：
+
+1. `REQ_VALIDATION_FAILED`
+2. `TENANT_SCOPE_VIOLATION`
+
 ## 6. 长任务契约
 
 ### 6.1 提交返回

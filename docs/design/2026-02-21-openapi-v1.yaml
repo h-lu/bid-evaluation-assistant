@@ -4,7 +4,7 @@ info:
   version: v2026.02.21-r3
   description: |
     Gate C OpenAPI contract subset for async job submission, parse/resume/cancel,
-    job status query, DLQ operations, and citation source lookup.
+    job status query, DLQ operations, citation source lookup, and retrieval query.
 servers:
   - url: /api/v1
 security:
@@ -134,6 +134,38 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '409':
           description: Idempotency conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /retrieval/query:
+    post:
+      operationId: retrievalQuery
+      summary: Query retrieval candidates with mode selection and metadata filtering
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RetrievalQueryRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetrievalQueryResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Tenant scope violation
           content:
             application/json:
               schema:
@@ -666,6 +698,106 @@ components:
           const: true
         data:
           $ref: '#/components/schemas/ResumeAcceptedData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    RetrievalQueryRequest:
+      type: object
+      required: [project_id, supplier_id, query, query_type]
+      properties:
+        project_id:
+          type: string
+        supplier_id:
+          type: string
+        query:
+          type: string
+          minLength: 1
+        query_type:
+          type: string
+          enum: [fact, relation, comparison, summary, risk]
+        high_risk:
+          type: boolean
+          default: false
+        top_k:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+        doc_scope:
+          type: array
+          items:
+            type: string
+            enum: [tender, bid, attachment]
+
+    RetrievalItemMetadata:
+      type: object
+      required: [project_id, supplier_id, doc_type, page, bbox]
+      properties:
+        project_id:
+          type: string
+        supplier_id:
+          type: string
+        doc_type:
+          type: string
+          enum: [tender, bid, attachment]
+        page:
+          type: integer
+          minimum: 1
+        bbox:
+          type: array
+          minItems: 4
+          maxItems: 4
+          items:
+            type: number
+
+    RetrievalItem:
+      type: object
+      required: [chunk_id, score_raw, reason, metadata]
+      properties:
+        chunk_id:
+          type: string
+        score_raw:
+          type: number
+        score_rerank:
+          oneOf:
+            - type: 'null'
+            - type: number
+        reason:
+          type: string
+        metadata:
+          $ref: '#/components/schemas/RetrievalItemMetadata'
+
+    RetrievalQueryData:
+      type: object
+      required: [query, query_type, selected_mode, degraded, items, total]
+      properties:
+        query:
+          type: string
+        query_type:
+          type: string
+          enum: [fact, relation, comparison, summary, risk]
+        selected_mode:
+          type: string
+          enum: [local, global, hybrid, mix]
+        degraded:
+          type: boolean
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RetrievalItem'
+        total:
+          type: integer
+          minimum: 0
+
+    RetrievalQueryResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/RetrievalQueryData'
         meta:
           $ref: '#/components/schemas/Meta'
 

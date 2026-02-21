@@ -358,6 +358,69 @@ class InMemoryStore:
         self._assert_tenant_scope(source_tenant, tenant_id)
         return source
 
+    @staticmethod
+    def _select_retrieval_mode(*, query_type: str, high_risk: bool) -> str:
+        if high_risk:
+            return "mix"
+        mapping = {
+            "fact": "local",
+            "relation": "global",
+            "comparison": "hybrid",
+            "summary": "hybrid",
+            "risk": "mix",
+        }
+        return mapping.get(query_type, "hybrid")
+
+    def retrieval_query(
+        self,
+        *,
+        tenant_id: str,
+        project_id: str,
+        supplier_id: str,
+        query: str,
+        query_type: str,
+        high_risk: bool,
+        top_k: int,
+        doc_scope: list[str],
+    ) -> dict[str, Any]:
+        selected_mode = self._select_retrieval_mode(query_type=query_type, high_risk=high_risk)
+        candidates = [x for x in self.citation_sources.values() if x.get("tenant_id") == tenant_id]
+        candidates = [x for x in candidates if x.get("project_id") == project_id]
+        candidates = [x for x in candidates if x.get("supplier_id") == supplier_id]
+        if doc_scope:
+            scope = set(doc_scope)
+            candidates = [x for x in candidates if x.get("doc_type") in scope]
+
+        items = []
+        for source in candidates:
+            score_raw = float(source.get("score_raw", 0.5))
+            score_rerank = min(1.0, score_raw + 0.05)
+            items.append(
+                {
+                    "chunk_id": source.get("chunk_id"),
+                    "score_raw": score_raw,
+                    "score_rerank": score_rerank,
+                    "reason": f"matched {query_type} intent",
+                    "metadata": {
+                        "project_id": source.get("project_id"),
+                        "supplier_id": source.get("supplier_id"),
+                        "doc_type": source.get("doc_type"),
+                        "page": int(source.get("page", 1)),
+                        "bbox": source.get("bbox", [0, 0, 1, 1]),
+                    },
+                }
+            )
+
+        items = sorted(items, key=lambda x: x["score_rerank"], reverse=True)[:top_k]
+        return {
+            "query": query,
+            "query_type": query_type,
+            "selected_mode": selected_mode,
+            "degraded": False,
+            "items": items,
+            "total": len(items),
+        }
+
     def seed_dlq_item(
         self,
         *,
