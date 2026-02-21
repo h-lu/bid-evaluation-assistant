@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from app.errors import ApiError
@@ -30,6 +31,7 @@ class InMemoryStore:
         self.idempotency_records: dict[tuple[str, str], IdempotencyRecord] = {}
         self.jobs: dict[str, dict[str, Any]] = {}
         self.documents: dict[str, dict[str, Any]] = {}
+        self.parse_manifests: dict[str, dict[str, Any]] = {}
         self.resume_tokens: dict[str, str] = {}
         self.citation_sources: dict[str, dict[str, Any]] = {}
         self.dlq_items: dict[str, dict[str, Any]] = {}
@@ -38,6 +40,7 @@ class InMemoryStore:
         self.idempotency_records.clear()
         self.jobs.clear()
         self.documents.clear()
+        self.parse_manifests.clear()
         self.resume_tokens.clear()
         self.citation_sources.clear()
         self.dlq_items.clear()
@@ -56,6 +59,65 @@ class InMemoryStore:
                 retryable=False,
                 http_status=403,
             )
+
+    @staticmethod
+    def _utcnow_iso() -> str:
+        return datetime.now(UTC).isoformat()
+
+    @staticmethod
+    def _select_parser(*, filename: str, doc_type: str | None) -> tuple[str, list[str]]:
+        lower_name = filename.lower()
+        office_or_html_suffixes = (".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx", ".html", ".htm")
+        if lower_name.endswith(".pdf"):
+            return "mineru", ["docling", "ocr"]
+        if lower_name.endswith(office_or_html_suffixes):
+            return "docling", ["ocr"]
+        if (doc_type or "").lower() in {"tender", "bid", "attachment"}:
+            return "mineru", ["docling", "ocr"]
+        return "ocr", []
+
+    @staticmethod
+    def _classify_error_code(error_code: str) -> dict[str, Any]:
+        matrix: dict[str, dict[str, Any]] = {
+            "DOC_PARSE_OUTPUT_NOT_FOUND": {
+                "class": "permanent",
+                "retryable": False,
+                "message": "parse output missing",
+            },
+            "DOC_PARSE_SCHEMA_INVALID": {
+                "class": "transient",
+                "retryable": True,
+                "message": "parse schema invalid",
+            },
+            "MINERU_BBOX_FORMAT_INVALID": {
+                "class": "permanent",
+                "retryable": False,
+                "message": "bbox format invalid",
+            },
+            "TEXT_ENCODING_UNSUPPORTED": {
+                "class": "permanent",
+                "retryable": False,
+                "message": "text encoding unsupported",
+            },
+            "PARSER_FALLBACK_EXHAUSTED": {
+                "class": "transient",
+                "retryable": True,
+                "message": "parser fallback exhausted",
+            },
+            "INTERNAL_DEBUG_FORCED_FAIL": {
+                "class": "transient",
+                "retryable": True,
+                "message": "forced failure by internal debug run",
+            },
+        }
+        return matrix.get(
+            error_code,
+            {
+                "class": "transient",
+                "retryable": True,
+                "message": "forced failure by internal debug run",
+            },
+        )
 
     def run_idempotent(
         self,
@@ -123,6 +185,7 @@ class InMemoryStore:
             "doc_type": payload.get("doc_type"),
             "filename": payload.get("filename"),
             "file_sha256": payload.get("file_sha256"),
+            "file_size": payload.get("file_size"),
             "status": "uploaded",
         }
         self.jobs[job_id] = {
@@ -173,6 +236,28 @@ class InMemoryStore:
             "payload": payload,
             "last_error": None,
         }
+        selected_parser, fallback_chain = self._select_parser(
+            filename=document.get("filename", ""),
+            doc_type=document.get("doc_type"),
+        )
+        self.parse_manifests[job_id] = {
+            "job_id": job_id,
+            "document_id": document_id,
+            "tenant_id": tenant_id,
+            "selected_parser": selected_parser,
+            "fallback_chain": fallback_chain,
+            "input_files": [
+                {
+                    "name": document.get("filename"),
+                    "sha256": document.get("file_sha256"),
+                    "size": int(document.get("file_size") or 0),
+                }
+            ],
+            "started_at": None,
+            "ended_at": None,
+            "status": "queued",
+            "error_code": None,
+        }
         document["status"] = "parse_queued"
         return {
             "document_id": document_id,
@@ -189,6 +274,13 @@ class InMemoryStore:
             return None
         self._assert_tenant_scope(job.get("tenant_id", "tenant_default"), tenant_id)
         return job
+
+    def get_parse_manifest_for_tenant(self, *, job_id: str, tenant_id: str) -> dict[str, Any] | None:
+        manifest = self.parse_manifests.get(job_id)
+        if manifest is None:
+            return None
+        self._assert_tenant_scope(manifest.get("tenant_id", "tenant_default"), tenant_id)
+        return manifest
 
     def transition_job_status(
         self,
@@ -445,6 +537,7 @@ class InMemoryStore:
         job_id: str,
         tenant_id: str,
         force_fail: bool = False,
+        force_error_code: str | None = None,
     ) -> dict[str, Any]:
         job = self.get_job_for_tenant(job_id=job_id, tenant_id=tenant_id)
         if job is None:
@@ -464,6 +557,13 @@ class InMemoryStore:
                 tenant_id=tenant_id,
             )
             status = job["status"]
+        if job.get("job_type") == "parse":
+            manifest = self.get_parse_manifest_for_tenant(job_id=job_id, tenant_id=tenant_id)
+            if manifest is not None:
+                if manifest.get("started_at") is None:
+                    manifest["started_at"] = self._utcnow_iso()
+                manifest["status"] = "running"
+                manifest["error_code"] = None
 
         if status != "running":
             raise ApiError(
@@ -475,6 +575,13 @@ class InMemoryStore:
             )
 
         if force_fail:
+            error_code = force_error_code
+            if not error_code:
+                if job.get("job_type") == "parse":
+                    error_code = "DOC_PARSE_OUTPUT_NOT_FOUND"
+                else:
+                    error_code = "INTERNAL_DEBUG_FORCED_FAIL"
+            error = self._classify_error_code(error_code)
             self.transition_job_status(
                 job_id=job_id,
                 new_status="dlq_pending",
@@ -487,8 +594,8 @@ class InMemoryStore:
             )
             dlq_item = self.seed_dlq_item(
                 job_id=job_id,
-                error_class="transient",
-                error_code="INTERNAL_DEBUG_FORCED_FAIL",
+                error_class=error["class"],
+                error_code=error_code,
                 tenant_id=tenant_id,
             )
             failed_job = self.transition_job_status(
@@ -497,11 +604,17 @@ class InMemoryStore:
                 tenant_id=tenant_id,
             )
             failed_job["last_error"] = {
-                "code": "INTERNAL_DEBUG_FORCED_FAIL",
-                "message": "forced failure by internal debug run",
-                "retryable": True,
-                "class": "transient",
+                "code": error_code,
+                "message": error["message"],
+                "retryable": error["retryable"],
+                "class": error["class"],
             }
+            if job.get("job_type") == "parse":
+                manifest = self.get_parse_manifest_for_tenant(job_id=job_id, tenant_id=tenant_id)
+                if manifest is not None:
+                    manifest["status"] = "failed"
+                    manifest["error_code"] = error_code
+                    manifest["ended_at"] = self._utcnow_iso()
             return {
                 "job_id": job_id,
                 "final_status": "failed",
@@ -513,6 +626,12 @@ class InMemoryStore:
             new_status="succeeded",
             tenant_id=tenant_id,
         )
+        if job.get("job_type") == "parse":
+            manifest = self.get_parse_manifest_for_tenant(job_id=job_id, tenant_id=tenant_id)
+            if manifest is not None:
+                manifest["status"] = "succeeded"
+                manifest["error_code"] = None
+                manifest["ended_at"] = self._utcnow_iso()
         return {
             "job_id": job_id,
             "final_status": "succeeded",

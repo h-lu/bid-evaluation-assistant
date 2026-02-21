@@ -167,6 +167,7 @@ def create_app() -> FastAPI:
             "doc_type": doc_type,
             "filename": file.filename or "upload.bin",
             "file_sha256": hashlib.sha256(file_bytes).hexdigest(),
+            "file_size": len(file_bytes),
             "trace_id": _trace_id_from_request(request),
             "tenant_id": _tenant_id_from_request(request),
         }
@@ -463,6 +464,7 @@ def create_app() -> FastAPI:
         job_id: str,
         request: Request,
         force_fail: bool = Query(default=False),
+        error_code: str | None = Query(default=None),
         x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
     ):
         if x_internal_debug != "true":
@@ -477,8 +479,37 @@ def create_app() -> FastAPI:
             job_id=job_id,
             tenant_id=_tenant_id_from_request(request),
             force_fail=force_fail,
+            force_error_code=error_code,
         )
         return success_envelope(result, _trace_id_from_request(request))
+
+    @app.get("/api/v1/internal/parse-manifests/{job_id}")
+    def internal_get_parse_manifest(
+        job_id: str,
+        request: Request,
+        x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
+    ):
+        if x_internal_debug != "true":
+            raise ApiError(
+                code="AUTH_FORBIDDEN",
+                message="internal endpoint forbidden",
+                error_class="security_sensitive",
+                retryable=False,
+                http_status=403,
+            )
+        manifest = store.get_parse_manifest_for_tenant(
+            job_id=job_id,
+            tenant_id=_tenant_id_from_request(request),
+        )
+        if manifest is None:
+            raise ApiError(
+                code="DOC_PARSE_OUTPUT_NOT_FOUND",
+                message="parse manifest not found",
+                error_class="validation",
+                retryable=False,
+                http_status=404,
+            )
+        return success_envelope(manifest, _trace_id_from_request(request))
 
     return app
 
