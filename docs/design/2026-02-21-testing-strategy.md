@@ -51,10 +51,13 @@ upload -> parse/index -> evaluate -> hitl(optional) -> report -> archive
 | HITL | 命中阈值 | 进入 `needs_manual_decision` |
 | Resume | 合法恢复 | 回到 `running` 并完成 |
 | DLQ | 重试耗尽 | `dlq_recorded` 后 `failed` |
+| 回放 | RP-001 ~ RP-005 | 状态机与重试行为可复现 |
 | 引用 | citation 回跳 | 页码+bbox 可定位 |
 | 幂等 | 同 key 同 body | 返回同结果 |
 | 幂等冲突 | 同 key 异 body | 409 `IDEMPOTENCY_CONFLICT` |
 | 约束改写 | 改写不破坏硬约束 | `constraints_preserved=true` |
+
+回放案例定义以 `docs/design/2026-02-21-job-system-and-retry-spec.md` 为准。
 
 ## 4. 质量门禁测试
 
