@@ -190,8 +190,17 @@ class InMemoryStore:
         self._assert_tenant_scope(job.get("tenant_id", "tenant_default"), tenant_id)
         return job
 
-    def transition_job_status(self, *, job_id: str, new_status: str) -> dict[str, Any]:
-        job = self.get_job(job_id)
+    def transition_job_status(
+        self,
+        *,
+        job_id: str,
+        new_status: str,
+        tenant_id: str | None = None,
+    ) -> dict[str, Any]:
+        if tenant_id is None:
+            job = self.get_job(job_id)
+        else:
+            job = self.get_job_for_tenant(job_id=job_id, tenant_id=tenant_id)
         if job is None:
             raise ApiError(
                 code="JOB_NOT_FOUND",

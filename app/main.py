@@ -12,6 +12,7 @@ from app.errors import ApiError
 from app.schemas import (
     CreateEvaluationRequest,
     DlqDiscardRequest,
+    InternalTransitionRequest,
     ResumeRequest,
     error_envelope,
     success_envelope,
@@ -388,6 +389,35 @@ def create_app() -> FastAPI:
             tenant_id=_tenant_id_from_request(request),
         )
         return success_envelope(data, _trace_id_from_request(request))
+
+    @app.post("/api/v1/internal/jobs/{job_id}/transition")
+    def internal_transition_job(
+        job_id: str,
+        payload: InternalTransitionRequest,
+        request: Request,
+        x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
+    ):
+        if x_internal_debug != "true":
+            raise ApiError(
+                code="AUTH_FORBIDDEN",
+                message="internal endpoint forbidden",
+                error_class="security_sensitive",
+                retryable=False,
+                http_status=403,
+            )
+        updated = store.transition_job_status(
+            job_id=job_id,
+            new_status=payload.new_status,
+            tenant_id=_tenant_id_from_request(request),
+        )
+        return success_envelope(
+            {
+                "job_id": updated["job_id"],
+                "status": updated["status"],
+                "retry_count": updated.get("retry_count", 0),
+            },
+            _trace_id_from_request(request),
+        )
 
     return app
 

@@ -35,6 +35,10 @@ class DlqDiscardRequest(BaseModel):
     reviewer_id: str = ""
 
 
+class InternalTransitionRequest(BaseModel):
+    new_status: str
+
+
 def success_envelope(data: Any, trace_id: str, message: str = "ok") -> dict[str, Any]:
     return {
         "success": True,
