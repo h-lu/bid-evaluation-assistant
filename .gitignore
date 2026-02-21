@@ -55,3 +55,7 @@ htmlcov/
 
 # ChromaDB
 chroma_data/
+
+# Git worktrees
+.worktrees/
+worktrees/
