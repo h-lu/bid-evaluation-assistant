@@ -155,6 +155,8 @@ pytest -v
 uvicorn app.main:app --reload
 ```
 
+说明：本骨架通过中间件模拟“JWT 注入租户上下文”，本地可用 `x-tenant-id` 请求头验证租户隔离行为。
+
 当前已覆盖最小接口：
 
 1. `POST /api/v1/documents/upload`

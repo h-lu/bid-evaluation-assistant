@@ -60,6 +60,9 @@
 | `CT-021` | `GET /jobs` | 列表查询 | 默认参数 | `200` | 返回 `items[]/total` |
 | `CT-022` | `GET /jobs?type=evaluation` | 类型过滤 | `type=evaluation` | `200` | 全部 `job_type=evaluation` |
 | `CT-023` | `GET /jobs?limit=1&cursor=...` | 游标分页 | 有效 `cursor/limit` | `200` | 返回 `next_cursor` 且可翻页 |
+| `CT-024` | `GET /jobs/{job_id}` | 跨租户读取 | 资源租户与当前租户不一致 | `403` | `error.code=TENANT_SCOPE_VIOLATION` |
+| `CT-025` | `POST /documents/{document_id}/parse` | 跨租户写入 | 文档租户与当前租户不一致 | `403` | `error.code=TENANT_SCOPE_VIOLATION` |
+| `CT-026` | `GET /jobs?type=evaluation` | 租户级列表隔离 | 混合租户样本 | `200` | 仅返回当前租户任务 |
 
 ## 5. 关键断言模板
 
@@ -101,11 +104,12 @@
 
 ## 7. Gate B-1 验收映射
 
-1. 统一响应模型与错误对象：`CT-001/006/010/014/016/019`。
+1. 统一响应模型与错误对象：`CT-001/006/010/014/016/019/024/025`。
 2. 幂等策略：`CT-002/003`。
 3. 异步任务契约：`CT-001/005/007/009/011/013/018/021/023`。
 4. `resume_token` 与 citation schema：`CT-013/014/015`。
 5. B-2 状态机运维动作（cancel/DLQ）：`CT-011/012/017/018/019/020/022`。
+6. 多租户隔离：`CT-024/025/026`。
 
 ## 8. 后续自动化建议
 
