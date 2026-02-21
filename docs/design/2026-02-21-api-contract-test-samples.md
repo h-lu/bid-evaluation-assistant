@@ -20,10 +20,11 @@
 4. `POST /api/v1/evaluations/{evaluation_id}/resume`
 5. `GET /api/v1/jobs/{job_id}`
 6. `POST /api/v1/jobs/{job_id}/cancel`
-7. `GET /api/v1/citations/{chunk_id}/source`
-8. `GET /api/v1/dlq/items`
-9. `POST /api/v1/dlq/items/{item_id}/requeue`
-10. `POST /api/v1/dlq/items/{item_id}/discard`
+7. `GET /api/v1/jobs?status=&type=&cursor=&limit=`
+8. `GET /api/v1/citations/{chunk_id}/source`
+9. `GET /api/v1/dlq/items`
+10. `POST /api/v1/dlq/items/{item_id}/requeue`
+11. `POST /api/v1/dlq/items/{item_id}/discard`
 
 ## 3. 执行约定
 
@@ -56,6 +57,9 @@
 | `CT-018` | `POST /dlq/items/{item_id}/requeue` | 重放 DLQ 项 | item 状态 `open` | `202` | 返回新 `job_id` 且条目变 `requeued` |
 | `CT-019` | `POST /dlq/items/{item_id}/discard` | 缺失审批字段 | `reason/reviewer_id` 为空 | `400` | `error.code=DLQ_DISCARD_REQUIRES_APPROVAL` |
 | `CT-020` | `POST /dlq/items/{item_id}/discard` | 合法丢弃 | `reason + reviewer_id` | `200` | 条目状态 `discarded` |
+| `CT-021` | `GET /jobs` | 列表查询 | 默认参数 | `200` | 返回 `items[]/total` |
+| `CT-022` | `GET /jobs?type=evaluation` | 类型过滤 | `type=evaluation` | `200` | 全部 `job_type=evaluation` |
+| `CT-023` | `GET /jobs?limit=1&cursor=...` | 游标分页 | 有效 `cursor/limit` | `200` | 返回 `next_cursor` 且可翻页 |
 
 ## 5. 关键断言模板
 
@@ -99,9 +103,9 @@
 
 1. 统一响应模型与错误对象：`CT-001/006/010/014/016/019`。
 2. 幂等策略：`CT-002/003`。
-3. 异步任务契约：`CT-001/005/007/009/011/013/018`。
+3. 异步任务契约：`CT-001/005/007/009/011/013/018/021/023`。
 4. `resume_token` 与 citation schema：`CT-013/014/015`。
-5. B-2 状态机运维动作（cancel/DLQ）：`CT-011/012/017/018/019/020`。
+5. B-2 状态机运维动作（cancel/DLQ）：`CT-011/012/017/018/019/020/022`。
 
 ## 8. 后续自动化建议
 

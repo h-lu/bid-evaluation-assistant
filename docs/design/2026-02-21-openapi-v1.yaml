@@ -236,6 +236,43 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /jobs:
+    get:
+      operationId: listJobs
+      summary: List jobs with optional filters and cursor pagination
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: type
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobListResponse'
   /jobs/{job_id}/cancel:
     post:
       operationId: cancelJob
@@ -661,6 +698,34 @@ components:
           const: true
         data:
           $ref: '#/components/schemas/JobStatusData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    JobListData:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/JobStatusData'
+        total:
+          type: integer
+          minimum: 0
+        next_cursor:
+          oneOf:
+            - type: 'null'
+            - type: string
+
+    JobListResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/JobListData'
         meta:
           $ref: '#/components/schemas/Meta'
 

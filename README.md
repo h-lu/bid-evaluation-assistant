@@ -161,9 +161,10 @@ uvicorn app.main:app --reload
 2. `POST /api/v1/documents/{document_id}/parse`
 3. `POST /api/v1/evaluations`
 4. `GET /api/v1/jobs/{job_id}`
-5. `POST /api/v1/jobs/{job_id}/cancel`
-6. `POST /api/v1/evaluations/{evaluation_id}/resume`
-7. `GET /api/v1/citations/{chunk_id}/source`
-8. `GET /api/v1/dlq/items`
-9. `POST /api/v1/dlq/items/{item_id}/requeue`
-10. `POST /api/v1/dlq/items/{item_id}/discard`
+5. `GET /api/v1/jobs?status=&type=&cursor=&limit=`
+6. `POST /api/v1/jobs/{job_id}/cancel`
+7. `POST /api/v1/evaluations/{evaluation_id}/resume`
+8. `GET /api/v1/citations/{chunk_id}/source`
+9. `GET /api/v1/dlq/items`
+10. `POST /api/v1/dlq/items/{item_id}/requeue`
+11. `POST /api/v1/dlq/items/{item_id}/discard`
