@@ -1,172 +1,182 @@
 # REST API 规范
 
-> 版本：v3.0
-> 日期：2026-02-21
-> 架构基线：`docs/plans/2026-02-21-end-to-end-unified-design.md`
+> 版本：v2026.02.21-r3  
+> 状态：Active  
+> 对齐：`docs/plans/2026-02-21-end-to-end-unified-design.md`
 
----
+## 1. 通用约定
 
-## 1. 通用规范
+1. 基础路径：`/api/v1`
+2. 鉴权：JWT Bearer（租户从 token 注入）
+3. 写接口：强制 `Idempotency-Key`
+4. 长任务：返回 `202 Accepted + job_id`
+5. 所有响应：包含 `trace_id`
 
-- 前缀：`/api/v1`
-- 鉴权：JWT Bearer
-- 多租户：`tenant_id` 从 JWT 提取，客户端不可指定
-- 统一响应：`success/data/message/meta(trace_id)`
-- 统一错误：`success=false + error.code + trace_id`
+## 2. 统一响应模型
 
----
+### 2.1 Success
 
-## 2. 角色与权限
+```json
+{
+  "success": true,
+  "data": {},
+  "message": "ok",
+  "meta": {
+    "trace_id": "trace_xxx",
+    "request_id": "req_xxx"
+  }
+}
+```
 
-- `admin`
-- `agent`
-- `evaluator`
-- `viewer`
+### 2.2 Error
 
-高风险动作：`DLQ discard`、终审发布，要求二次确认并审计。
+```json
+{
+  "success": false,
+  "error": {
+    "code": "REQ_VALIDATION_FAILED",
+    "message": "invalid payload",
+    "retryable": false,
+    "class": "validation"
+  },
+  "meta": {
+    "trace_id": "trace_xxx",
+    "request_id": "req_xxx"
+  }
+}
+```
 
----
+## 3. 认证与会话接口
 
-## 3. 核心资源接口
+1. `POST /auth/login`
+2. `POST /auth/refresh`
+3. `POST /auth/logout`
+4. `GET /auth/me`
 
-### 3.1 Projects
+约束：
 
-- `GET /api/v1/projects`
-- `POST /api/v1/projects`
-- `GET /api/v1/projects/{id}`
-- `PUT /api/v1/projects/{id}`
-- `DELETE /api/v1/projects/{id}`
+1. refresh token 走 HttpOnly Cookie。
+2. refresh 接口启用 CSRF 校验。
 
-### 3.2 Suppliers
+## 4. 业务资源接口
 
-- `GET /api/v1/suppliers`
-- `POST /api/v1/suppliers`
-- `GET /api/v1/suppliers/{id}`
-- `PUT /api/v1/suppliers/{id}`
+### 4.1 Projects
 
-### 3.3 Documents
+1. `GET /projects`
+2. `POST /projects`
+3. `GET /projects/{project_id}`
+4. `PUT /projects/{project_id}`
+5. `DELETE /projects/{project_id}`
 
-- `POST /api/v1/documents/upload`
-- `GET /api/v1/documents/{id}`
-- `GET /api/v1/documents/{id}/chunks`
-- `GET /api/v1/documents/{id}/download`
+### 4.2 Suppliers
 
-### 3.4 Retrieval
+1. `GET /suppliers`
+2. `POST /suppliers`
+3. `GET /suppliers/{supplier_id}`
+4. `PUT /suppliers/{supplier_id}`
 
-- `POST /api/v1/retrieval/query`
-- `POST /api/v1/retrieval/index`
+### 4.3 Documents
 
-### 3.5 Evaluations
+1. `POST /documents/upload` -> `202 + job_id`
+2. `POST /documents/{document_id}/parse` -> `202 + job_id`
+3. `GET /documents/{document_id}`
+4. `GET /documents/{document_id}/chunks`
 
-- `POST /api/v1/evaluations`
-- `POST /api/v1/evaluations/{id}/start`
-- `GET /api/v1/evaluations/{id}/results`
-- `POST /api/v1/evaluations/{id}/review`
-- `GET /api/v1/evaluations/{id}/report`
+### 4.4 Retrieval
 
----
+1. `POST /retrieval/query`
+2. `POST /retrieval/preview`
 
-## 4. 异步任务接口
+### 4.5 Evaluations
 
-### 4.1 任务入口（统一 202）
+1. `POST /evaluations` -> `202 + job_id`
+2. `GET /evaluations/{evaluation_id}`
+3. `GET /evaluations/{evaluation_id}/report`
+4. `POST /evaluations/{evaluation_id}/resume` -> `202 + job_id`
 
-- `POST /api/v1/documents/{id}/parse`
-- `POST /api/v1/retrieval/index`
-- `POST /api/v1/evaluations/{id}/start`
+### 4.6 Jobs
 
-幂等规则：
+1. `GET /jobs/{job_id}`
+2. `GET /jobs?status=&type=&cursor=`
+3. `POST /jobs/{job_id}/cancel`
 
-1. 必须携带 `Idempotency-Key`（有效期 24h）。
-2. 同 key + 同请求体：返回原 `job_id`（200）。
-3. 同 key + 不同请求体：返回 `409 IDEMPOTENCY_CONFLICT`。
+### 4.7 DLQ（受限）
 
-返回示例：
+1. `GET /dlq/items`
+2. `POST /dlq/items/{item_id}/requeue`
+3. `POST /dlq/items/{item_id}/discard`
+
+### 4.8 Citations
+
+1. `GET /citations/{chunk_id}/source`
+
+返回最小字段：`document_id/page/bbox/text/context`。
+
+## 5. 长任务契约
+
+### 5.1 提交返回
 
 ```json
 {
   "success": true,
   "data": {
     "job_id": "job_xxx",
-    "status": "queued",
-    "status_url": "/api/v1/jobs/job_xxx"
+    "status": "queued"
   },
-  "meta": {"trace_id": "..."}
+  "meta": {
+    "trace_id": "trace_xxx"
+  }
 }
 ```
 
-### 4.2 任务查询与控制
+### 5.2 任务状态
 
-- `GET /api/v1/jobs/{job_id}`
-- `POST /api/v1/jobs/{job_id}/cancel`
-- `POST /api/v1/jobs/{job_id}/resume`（仅 `needs_manual_decision`）
+`queued -> running -> retrying -> succeeded|failed`
 
-任务状态：
+附加状态：`needs_manual_decision`, `dlq_pending`, `dlq_recorded`。
 
-- `queued`
-- `running`
-- `retrying`
-- `needs_manual_decision`
-- `succeeded`
-- `failed`
-- `cancelled`
+## 6. 幂等策略
 
-失败任务附加字段：`dlq_id`、`failed_reason`。
+1. `Idempotency-Key` 有效期 24h。
+2. 同 key + 同 body 返回同结果。
+3. 同 key + 异 body 返回 `409 IDEMPOTENCY_CONFLICT`。
 
-### 4.3 状态转换约束
+## 7. 分页与筛选
 
-1. `queued -> running`
-2. `running -> retrying`
-3. `retrying -> running`
-4. `running|retrying -> needs_manual_decision`
-5. `running|retrying -> failed`（先写 DLQ）
-6. `needs_manual_decision -> running`（resume）
-7. `running|retrying -> succeeded|cancelled`
+1. 列表接口统一 cursor 分页：`cursor/limit`。
+2. 默认 `limit=20`，最大 `limit=100`。
+3. 必须支持 `created_at` 倒序。
 
----
+## 8. 错误码分组
 
-## 5. DLQ 运维接口
+1. `AUTH_*`：认证鉴权
+2. `REQ_*`：请求验证
+3. `TENANT_*`：租户隔离
+4. `WF_*`：工作流与状态机
+5. `DLQ_*`：死信与运维
+6. `UPSTREAM_*`：上游依赖
 
-- `GET /api/v1/dlq`
-- `GET /api/v1/dlq/{dlq_id}`
-- `POST /api/v1/dlq/{dlq_id}/requeue`
-- `POST /api/v1/dlq/{dlq_id}/discard`
+## 9. 安全约束
 
-权限边界（同租户内）：
+1. 禁止客户端传 `tenant_id`。
+2. 高风险接口强制二次确认信息。
+3. 生产环境不返回堆栈。
+4. 所有敏感接口写审计日志。
 
-- `admin`：查询/重放/废弃
-- `agent`：查询/重放（废弃需 admin 复核）
-- `evaluator`：仅查询
-- `viewer`：无权限
+## 10. OpenAPI 与兼容性
 
-所有 DLQ 操作必须写审计日志（操作者、原因、`trace_id`）。
+1. 所有接口必须声明 request/response schema。
+2. 破坏性变更必须升级 minor 版本并提供迁移说明。
+3. 废弃接口保留至少一个发布周期。
 
----
+## 11. 验收标准
 
-## 6. 统一结果契约
+1. 核心接口契约测试通过。
+2. 异步接口状态流转正确。
+3. 幂等冲突与重放行为符合规范。
+4. 所有错误响应包含 `trace_id`。
 
-检索与评估响应必须包含：
+## 12. 参考来源（核验：2026-02-21）
 
-- `answer`
-- `citations`
-- `confidence`
-- `mode_used`
-- `trace_id`
-
----
-
-## 7. 健康检查
-
-- `GET /api/v1/health`
-- `GET /api/v1/ready`
-- `GET /api/v1/live`
-
----
-
-## 8. 常见错误码
-
-- `UNAUTHORIZED`（401）
-- `FORBIDDEN`（403）
-- `NOT_FOUND`（404）
-- `VALIDATION_ERROR`（422）
-- `IDEMPOTENCY_CONFLICT`（409）
-- `TENANT_SCOPE_VIOLATION`（403）
+1. FastAPI docs: https://fastapi.tiangolo.com/
+2. 历史融合提交：`beef3e9`, `7f05f7e`
