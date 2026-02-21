@@ -334,6 +334,35 @@
 1. `REQ_VALIDATION_FAILED`
 2. `TENANT_SCOPE_VIOLATION`
 
+### 5.7 `POST /retrieval/preview`
+
+请求体：与 `POST /retrieval/query` 相同。
+
+响应 `200`：
+
+```json
+{
+  "success": true,
+  "data": {
+    "query": "投标文件中与交付周期相关的承诺",
+    "selected_mode": "global",
+    "items": [
+      {
+        "chunk_id": "ck_xxx",
+        "document_id": "doc_xxx",
+        "page": 8,
+        "bbox": [120.2, 310.0, 520.8, 365.4],
+        "text": "原文片段..."
+      }
+    ],
+    "total": 1
+  },
+  "meta": {
+    "trace_id": "trace_xxx"
+  }
+}
+```
+
 ## 6. 长任务契约
 
 ### 6.1 提交返回

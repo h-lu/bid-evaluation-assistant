@@ -26,6 +26,7 @@
 10. `POST /api/v1/dlq/items/{item_id}/requeue`
 11. `POST /api/v1/dlq/items/{item_id}/discard`
 12. `POST /api/v1/retrieval/query`
+13. `POST /api/v1/retrieval/preview`
 
 ## 3. 执行约定
 
@@ -70,6 +71,8 @@
 | `CT-030` | `POST /retrieval/query` | 模式选择（relation） | `query_type=relation` | `200` | `data.selected_mode=global` |
 | `CT-031` | `POST /retrieval/query` | 高风险强制 mix | `query_type=fact + high_risk=true` | `200` | `data.selected_mode=mix` |
 | `CT-032` | `POST /retrieval/query` | 租户/项目过滤 | 混合租户与项目样本 | `200` | 仅返回当前租户且 `project_id` 命中项 |
+| `CT-033` | `POST /retrieval/preview` | 预览返回最小证据 | 与 query 相同入参 | `200` | `data.items[*]` 含 `chunk_id/document_id/page/bbox/text` |
+| `CT-034` | `POST /retrieval/preview` | 预览继承模式选择 | `query_type=summary` | `200` | `data.selected_mode=hybrid` |
 
 ## 5. 关键断言模板
 

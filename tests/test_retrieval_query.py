@@ -109,3 +109,46 @@ def test_retrieval_query_rejects_invalid_query_type(client):
 
     assert resp.status_code == 400
     assert resp.json()["error"]["code"] == "REQ_VALIDATION_FAILED"
+
+
+def test_retrieval_preview_returns_minimal_evidence_fields(client):
+    _seed_retrieval_sources()
+
+    resp = client.post(
+        "/api/v1/retrieval/preview",
+        headers={"x-tenant-id": "tenant_a"},
+        json={
+            "project_id": "prj_a",
+            "supplier_id": "sup_a",
+            "query": "preview delivery evidence",
+            "query_type": "relation",
+            "doc_scope": ["bid"],
+        },
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["selected_mode"] == "global"
+    assert data["total"] == 1
+    item = data["items"][0]
+    assert item["chunk_id"] == "ck_retr_a1"
+    assert item["document_id"] == "doc_a1"
+    assert item["page"] == 3
+    assert item["bbox"] == [10, 20, 120, 160]
+    assert item["text"] == "delivery period is 30 days"
+
+
+def test_retrieval_preview_uses_hybrid_for_summary(client):
+    _seed_retrieval_sources()
+    resp = client.post(
+        "/api/v1/retrieval/preview",
+        headers={"x-tenant-id": "tenant_a"},
+        json={
+            "project_id": "prj_a",
+            "supplier_id": "sup_a",
+            "query": "summarize evidence",
+            "query_type": "summary",
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["data"]["selected_mode"] == "hybrid"

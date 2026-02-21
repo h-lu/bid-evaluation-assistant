@@ -157,6 +157,20 @@ def create_app() -> FastAPI:
         )
         return success_envelope(data, _trace_id_from_request(request))
 
+    @app.post("/api/v1/retrieval/preview")
+    def retrieval_preview(payload: RetrievalQueryRequest, request: Request):
+        data = store.retrieval_preview(
+            tenant_id=_tenant_id_from_request(request),
+            project_id=payload.project_id,
+            supplier_id=payload.supplier_id,
+            query=payload.query,
+            query_type=payload.query_type,
+            high_risk=payload.high_risk,
+            top_k=payload.top_k,
+            doc_scope=list(payload.doc_scope),
+        )
+        return success_envelope(data, _trace_id_from_request(request))
+
     @app.post("/api/v1/documents/upload")
     async def upload_document(
         request: Request,

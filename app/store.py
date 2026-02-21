@@ -421,6 +421,47 @@ class InMemoryStore:
             "total": len(items),
         }
 
+    def retrieval_preview(
+        self,
+        *,
+        tenant_id: str,
+        project_id: str,
+        supplier_id: str,
+        query: str,
+        query_type: str,
+        high_risk: bool,
+        top_k: int,
+        doc_scope: list[str],
+    ) -> dict[str, Any]:
+        base = self.retrieval_query(
+            tenant_id=tenant_id,
+            project_id=project_id,
+            supplier_id=supplier_id,
+            query=query,
+            query_type=query_type,
+            high_risk=high_risk,
+            top_k=top_k,
+            doc_scope=doc_scope,
+        )
+        preview_items = []
+        for item in base["items"]:
+            source = self.citation_sources.get(item["chunk_id"], {})
+            preview_items.append(
+                {
+                    "chunk_id": item["chunk_id"],
+                    "document_id": source.get("document_id"),
+                    "page": item["metadata"]["page"],
+                    "bbox": item["metadata"]["bbox"],
+                    "text": source.get("text", ""),
+                }
+            )
+        return {
+            "query": query,
+            "selected_mode": base["selected_mode"],
+            "items": preview_items,
+            "total": len(preview_items),
+        }
+
     def seed_dlq_item(
         self,
         *,

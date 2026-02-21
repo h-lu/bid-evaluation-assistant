@@ -4,7 +4,7 @@ info:
   version: v2026.02.21-r3
   description: |
     Gate C OpenAPI contract subset for async job submission, parse/resume/cancel,
-    job status query, DLQ operations, citation source lookup, and retrieval query.
+    job status query, DLQ operations, citation source lookup, and retrieval query/preview.
 servers:
   - url: /api/v1
 security:
@@ -158,6 +158,38 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RetrievalQueryResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Tenant scope violation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /retrieval/preview:
+    post:
+      operationId: retrievalPreview
+      summary: Preview retrieval evidence without scoring flow
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RetrievalQueryRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetrievalPreviewResponse'
         '400':
           description: Bad request
           content:
@@ -798,6 +830,55 @@ components:
           const: true
         data:
           $ref: '#/components/schemas/RetrievalQueryData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    RetrievalPreviewItem:
+      type: object
+      required: [chunk_id, document_id, page, bbox, text]
+      properties:
+        chunk_id:
+          type: string
+        document_id:
+          type: string
+        page:
+          type: integer
+          minimum: 1
+        bbox:
+          type: array
+          minItems: 4
+          maxItems: 4
+          items:
+            type: number
+        text:
+          type: string
+
+    RetrievalPreviewData:
+      type: object
+      required: [query, selected_mode, items, total]
+      properties:
+        query:
+          type: string
+        selected_mode:
+          type: string
+          enum: [local, global, hybrid, mix]
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RetrievalPreviewItem'
+        total:
+          type: integer
+          minimum: 0
+
+    RetrievalPreviewResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/RetrievalPreviewData'
         meta:
           $ref: '#/components/schemas/Meta'
 
