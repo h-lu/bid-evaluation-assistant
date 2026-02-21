@@ -111,6 +111,13 @@ B-2 输出物：
 
 验收：示例文档可完整入库并返回可回跳引用。
 
+### Gate B 输出汇总
+
+1. `docs/design/2026-02-21-openapi-v1.yaml`
+2. `docs/design/2026-02-21-api-contract-test-samples.md`
+3. `docs/design/2026-02-21-job-system-and-retry-spec.md`
+4. `docs/design/2026-02-21-gate-b-contract-and-skeleton-checklist.md`
+
 ## 6. Gate C：端到端打通
 
 ### C-1 上传到解析
