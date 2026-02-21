@@ -175,3 +175,4 @@ uvicorn app.main:app --reload
 14. `GET /api/v1/internal/parse-manifests/{job_id}`（内部解析 manifest 调试）
 15. `POST /api/v1/retrieval/query`
 16. `POST /api/v1/retrieval/preview`
+17. `GET /api/v1/evaluations/{evaluation_id}/report`

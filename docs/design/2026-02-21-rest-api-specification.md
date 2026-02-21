@@ -367,6 +367,40 @@
 }
 ```
 
+### 5.8 `GET /evaluations/{evaluation_id}/report`
+
+响应 `200`：
+
+```json
+{
+  "success": true,
+  "data": {
+    "evaluation_id": "ev_xxx",
+    "supplier_id": "sup_xxx",
+    "total_score": 88.5,
+    "confidence": 0.78,
+    "risk_level": "medium",
+    "criteria_results": [
+      {
+        "criteria_id": "delivery",
+        "score": 18.0,
+        "max_score": 20.0,
+        "hard_pass": true,
+        "reason": "交付周期满足要求",
+        "citations": ["ck_xxx"],
+        "confidence": 0.81
+      }
+    ],
+    "citations": ["ck_xxx"],
+    "needs_human_review": false,
+    "trace_id": "trace_xxx"
+  },
+  "meta": {
+    "trace_id": "trace_xxx"
+  }
+}
+```
+
 ## 6. 长任务契约
 
 ### 6.1 提交返回

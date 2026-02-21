@@ -383,6 +383,22 @@ def create_app() -> FastAPI:
             content=success_envelope(data, _trace_id_from_request(request)),
         )
 
+    @app.get("/api/v1/evaluations/{evaluation_id}/report")
+    def get_evaluation_report(evaluation_id: str, request: Request):
+        report = store.get_evaluation_report_for_tenant(
+            evaluation_id=evaluation_id,
+            tenant_id=_tenant_id_from_request(request),
+        )
+        if report is None:
+            raise ApiError(
+                code="EVALUATION_REPORT_NOT_FOUND",
+                message="evaluation report not found",
+                error_class="validation",
+                retryable=False,
+                http_status=404,
+            )
+        return success_envelope(report, _trace_id_from_request(request))
+
     @app.get("/api/v1/citations/{chunk_id}/source")
     def get_citation_source(chunk_id: str, request: Request):
         source = store.get_citation_source(

@@ -31,6 +31,7 @@ class InMemoryStore:
         self.idempotency_records: dict[tuple[str, str], IdempotencyRecord] = {}
         self.jobs: dict[str, dict[str, Any]] = {}
         self.documents: dict[str, dict[str, Any]] = {}
+        self.evaluation_reports: dict[str, dict[str, Any]] = {}
         self.parse_manifests: dict[str, dict[str, Any]] = {}
         self.resume_tokens: dict[str, str] = {}
         self.citation_sources: dict[str, dict[str, Any]] = {}
@@ -40,6 +41,7 @@ class InMemoryStore:
         self.idempotency_records.clear()
         self.jobs.clear()
         self.documents.clear()
+        self.evaluation_reports.clear()
         self.parse_manifests.clear()
         self.resume_tokens.clear()
         self.citation_sources.clear()
@@ -167,6 +169,28 @@ class InMemoryStore:
             "payload": payload,
             "last_error": None,
         }
+        self.evaluation_reports[evaluation_id] = {
+            "evaluation_id": evaluation_id,
+            "supplier_id": payload.get("supplier_id", ""),
+            "total_score": 88.5,
+            "confidence": 0.78,
+            "risk_level": "medium",
+            "criteria_results": [
+                {
+                    "criteria_id": "delivery",
+                    "score": 18.0,
+                    "max_score": 20.0,
+                    "hard_pass": True,
+                    "reason": "delivery period satisfies baseline",
+                    "citations": ["ck_eval_stub_1"],
+                    "confidence": 0.81,
+                }
+            ],
+            "citations": ["ck_eval_stub_1"],
+            "needs_human_review": False,
+            "trace_id": payload.get("trace_id") or "",
+            "tenant_id": tenant_id,
+        }
         return {
             "evaluation_id": evaluation_id,
             "job_id": job_id,
@@ -281,6 +305,28 @@ class InMemoryStore:
             return None
         self._assert_tenant_scope(manifest.get("tenant_id", "tenant_default"), tenant_id)
         return manifest
+
+    def get_evaluation_report_for_tenant(
+        self,
+        *,
+        evaluation_id: str,
+        tenant_id: str,
+    ) -> dict[str, Any] | None:
+        report = self.evaluation_reports.get(evaluation_id)
+        if report is None:
+            return None
+        self._assert_tenant_scope(report.get("tenant_id", "tenant_default"), tenant_id)
+        return {
+            "evaluation_id": report["evaluation_id"],
+            "supplier_id": report["supplier_id"],
+            "total_score": report["total_score"],
+            "confidence": report["confidence"],
+            "risk_level": report["risk_level"],
+            "criteria_results": report["criteria_results"],
+            "citations": report["citations"],
+            "needs_human_review": report["needs_human_review"],
+            "trace_id": report["trace_id"],
+        }
 
     def transition_job_status(
         self,

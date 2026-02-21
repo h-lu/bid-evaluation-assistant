@@ -27,6 +27,7 @@
 11. `POST /api/v1/dlq/items/{item_id}/discard`
 12. `POST /api/v1/retrieval/query`
 13. `POST /api/v1/retrieval/preview`
+14. `GET /api/v1/evaluations/{evaluation_id}/report`
 
 ## 3. 执行约定
 
@@ -75,6 +76,7 @@
 | `CT-034` | `POST /retrieval/preview` | 预览继承模式选择 | `query_type=summary` | `200` | `data.selected_mode=hybrid` |
 | `CT-035` | `POST /retrieval/query` | 约束词过滤 | `must_include_terms + must_exclude_terms` | `200` | 仅返回满足约束词的候选 |
 | `CT-036` | `POST /retrieval/query` | rerank 降级 | `enable_rerank=false` | `200` | `data.degraded=true` 且 `score_rerank=null` |
+| `CT-037` | `GET /evaluations/{evaluation_id}/report` | 报告查询 | 合法 `evaluation_id` | `200` | 返回 `total_score/confidence/criteria_results/citations` |
 
 ## 5. 关键断言模板
 

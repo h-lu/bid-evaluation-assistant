@@ -4,7 +4,8 @@ info:
   version: v2026.02.21-r3
   description: |
     Gate C OpenAPI contract subset for async job submission, parse/resume/cancel,
-    job status query, DLQ operations, citation source lookup, and retrieval query/preview.
+    job status query, DLQ operations, citation source lookup, retrieval query/preview,
+    and evaluation report lookup.
 servers:
   - url: /api/v1
 security:
@@ -134,6 +135,34 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '409':
           description: Idempotency conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /evaluations/{evaluation_id}/report:
+    get:
+      operationId: getEvaluationReport
+      summary: Get evaluation scoring report with citation coverage fields
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EvaluationId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvaluationReportResponse'
+        '404':
+          description: Evaluation report not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Tenant scope violation
           content:
             application/json:
               schema:
@@ -665,6 +694,82 @@ components:
           const: true
         data:
           $ref: '#/components/schemas/EvaluationAcceptedData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    EvaluationCriteriaResult:
+      type: object
+      required: [criteria_id, score, max_score, hard_pass, reason, citations, confidence]
+      properties:
+        criteria_id:
+          type: string
+        score:
+          type: number
+        max_score:
+          type: number
+        hard_pass:
+          type: boolean
+        reason:
+          type: string
+        citations:
+          type: array
+          items:
+            type: string
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+
+    EvaluationReportData:
+      type: object
+      required:
+        [
+          evaluation_id,
+          supplier_id,
+          total_score,
+          confidence,
+          risk_level,
+          criteria_results,
+          citations,
+          needs_human_review,
+          trace_id,
+        ]
+      properties:
+        evaluation_id:
+          type: string
+        supplier_id:
+          type: string
+        total_score:
+          type: number
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        risk_level:
+          type: string
+          enum: [low, medium, high]
+        criteria_results:
+          type: array
+          items:
+            $ref: '#/components/schemas/EvaluationCriteriaResult'
+        citations:
+          type: array
+          items:
+            type: string
+        needs_human_review:
+          type: boolean
+        trace_id:
+          type: string
+
+    EvaluationReportResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/EvaluationReportData'
         meta:
           $ref: '#/components/schemas/Meta'
 
