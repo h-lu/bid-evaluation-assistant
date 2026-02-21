@@ -63,15 +63,16 @@
 说明：以下为 `codex/gate-c-api-skeleton` 分支的最小可运行证据。
 
 1. 运行命令：`pytest -v`
-2. 测试结果：`14 passed`
+2. 测试结果：`17 passed`
 3. 覆盖范围：
    - B-1：统一响应包络、幂等、`202 + job_id`、`resume_token`、citation source
-   - B-2：任务初始状态与 `jobs/{job_id}` 状态查询契约
+   - B-2：任务初始状态、`jobs/{job_id}` 状态查询契约、状态机流转校验
 4. 证据测试文件：
    - `tests/test_response_envelope.py`
    - `tests/test_idempotency.py`
    - `tests/test_api_contract_core.py`
    - `tests/test_resume_and_citation.py`
+   - `tests/test_job_state_machine.py`
 
 更新结论：
 

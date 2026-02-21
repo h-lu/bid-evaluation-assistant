@@ -15,6 +15,17 @@ class IdempotencyRecord:
 
 
 class InMemoryStore:
+    ALLOWED_TRANSITIONS: dict[str, set[str]] = {
+        "queued": {"running"},
+        "running": {"retrying", "succeeded", "needs_manual_decision", "dlq_pending"},
+        "retrying": {"running", "dlq_pending"},
+        "needs_manual_decision": {"running", "succeeded"},
+        "dlq_pending": {"dlq_recorded"},
+        "dlq_recorded": {"failed"},
+        "succeeded": set(),
+        "failed": set(),
+    }
+
     def __init__(self) -> None:
         self.idempotency_records: dict[tuple[str, str], IdempotencyRecord] = {}
         self.jobs: dict[str, dict[str, Any]] = {}
@@ -101,6 +112,33 @@ class InMemoryStore:
 
     def get_job(self, job_id: str) -> dict[str, Any] | None:
         return self.jobs.get(job_id)
+
+    def transition_job_status(self, *, job_id: str, new_status: str) -> dict[str, Any]:
+        job = self.get_job(job_id)
+        if job is None:
+            raise ApiError(
+                code="JOB_NOT_FOUND",
+                message="job not found",
+                error_class="validation",
+                retryable=False,
+                http_status=404,
+            )
+
+        current_status = job["status"]
+        allowed = self.ALLOWED_TRANSITIONS.get(current_status, set())
+        if new_status not in allowed:
+            raise ApiError(
+                code="WF_STATE_TRANSITION_INVALID",
+                message=f"invalid transition: {current_status} -> {new_status}",
+                error_class="business_rule",
+                retryable=False,
+                http_status=409,
+            )
+
+        if new_status == "retrying":
+            job["retry_count"] = int(job.get("retry_count", 0)) + 1
+        job["status"] = new_status
+        return job
 
     def register_resume_token(self, *, evaluation_id: str, resume_token: str) -> None:
         self.resume_tokens[evaluation_id] = resume_token
