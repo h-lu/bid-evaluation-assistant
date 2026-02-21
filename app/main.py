@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Header, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.errors import ApiError
-from app.schemas import error_envelope, success_envelope
+from app.schemas import CreateEvaluationRequest, error_envelope, success_envelope
+from app.store import store
 
 
 def _trace_id_from_request(request: Request) -> str:
@@ -91,6 +92,32 @@ def create_app() -> FastAPI:
     @app.get("/healthz")
     def healthz(request: Request) -> dict[str, object]:
         return success_envelope({"status": "ok"}, _trace_id_from_request(request))
+
+    @app.post("/api/v1/evaluations")
+    def create_evaluation(
+        payload: CreateEvaluationRequest,
+        request: Request,
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    ):
+        if not idempotency_key:
+            raise ApiError(
+                code="IDEMPOTENCY_MISSING",
+                message="Idempotency-Key header is required",
+                error_class="validation",
+                retryable=False,
+                http_status=400,
+            )
+
+        data = store.run_idempotent(
+            endpoint="POST:/api/v1/evaluations",
+            idempotency_key=idempotency_key,
+            payload=payload.model_dump(mode="json"),
+            execute=lambda: store.create_evaluation_job(payload.model_dump(mode="json")),
+        )
+        return JSONResponse(
+            status_code=202,
+            content=success_envelope(data, _trace_id_from_request(request)),
+        )
 
     return app
 

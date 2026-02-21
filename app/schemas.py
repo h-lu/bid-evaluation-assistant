@@ -2,6 +2,26 @@ from __future__ import annotations
 
 from typing import Any
 
+from pydantic import BaseModel, Field
+
+
+class EvaluationScope(BaseModel):
+    include_doc_types: list[str]
+    force_hitl: bool
+
+
+class QueryOptions(BaseModel):
+    mode_hint: str
+    top_k: int = Field(ge=1, le=200)
+
+
+class CreateEvaluationRequest(BaseModel):
+    project_id: str
+    supplier_id: str
+    rule_pack_version: str
+    evaluation_scope: EvaluationScope
+    query_options: QueryOptions
+
 
 def success_envelope(data: Any, trace_id: str, message: str = "ok") -> dict[str, Any]:
     return {
