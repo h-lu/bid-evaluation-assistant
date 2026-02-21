@@ -88,6 +88,11 @@
 - `docs/ops/agent-change-management.md`
 - `docs/ops/agent-incident-runbook.md`
 
+`Agent 协作入口（仓库根目录）`
+
+- `AGENTS.md`（通用 Agent 执行规范）
+- `CLAUDE.md`（Claude Code 项目记忆与执行约束）
+
 ## 5. 外部项目参考策略（已固化）
 
 直接采用：
