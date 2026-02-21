@@ -46,15 +46,27 @@ class InMemoryStore:
     def _fingerprint(payload: dict[str, Any]) -> str:
         return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
+    @staticmethod
+    def _assert_tenant_scope(entity_tenant_id: str, tenant_id: str) -> None:
+        if entity_tenant_id != tenant_id:
+            raise ApiError(
+                code="TENANT_SCOPE_VIOLATION",
+                message="tenant mismatch",
+                error_class="security_sensitive",
+                retryable=False,
+                http_status=403,
+            )
+
     def run_idempotent(
         self,
         *,
         endpoint: str,
+        tenant_id: str,
         idempotency_key: str,
         payload: dict[str, Any],
         execute: callable,
     ) -> dict[str, Any]:
-        key = (endpoint, idempotency_key)
+        key = (f"{tenant_id}:{endpoint}", idempotency_key)
         current_fingerprint = self._fingerprint(payload)
         if key in self.idempotency_records:
             record = self.idempotency_records[key]
@@ -78,11 +90,13 @@ class InMemoryStore:
     def create_evaluation_job(self, payload: dict[str, Any]) -> dict[str, Any]:
         evaluation_id = f"ev_{uuid.uuid4().hex[:12]}"
         job_id = f"job_{uuid.uuid4().hex[:12]}"
+        tenant_id = payload.get("tenant_id", "tenant_default")
         self.jobs[job_id] = {
             "job_id": job_id,
             "job_type": "evaluation",
             "status": "queued",
             "retry_count": 0,
+            "tenant_id": tenant_id,
             "trace_id": payload.get("trace_id"),
             "resource": {
                 "type": "evaluation",
@@ -100,8 +114,10 @@ class InMemoryStore:
     def create_upload_job(self, payload: dict[str, Any]) -> dict[str, Any]:
         document_id = f"doc_{uuid.uuid4().hex[:12]}"
         job_id = f"job_{uuid.uuid4().hex[:12]}"
+        tenant_id = payload.get("tenant_id", "tenant_default")
         self.documents[document_id] = {
             "document_id": document_id,
+            "tenant_id": tenant_id,
             "project_id": payload.get("project_id"),
             "supplier_id": payload.get("supplier_id"),
             "doc_type": payload.get("doc_type"),
@@ -114,6 +130,7 @@ class InMemoryStore:
             "job_type": "upload",
             "status": "queued",
             "retry_count": 0,
+            "tenant_id": tenant_id,
             "trace_id": payload.get("trace_id"),
             "resource": {
                 "type": "document",
@@ -139,12 +156,15 @@ class InMemoryStore:
                 retryable=False,
                 http_status=404,
             )
+        tenant_id = payload.get("tenant_id", "tenant_default")
+        self._assert_tenant_scope(document["tenant_id"], tenant_id)
         job_id = f"job_{uuid.uuid4().hex[:12]}"
         self.jobs[job_id] = {
             "job_id": job_id,
             "job_type": "parse",
             "status": "queued",
             "retry_count": 0,
+            "tenant_id": tenant_id,
             "trace_id": payload.get("trace_id"),
             "resource": {
                 "type": "document",
@@ -162,6 +182,13 @@ class InMemoryStore:
 
     def get_job(self, job_id: str) -> dict[str, Any] | None:
         return self.jobs.get(job_id)
+
+    def get_job_for_tenant(self, *, job_id: str, tenant_id: str) -> dict[str, Any] | None:
+        job = self.get_job(job_id)
+        if job is None:
+            return None
+        self._assert_tenant_scope(job.get("tenant_id", "tenant_default"), tenant_id)
+        return job
 
     def transition_job_status(self, *, job_id: str, new_status: str) -> dict[str, Any]:
         job = self.get_job(job_id)
@@ -198,11 +225,13 @@ class InMemoryStore:
 
     def create_resume_job(self, *, evaluation_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         job_id = f"job_{uuid.uuid4().hex[:12]}"
+        tenant_id = payload.get("tenant_id", "tenant_default")
         self.jobs[job_id] = {
             "job_id": job_id,
             "job_type": "resume",
             "status": "queued",
             "retry_count": 0,
+            "tenant_id": tenant_id,
             "trace_id": payload.get("trace_id"),
             "resource": {
                 "type": "evaluation",
@@ -220,14 +249,27 @@ class InMemoryStore:
     def register_citation_source(self, *, chunk_id: str, source: dict[str, Any]) -> None:
         self.citation_sources[chunk_id] = source
 
-    def get_citation_source(self, *, chunk_id: str) -> dict[str, Any] | None:
-        return self.citation_sources.get(chunk_id)
+    def get_citation_source(self, *, chunk_id: str, tenant_id: str) -> dict[str, Any] | None:
+        source = self.citation_sources.get(chunk_id)
+        if source is None:
+            return None
+        source_tenant = source.get("tenant_id", tenant_id)
+        self._assert_tenant_scope(source_tenant, tenant_id)
+        return source
 
-    def seed_dlq_item(self, *, job_id: str, error_class: str, error_code: str) -> dict[str, Any]:
+    def seed_dlq_item(
+        self,
+        *,
+        job_id: str,
+        error_class: str,
+        error_code: str,
+        tenant_id: str = "tenant_default",
+    ) -> dict[str, Any]:
         dlq_id = f"dlq_{uuid.uuid4().hex[:12]}"
         item = {
             "dlq_id": dlq_id,
             "job_id": job_id,
+            "tenant_id": tenant_id,
             "error_class": error_class,
             "error_code": error_code,
             "status": "open",
@@ -235,14 +277,19 @@ class InMemoryStore:
         self.dlq_items[dlq_id] = item
         return item
 
-    def list_dlq_items(self) -> list[dict[str, Any]]:
-        return sorted(self.dlq_items.values(), key=lambda x: x["dlq_id"])
+    def list_dlq_items(self, *, tenant_id: str) -> list[dict[str, Any]]:
+        filtered = [x for x in self.dlq_items.values() if x.get("tenant_id") == tenant_id]
+        return sorted(filtered, key=lambda x: x["dlq_id"])
 
-    def get_dlq_item(self, dlq_id: str) -> dict[str, Any] | None:
-        return self.dlq_items.get(dlq_id)
+    def get_dlq_item(self, dlq_id: str, *, tenant_id: str) -> dict[str, Any] | None:
+        item = self.dlq_items.get(dlq_id)
+        if item is None:
+            return None
+        self._assert_tenant_scope(item.get("tenant_id", "tenant_default"), tenant_id)
+        return item
 
-    def requeue_dlq_item(self, *, dlq_id: str, trace_id: str | None) -> dict[str, Any]:
-        item = self.get_dlq_item(dlq_id)
+    def requeue_dlq_item(self, *, dlq_id: str, trace_id: str | None, tenant_id: str) -> dict[str, Any]:
+        item = self.get_dlq_item(dlq_id, tenant_id=tenant_id)
         if item is None:
             raise ApiError(
                 code="DLQ_ITEM_NOT_FOUND",
@@ -266,6 +313,7 @@ class InMemoryStore:
             "job_type": "requeue",
             "status": "queued",
             "retry_count": 0,
+            "tenant_id": tenant_id,
             "trace_id": trace_id,
             "resource": {
                 "type": "job",
@@ -281,8 +329,15 @@ class InMemoryStore:
             "status": "queued",
         }
 
-    def discard_dlq_item(self, *, dlq_id: str, reason: str, reviewer_id: str) -> dict[str, Any]:
-        item = self.get_dlq_item(dlq_id)
+    def discard_dlq_item(
+        self,
+        *,
+        dlq_id: str,
+        reason: str,
+        reviewer_id: str,
+        tenant_id: str,
+    ) -> dict[str, Any]:
+        item = self.get_dlq_item(dlq_id, tenant_id=tenant_id)
         if item is None:
             raise ApiError(
                 code="DLQ_ITEM_NOT_FOUND",
@@ -308,8 +363,8 @@ class InMemoryStore:
             "status": "discarded",
         }
 
-    def cancel_job(self, *, job_id: str) -> dict[str, Any]:
-        job = self.get_job(job_id)
+    def cancel_job(self, *, job_id: str, tenant_id: str) -> dict[str, Any]:
+        job = self.get_job_for_tenant(job_id=job_id, tenant_id=tenant_id)
         if job is None:
             raise ApiError(
                 code="JOB_NOT_FOUND",
@@ -344,12 +399,13 @@ class InMemoryStore:
     def list_jobs(
         self,
         *,
+        tenant_id: str,
         status: str | None = None,
         job_type: str | None = None,
         cursor: str | None = None,
         limit: int = 20,
     ) -> dict[str, Any]:
-        jobs = list(self.jobs.values())
+        jobs = [j for j in self.jobs.values() if j.get("tenant_id") == tenant_id]
         if status:
             jobs = [j for j in jobs if j.get("status") == status]
         if job_type:

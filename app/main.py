@@ -26,6 +26,13 @@ def _trace_id_from_request(request: Request) -> str:
     return uuid.uuid4().hex
 
 
+def _tenant_id_from_request(request: Request) -> str:
+    tenant_id = getattr(request.state, "tenant_id", None)
+    if tenant_id:
+        return tenant_id
+    return "tenant_default"
+
+
 def _error_response(
     request: Request,
     *,
@@ -52,6 +59,7 @@ def create_app() -> FastAPI:
     @app.middleware("http")
     async def add_trace_id(request: Request, call_next):
         request.state.trace_id = request.headers.get("x-trace-id", uuid.uuid4().hex)
+        request.state.tenant_id = request.headers.get("x-tenant-id", "tenant_default")
         return await call_next(request)
 
     @app.exception_handler(ApiError)
@@ -117,12 +125,14 @@ def create_app() -> FastAPI:
 
         data = store.run_idempotent(
             endpoint="POST:/api/v1/evaluations",
+            tenant_id=_tenant_id_from_request(request),
             idempotency_key=idempotency_key,
             payload=payload.model_dump(mode="json"),
             execute=lambda: store.create_evaluation_job(
                 {
                     **payload.model_dump(mode="json"),
                     "trace_id": _trace_id_from_request(request),
+                    "tenant_id": _tenant_id_from_request(request),
                 }
             ),
         )
@@ -157,9 +167,11 @@ def create_app() -> FastAPI:
             "filename": file.filename or "upload.bin",
             "file_sha256": hashlib.sha256(file_bytes).hexdigest(),
             "trace_id": _trace_id_from_request(request),
+            "tenant_id": _tenant_id_from_request(request),
         }
         data = store.run_idempotent(
             endpoint="POST:/api/v1/documents/upload",
+            tenant_id=_tenant_id_from_request(request),
             idempotency_key=idempotency_key,
             payload=payload,
             execute=lambda: store.create_upload_job(payload),
@@ -186,9 +198,11 @@ def create_app() -> FastAPI:
         payload = {
             "document_id": document_id,
             "trace_id": _trace_id_from_request(request),
+            "tenant_id": _tenant_id_from_request(request),
         }
         data = store.run_idempotent(
             endpoint=f"POST:/api/v1/documents/{document_id}/parse",
+            tenant_id=_tenant_id_from_request(request),
             idempotency_key=idempotency_key,
             payload=payload,
             execute=lambda: store.create_parse_job(document_id=document_id, payload=payload),
@@ -207,6 +221,7 @@ def create_app() -> FastAPI:
         limit: int = Query(default=20, ge=1, le=100),
     ):
         result = store.list_jobs(
+            tenant_id=_tenant_id_from_request(request),
             status=status,
             job_type=type,
             cursor=cursor,
@@ -232,7 +247,7 @@ def create_app() -> FastAPI:
 
     @app.get("/api/v1/jobs/{job_id}")
     def get_job(job_id: str, request: Request):
-        job = store.get_job(job_id)
+        job = store.get_job_for_tenant(job_id=job_id, tenant_id=_tenant_id_from_request(request))
         if job is None:
             raise ApiError(
                 code="JOB_NOT_FOUND",
@@ -271,9 +286,13 @@ def create_app() -> FastAPI:
         payload = {"job_id": job_id}
         data = store.run_idempotent(
             endpoint=f"POST:/api/v1/jobs/{job_id}/cancel",
+            tenant_id=_tenant_id_from_request(request),
             idempotency_key=idempotency_key,
             payload=payload,
-            execute=lambda: store.cancel_job(job_id=job_id),
+            execute=lambda: store.cancel_job(
+                job_id=job_id,
+                tenant_id=_tenant_id_from_request(request),
+            ),
         )
         return JSONResponse(
             status_code=202,
@@ -310,11 +329,16 @@ def create_app() -> FastAPI:
         req_payload = payload.model_dump(mode="json")
         data = store.run_idempotent(
             endpoint=f"POST:/api/v1/evaluations/{evaluation_id}/resume",
+            tenant_id=_tenant_id_from_request(request),
             idempotency_key=idempotency_key,
             payload=req_payload,
             execute=lambda: store.create_resume_job(
                 evaluation_id=evaluation_id,
-                payload={**req_payload, "trace_id": _trace_id_from_request(request)},
+                payload={
+                    **req_payload,
+                    "trace_id": _trace_id_from_request(request),
+                    "tenant_id": _tenant_id_from_request(request),
+                },
             ),
         )
         return JSONResponse(
@@ -324,7 +348,10 @@ def create_app() -> FastAPI:
 
     @app.get("/api/v1/citations/{chunk_id}/source")
     def get_citation_source(chunk_id: str, request: Request):
-        source = store.get_citation_source(chunk_id=chunk_id)
+        source = store.get_citation_source(
+            chunk_id=chunk_id,
+            tenant_id=_tenant_id_from_request(request),
+        )
         if source is None:
             raise ApiError(
                 code="CITATION_NOT_FOUND",
@@ -337,12 +364,16 @@ def create_app() -> FastAPI:
 
     @app.get("/api/v1/dlq/items")
     def list_dlq_items(request: Request):
-        items = store.list_dlq_items()
+        items = store.list_dlq_items(tenant_id=_tenant_id_from_request(request))
         return success_envelope({"items": items, "total": len(items)}, _trace_id_from_request(request))
 
     @app.post("/api/v1/dlq/items/{item_id}/requeue")
     def requeue_dlq_item(item_id: str, request: Request):
-        data = store.requeue_dlq_item(dlq_id=item_id, trace_id=_trace_id_from_request(request))
+        data = store.requeue_dlq_item(
+            dlq_id=item_id,
+            trace_id=_trace_id_from_request(request),
+            tenant_id=_tenant_id_from_request(request),
+        )
         return JSONResponse(
             status_code=202,
             content=success_envelope(data, _trace_id_from_request(request)),
@@ -354,6 +385,7 @@ def create_app() -> FastAPI:
             dlq_id=item_id,
             reason=payload.reason,
             reviewer_id=payload.reviewer_id,
+            tenant_id=_tenant_id_from_request(request),
         )
         return success_envelope(data, _trace_id_from_request(request))
 

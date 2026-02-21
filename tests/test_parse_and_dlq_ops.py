@@ -55,7 +55,7 @@ def test_dlq_list_and_requeue_flow(client):
     assert rq_data["job_id"].startswith("job_")
     assert rq_data["status"] == "queued"
 
-    post_item = store.get_dlq_item(item_id)
+    post_item = store.get_dlq_item(item_id, tenant_id="tenant_default")
     assert post_item is not None
     assert post_item["status"] == "requeued"
 
