@@ -23,6 +23,13 @@ class CreateEvaluationRequest(BaseModel):
     query_options: QueryOptions
 
 
+class ResumeRequest(BaseModel):
+    resume_token: str
+    decision: str
+    comment: str
+    edited_scores: list[dict[str, Any]] = Field(default_factory=list)
+
+
 def success_envelope(data: Any, trace_id: str, message: str = "ok") -> dict[str, Any]:
     return {
         "success": True,

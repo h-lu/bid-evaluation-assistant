@@ -9,7 +9,12 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.errors import ApiError
-from app.schemas import CreateEvaluationRequest, error_envelope, success_envelope
+from app.schemas import (
+    CreateEvaluationRequest,
+    ResumeRequest,
+    error_envelope,
+    success_envelope,
+)
 from app.store import store
 
 
@@ -186,6 +191,61 @@ def create_app() -> FastAPI:
             "last_error": job.get("last_error"),
         }
         return success_envelope(data, _trace_id_from_request(request))
+
+    @app.post("/api/v1/evaluations/{evaluation_id}/resume")
+    def resume_evaluation(
+        evaluation_id: str,
+        payload: ResumeRequest,
+        request: Request,
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    ):
+        if not idempotency_key:
+            raise ApiError(
+                code="IDEMPOTENCY_MISSING",
+                message="Idempotency-Key header is required",
+                error_class="validation",
+                retryable=False,
+                http_status=400,
+            )
+        if not store.validate_resume_token(
+            evaluation_id=evaluation_id,
+            resume_token=payload.resume_token,
+        ):
+            raise ApiError(
+                code="WF_INTERRUPT_RESUME_INVALID",
+                message="resume token expired or mismatched",
+                error_class="business_rule",
+                retryable=False,
+                http_status=409,
+            )
+
+        req_payload = payload.model_dump(mode="json")
+        data = store.run_idempotent(
+            endpoint=f"POST:/api/v1/evaluations/{evaluation_id}/resume",
+            idempotency_key=idempotency_key,
+            payload=req_payload,
+            execute=lambda: store.create_resume_job(
+                evaluation_id=evaluation_id,
+                payload={**req_payload, "trace_id": _trace_id_from_request(request)},
+            ),
+        )
+        return JSONResponse(
+            status_code=202,
+            content=success_envelope(data, _trace_id_from_request(request)),
+        )
+
+    @app.get("/api/v1/citations/{chunk_id}/source")
+    def get_citation_source(chunk_id: str, request: Request):
+        source = store.get_citation_source(chunk_id=chunk_id)
+        if source is None:
+            raise ApiError(
+                code="CITATION_NOT_FOUND",
+                message="citation source not found",
+                error_class="validation",
+                retryable=False,
+                http_status=404,
+            )
+        return success_envelope(source, _trace_id_from_request(request))
 
     return app
 

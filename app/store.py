@@ -18,6 +18,8 @@ class InMemoryStore:
     def __init__(self) -> None:
         self.idempotency_records: dict[tuple[str, str], IdempotencyRecord] = {}
         self.jobs: dict[str, dict[str, Any]] = {}
+        self.resume_tokens: dict[str, str] = {}
+        self.citation_sources: dict[str, dict[str, Any]] = {}
 
     @staticmethod
     def _fingerprint(payload: dict[str, Any]) -> str:
@@ -99,6 +101,39 @@ class InMemoryStore:
 
     def get_job(self, job_id: str) -> dict[str, Any] | None:
         return self.jobs.get(job_id)
+
+    def register_resume_token(self, *, evaluation_id: str, resume_token: str) -> None:
+        self.resume_tokens[evaluation_id] = resume_token
+
+    def validate_resume_token(self, *, evaluation_id: str, resume_token: str) -> bool:
+        return self.resume_tokens.get(evaluation_id) == resume_token
+
+    def create_resume_job(self, *, evaluation_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        job_id = f"job_{uuid.uuid4().hex[:12]}"
+        self.jobs[job_id] = {
+            "job_id": job_id,
+            "job_type": "resume",
+            "status": "queued",
+            "retry_count": 0,
+            "trace_id": payload.get("trace_id"),
+            "resource": {
+                "type": "evaluation",
+                "id": evaluation_id,
+            },
+            "payload": payload,
+            "last_error": None,
+        }
+        return {
+            "evaluation_id": evaluation_id,
+            "job_id": job_id,
+            "status": "queued",
+        }
+
+    def register_citation_source(self, *, chunk_id: str, source: dict[str, Any]) -> None:
+        self.citation_sources[chunk_id] = source
+
+    def get_citation_source(self, *, chunk_id: str) -> dict[str, Any] | None:
+        return self.citation_sources.get(chunk_id)
 
 
 store = InMemoryStore()
