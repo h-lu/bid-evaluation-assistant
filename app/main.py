@@ -11,6 +11,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.errors import ApiError
 from app.schemas import (
     CreateEvaluationRequest,
+    DlqDiscardRequest,
     ResumeRequest,
     error_envelope,
     success_envelope,
@@ -168,6 +169,35 @@ def create_app() -> FastAPI:
             content=success_envelope(data, _trace_id_from_request(request)),
         )
 
+    @app.post("/api/v1/documents/{document_id}/parse")
+    def parse_document(
+        document_id: str,
+        request: Request,
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    ):
+        if not idempotency_key:
+            raise ApiError(
+                code="IDEMPOTENCY_MISSING",
+                message="Idempotency-Key header is required",
+                error_class="validation",
+                retryable=False,
+                http_status=400,
+            )
+        payload = {
+            "document_id": document_id,
+            "trace_id": _trace_id_from_request(request),
+        }
+        data = store.run_idempotent(
+            endpoint=f"POST:/api/v1/documents/{document_id}/parse",
+            idempotency_key=idempotency_key,
+            payload=payload,
+            execute=lambda: store.create_parse_job(document_id=document_id, payload=payload),
+        )
+        return JSONResponse(
+            status_code=202,
+            content=success_envelope(data, _trace_id_from_request(request)),
+        )
+
     @app.get("/api/v1/jobs/{job_id}")
     def get_job(job_id: str, request: Request):
         job = store.get_job(job_id)
@@ -191,6 +221,32 @@ def create_app() -> FastAPI:
             "last_error": job.get("last_error"),
         }
         return success_envelope(data, _trace_id_from_request(request))
+
+    @app.post("/api/v1/jobs/{job_id}/cancel")
+    def cancel_job(
+        job_id: str,
+        request: Request,
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    ):
+        if not idempotency_key:
+            raise ApiError(
+                code="IDEMPOTENCY_MISSING",
+                message="Idempotency-Key header is required",
+                error_class="validation",
+                retryable=False,
+                http_status=400,
+            )
+        payload = {"job_id": job_id}
+        data = store.run_idempotent(
+            endpoint=f"POST:/api/v1/jobs/{job_id}/cancel",
+            idempotency_key=idempotency_key,
+            payload=payload,
+            execute=lambda: store.cancel_job(job_id=job_id),
+        )
+        return JSONResponse(
+            status_code=202,
+            content=success_envelope(data, _trace_id_from_request(request)),
+        )
 
     @app.post("/api/v1/evaluations/{evaluation_id}/resume")
     def resume_evaluation(
@@ -246,6 +302,28 @@ def create_app() -> FastAPI:
                 http_status=404,
             )
         return success_envelope(source, _trace_id_from_request(request))
+
+    @app.get("/api/v1/dlq/items")
+    def list_dlq_items(request: Request):
+        items = store.list_dlq_items()
+        return success_envelope({"items": items, "total": len(items)}, _trace_id_from_request(request))
+
+    @app.post("/api/v1/dlq/items/{item_id}/requeue")
+    def requeue_dlq_item(item_id: str, request: Request):
+        data = store.requeue_dlq_item(dlq_id=item_id, trace_id=_trace_id_from_request(request))
+        return JSONResponse(
+            status_code=202,
+            content=success_envelope(data, _trace_id_from_request(request)),
+        )
+
+    @app.post("/api/v1/dlq/items/{item_id}/discard")
+    def discard_dlq_item(item_id: str, payload: DlqDiscardRequest, request: Request):
+        data = store.discard_dlq_item(
+            dlq_id=item_id,
+            reason=payload.reason,
+            reviewer_id=payload.reviewer_id,
+        )
+        return success_envelope(data, _trace_id_from_request(request))
 
     return app
 

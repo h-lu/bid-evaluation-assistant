@@ -30,6 +30,11 @@ class ResumeRequest(BaseModel):
     edited_scores: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class DlqDiscardRequest(BaseModel):
+    reason: str = ""
+    reviewer_id: str = ""
+
+
 def success_envelope(data: Any, trace_id: str, message: str = "ok") -> dict[str, Any]:
     return {
         "success": True,
