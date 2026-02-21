@@ -68,16 +68,19 @@
 `核心实施规范`
 
 1. `docs/design/2026-02-21-implementation-plan.md`
-2. `docs/design/2026-02-21-mineru-ingestion-spec.md`
-3. `docs/design/2026-02-21-retrieval-and-scoring-spec.md`
-4. `docs/design/2026-02-21-langgraph-agent-workflow-spec.md`
-5. `docs/design/2026-02-21-rest-api-specification.md`
-6. `docs/design/2026-02-21-data-model-and-storage-spec.md`
-7. `docs/design/2026-02-21-error-handling-and-dlq-spec.md`
-8. `docs/design/2026-02-21-security-design.md`
-9. `docs/design/2026-02-21-frontend-interaction-spec.md`
-10. `docs/design/2026-02-21-testing-strategy.md`
-11. `docs/design/2026-02-21-deployment-config.md`
+2. `docs/design/2026-02-21-gate-a-terminology-and-state-dictionary.md`
+3. `docs/design/2026-02-21-gate-a-boundary-and-side-effect-matrix.md`
+4. `docs/design/2026-02-21-legacy-detail-triage.md`
+5. `docs/design/2026-02-21-mineru-ingestion-spec.md`
+6. `docs/design/2026-02-21-retrieval-and-scoring-spec.md`
+7. `docs/design/2026-02-21-langgraph-agent-workflow-spec.md`
+8. `docs/design/2026-02-21-rest-api-specification.md`
+9. `docs/design/2026-02-21-data-model-and-storage-spec.md`
+10. `docs/design/2026-02-21-error-handling-and-dlq-spec.md`
+11. `docs/design/2026-02-21-security-design.md`
+12. `docs/design/2026-02-21-frontend-interaction-spec.md`
+13. `docs/design/2026-02-21-testing-strategy.md`
+14. `docs/design/2026-02-21-deployment-config.md`
 
 `Agent 开发治理`
 

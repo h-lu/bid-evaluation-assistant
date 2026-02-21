@@ -53,6 +53,12 @@ Gate A 设计冻结
 产出：采纳/修正/废弃判定表。  
 验收：每个“修正后保留”都能定位到现行落点。
 
+### Gate A 输出物（冻结）
+
+1. A-1：`docs/design/2026-02-21-gate-a-terminology-and-state-dictionary.md`
+2. A-2：`docs/design/2026-02-21-gate-a-boundary-and-side-effect-matrix.md`
+3. A-3：`docs/design/2026-02-21-legacy-detail-triage.md`
+
 ## 5. Gate B：契约与骨架
 
 ### B-1 API 契约
