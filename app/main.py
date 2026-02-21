@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import uuid
 
-from fastapi import FastAPI, File, Form, Header, Request, UploadFile
+from fastapi import FastAPI, File, Form, Header, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -196,6 +196,38 @@ def create_app() -> FastAPI:
         return JSONResponse(
             status_code=202,
             content=success_envelope(data, _trace_id_from_request(request)),
+        )
+
+    @app.get("/api/v1/jobs")
+    def list_jobs(
+        request: Request,
+        status: str | None = Query(default=None),
+        type: str | None = Query(default=None),
+        cursor: str | None = Query(default=None),
+        limit: int = Query(default=20, ge=1, le=100),
+    ):
+        result = store.list_jobs(
+            status=status,
+            job_type=type,
+            cursor=cursor,
+            limit=limit,
+        )
+        items = []
+        for job in result["items"]:
+            items.append(
+                {
+                    "job_id": job["job_id"],
+                    "job_type": job["job_type"],
+                    "status": job["status"],
+                    "retry_count": job.get("retry_count", 0),
+                    "trace_id": job.get("trace_id") or _trace_id_from_request(request),
+                    "resource": job["resource"],
+                    "last_error": job.get("last_error"),
+                }
+            )
+        return success_envelope(
+            {"items": items, "total": result["total"], "next_cursor": result["next_cursor"]},
+            _trace_id_from_request(request),
         )
 
     @app.get("/api/v1/jobs/{job_id}")

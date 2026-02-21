@@ -341,5 +341,38 @@ class InMemoryStore:
             "error_code": "JOB_CANCELLED",
         }
 
+    def list_jobs(
+        self,
+        *,
+        status: str | None = None,
+        job_type: str | None = None,
+        cursor: str | None = None,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        jobs = list(self.jobs.values())
+        if status:
+            jobs = [j for j in jobs if j.get("status") == status]
+        if job_type:
+            jobs = [j for j in jobs if j.get("job_type") == job_type]
+
+        start = 0
+        if cursor:
+            try:
+                start = max(0, int(cursor))
+            except ValueError:
+                start = 0
+        limit = min(max(limit, 1), 100)
+
+        sliced = jobs[start : start + limit]
+        next_cursor = None
+        if start + limit < len(jobs):
+            next_cursor = str(start + limit)
+
+        return {
+            "items": sliced,
+            "total": len(jobs),
+            "next_cursor": next_cursor,
+        }
+
 
 store = InMemoryStore()
