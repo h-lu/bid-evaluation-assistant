@@ -214,7 +214,7 @@ Expected: all tests pass.
 Run:
 
 ```bash
-rg -n 'recovered|TODO|TBD|mermaid' README.md docs -g '*.md'
+rg -n '<forbidden_markers_regex>' README.md docs -g '*.md'
 refs=$(rg -o --no-filename '`docs[^`]+\\.(md|yaml)`' README.md docs AGENTS.md CLAUDE.md -g '*.md' | tr -d '`' | sort -u | rg -v '[*?\\[\\]]')
 while IFS= read -r p; do [ -z "$p" ] || [ -f "$p" ] || echo "MISSING $p"; done <<< "$refs"
 ```

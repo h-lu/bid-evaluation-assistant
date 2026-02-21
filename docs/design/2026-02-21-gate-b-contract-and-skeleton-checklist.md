@@ -57,3 +57,24 @@
 
 1. Gate B 的“文档契约与骨架冻结”已具备入 Gate C 条件。
 2. Gate B 的“运行验证”需在代码仓库完成后补齐证据。
+
+## 8. 运行验证证据（本分支）
+
+说明：以下为 `codex/gate-c-api-skeleton` 分支的最小可运行证据。
+
+1. 运行命令：`pytest -v`
+2. 测试结果：`14 passed`
+3. 覆盖范围：
+   - B-1：统一响应包络、幂等、`202 + job_id`、`resume_token`、citation source
+   - B-2：任务初始状态与 `jobs/{job_id}` 状态查询契约
+4. 证据测试文件：
+   - `tests/test_response_envelope.py`
+   - `tests/test_idempotency.py`
+   - `tests/test_api_contract_core.py`
+   - `tests/test_resume_and_citation.py`
+
+更新结论：
+
+1. B-1 运行验证：已在本分支完成最小闭环验证。
+2. B-2 运行验证：已在本分支完成核心状态查询与幂等行为验证。
+3. B-3/B-4 运行验证：仍待接入真实存储与解析/检索链路后补齐。

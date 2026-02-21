@@ -142,3 +142,23 @@ Gate A 设计冻结
 1. SSOT 变更优先级最高，其他文档必须与 SSOT 对齐。
 2. 任何新增实现细节，必须同步落到对应专项文档，不允许只写在临时说明。
 3. 合并前必须跑一次全量一致性检查：术语、状态机、错误码、接口字段、门禁阈值。
+
+## 8. 最小 API 骨架（Gate C 分支）
+
+`codex/gate-c-api-skeleton` 分支包含最小可运行 FastAPI 骨架，用于承接 Gate B 契约并推进 Gate C。
+
+本地运行：
+
+```bash
+python3 -m pip install -e '.[dev]'
+pytest -v
+uvicorn app.main:app --reload
+```
+
+当前已覆盖最小接口：
+
+1. `POST /api/v1/documents/upload`
+2. `POST /api/v1/evaluations`
+3. `GET /api/v1/jobs/{job_id}`
+4. `POST /api/v1/evaluations/{evaluation_id}/resume`
+5. `GET /api/v1/citations/{chunk_id}/source`
