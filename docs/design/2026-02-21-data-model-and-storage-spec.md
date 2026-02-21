@@ -93,24 +93,106 @@ tenants
 3. `project_suppliers(tenant_id, project_id, supplier_id)`
 4. `jobs(tenant_id, idempotency_key)`（可空，空值不参与）
 
-## 6. 多租户隔离（RLS）
+## 6. DDL 附录（核心表示例）
 
-### 6.1 策略要求
+```sql
+CREATE TABLE jobs (
+  job_id UUID PRIMARY KEY,
+  tenant_id UUID NOT NULL,
+  job_type TEXT NOT NULL,
+  resource_type TEXT NOT NULL,
+  resource_id UUID NOT NULL,
+  status TEXT NOT NULL,
+  retry_count INT NOT NULL DEFAULT 0,
+  trace_id TEXT NOT NULL,
+  idempotency_key TEXT NULL,
+  payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  error_code TEXT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT chk_jobs_status
+    CHECK (status IN ('queued','running','retrying','succeeded','failed','dlq_pending','dlq_recorded'))
+);
+
+CREATE UNIQUE INDEX uq_jobs_tenant_idem
+  ON jobs (tenant_id, idempotency_key)
+  WHERE idempotency_key IS NOT NULL;
+
+CREATE INDEX idx_jobs_tenant_status_created
+  ON jobs (tenant_id, status, created_at DESC);
+```
+
+```sql
+CREATE TABLE workflow_checkpoints (
+  checkpoint_id UUID PRIMARY KEY,
+  tenant_id UUID NOT NULL,
+  thread_id TEXT NOT NULL,
+  evaluation_id UUID NOT NULL,
+  state_json JSONB NOT NULL,
+  status TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_ckpt_tenant_thread_updated
+  ON workflow_checkpoints (tenant_id, thread_id, updated_at DESC);
+```
+
+```sql
+CREATE TABLE dlq_items (
+  dlq_id UUID PRIMARY KEY,
+  tenant_id UUID NOT NULL,
+  job_id UUID NOT NULL REFERENCES jobs(job_id),
+  error_class TEXT NOT NULL,
+  error_code TEXT NOT NULL,
+  payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  context_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  status TEXT NOT NULL DEFAULT 'open',
+  first_failed_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT chk_dlq_status CHECK (status IN ('open','requeued','discarded'))
+);
+
+CREATE INDEX idx_dlq_tenant_status_created
+  ON dlq_items (tenant_id, status, created_at DESC);
+```
+
+```sql
+CREATE TABLE citations (
+  citation_id UUID PRIMARY KEY,
+  tenant_id UUID NOT NULL,
+  evaluation_id UUID NOT NULL,
+  item_id UUID NOT NULL,
+  chunk_id UUID NOT NULL,
+  page_no INT NOT NULL,
+  bbox_json JSONB NOT NULL,
+  quote TEXT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_citations_eval_item
+  ON citations (tenant_id, evaluation_id, item_id);
+```
+
+## 7. 多租户隔离（RLS）
+
+### 7.1 策略要求
 
 1. 核心业务表全部启用 RLS。
 2. 连接会话必须先设置 `app.current_tenant`。
 3. 无 tenant 上下文时拒绝查询。
 
-### 6.2 策略模板
+### 7.2 策略模板
 
 ```text
 USING (tenant_id = current_setting('app.current_tenant', true)::uuid)
 WITH CHECK (tenant_id = current_setting('app.current_tenant', true)::uuid)
 ```
 
-## 7. 向量与缓存约束
+## 8. 向量与缓存约束
 
-### 7.1 向量 metadata 最小字段
+### 8.1 向量 metadata 最小字段
 
 1. `tenant_id`
 2. `project_id`
@@ -120,7 +202,7 @@ WITH CHECK (tenant_id = current_setting('app.current_tenant', true)::uuid)
 6. `chunk_type`
 7. `page_span`
 
-### 7.2 Redis key 规范
+### 8.2 Redis key 规范
 
 ```text
 bea:{tenant_id}:job:{job_id}
@@ -129,7 +211,7 @@ bea:{tenant_id}:lock:{resource_key}
 bea:{tenant_id}:cache:{namespace}:{hash}
 ```
 
-## 8. 留存、分区与备份
+## 9. 留存、分区与备份
 
 1. `audit_logs` 超大表按月分区。
 2. 报告与原始证据进入 WORM 存储。
@@ -137,20 +219,46 @@ bea:{tenant_id}:cache:{namespace}:{hash}
 4. legal hold 对象不参与自动清理。
 5. 每日增量 + 每周全量备份。
 
-## 9. 演进策略
+## 10. 演进策略
 
 1. 新字段优先向后兼容，避免破坏性变更。
 2. 迁移采用“双写+回填+切换”流程。
 3. schema 变更必须附回滚 SQL。
 
-## 10. 验收标准
+## 11. 迁移执行顺序（必按顺序）
+
+1. 准备阶段：
+   - 创建扩展（如 `pgcrypto`/`uuid-ossp`，按实际选型）。
+   - 创建数据库角色与最小权限策略。
+2. 基础域迁移：
+   - `tenants/users/projects/suppliers/project_suppliers`。
+3. 文档域迁移：
+   - `documents/document_parse_runs/document_chunks/chunk_positions`。
+4. 评估域迁移：
+   - `evaluation_sessions/evaluation_items/evaluation_results/citations`。
+5. 任务与治理迁移：
+   - `jobs/workflow_checkpoints/dlq_items/audit_logs/outbox/legal_hold`。
+6. 索引与约束补全：
+   - 普通索引、唯一索引、检查约束、外键约束。
+7. RLS 启用与策略下发：
+   - 先下发策略，再启用写流量。
+8. 回填与校验：
+   - 回填缺省 `tenant_id`。
+   - 执行一致性校验与抽样核验。
+9. 发布切换：
+   - 读流量切换 -> 写流量切换 -> 观测窗口。
+10. 回滚预案：
+    - 保留上个稳定 schema 标签。
+    - 每次迁移必须配套 downgrade 脚本。
+
+## 12. 验收标准
 
 1. 跨租户访问在 API 与 DB 层均被阻断。
 2. 关键查询索引命中率达到目标。
 3. checkpoint 恢复可定位到最新状态。
 4. 审计与 legal hold 数据可完整追溯。
 
-## 11. 参考来源（核验：2026-02-21）
+## 13. 参考来源（核验：2026-02-21）
 
 1. PostgreSQL RLS: https://www.postgresql.org/docs/current/ddl-rowsecurity.html
 2. 历史融合提交：`beef3e9`, `7f05f7e`
