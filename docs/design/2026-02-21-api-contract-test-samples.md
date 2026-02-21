@@ -6,7 +6,7 @@
 
 ## 1. 目标
 
-1. 为 Gate B-1 提供“可执行的契约测试样例”基线。
+1. 为 Gate B-1/B-2 提供“可执行的契约测试样例”基线。
 2. 覆盖统一响应模型、幂等、异步任务、HITL 恢复、citation 返回。
 3. 为后续自动化契约测试提供最小样例集合。
 
@@ -15,10 +15,15 @@
 基于 `docs/design/2026-02-21-openapi-v1.yaml` 的核心接口子集：
 
 1. `POST /api/v1/documents/upload`
-2. `POST /api/v1/evaluations`
-3. `POST /api/v1/evaluations/{evaluation_id}/resume`
-4. `GET /api/v1/jobs/{job_id}`
-5. `GET /api/v1/citations/{chunk_id}/source`
+2. `POST /api/v1/documents/{document_id}/parse`
+3. `POST /api/v1/evaluations`
+4. `POST /api/v1/evaluations/{evaluation_id}/resume`
+5. `GET /api/v1/jobs/{job_id}`
+6. `POST /api/v1/jobs/{job_id}/cancel`
+7. `GET /api/v1/citations/{chunk_id}/source`
+8. `GET /api/v1/dlq/items`
+9. `POST /api/v1/dlq/items/{item_id}/requeue`
+10. `POST /api/v1/dlq/items/{item_id}/discard`
 
 ## 3. 执行约定
 
@@ -37,12 +42,20 @@
 | `CT-004` | `POST /documents/upload` | 租户越权 | JWT 租户与资源归属不一致 | `403` | `error.code=TENANT_SCOPE_VIOLATION` |
 | `CT-005` | `POST /evaluations` | 正常评估受理 | 合法 `project_id/supplier_id/rule_pack_version` | `202` | `data.evaluation_id/job_id/status=queued` |
 | `CT-006` | `POST /evaluations` | 参数校验失败 | `top_k=0` 或缺失必填字段 | `400` | `error.code=REQ_VALIDATION_FAILED` |
-| `CT-007` | `GET /jobs/{job_id}` | 查询运行中任务 | 已存在 `job_id` | `200` | `data.status` 在状态字典内 |
-| `CT-008` | `GET /jobs/{job_id}` | 查询不存在任务 | 不存在 `job_id` | `404` | `success=false`，错误对象完整 |
-| `CT-009` | `POST /evaluations/{evaluation_id}/resume` | 合法恢复 | 合法 `resume_token + decision + comment` | `202` | 返回新的 `job_id` |
-| `CT-010` | `POST /evaluations/{evaluation_id}/resume` | token 非法/过期 | `resume_token` 无效 | `409` | `error.code=WF_INTERRUPT_RESUME_INVALID` |
-| `CT-011` | `GET /citations/{chunk_id}/source` | 引用回跳成功 | 合法 `chunk_id` | `200` | 返回 `document_id/page/bbox/text/context` |
-| `CT-012` | `GET /citations/{chunk_id}/source` | 引用不存在 | 不存在 `chunk_id` | `404` | `success=false`，错误对象完整 |
+| `CT-007` | `POST /documents/{document_id}/parse` | 正常解析受理 | 合法 `document_id` + `Idempotency-Key` | `202` | `data.document_id/job_id/status=queued` |
+| `CT-008` | `POST /documents/{document_id}/parse` | 缺失幂等键 | 不带 `Idempotency-Key` | `400` | `error.code=IDEMPOTENCY_MISSING` |
+| `CT-009` | `GET /jobs/{job_id}` | 查询运行中任务 | 已存在 `job_id` | `200` | `data.status` 在状态字典内 |
+| `CT-010` | `GET /jobs/{job_id}` | 查询不存在任务 | 不存在 `job_id` | `404` | `success=false`，错误对象完整 |
+| `CT-011` | `POST /jobs/{job_id}/cancel` | 正常取消 | 合法 `job_id` + `Idempotency-Key` | `202` | `data.status=failed,error_code=JOB_CANCELLED` |
+| `CT-012` | `POST /jobs/{job_id}/cancel` | 终态冲突 | 任务已 `succeeded/failed` | `409` | `error.code=JOB_CANCEL_CONFLICT` |
+| `CT-013` | `POST /evaluations/{evaluation_id}/resume` | 合法恢复 | 合法 `resume_token + decision + comment` | `202` | 返回新的 `job_id` |
+| `CT-014` | `POST /evaluations/{evaluation_id}/resume` | token 非法/过期 | `resume_token` 无效 | `409` | `error.code=WF_INTERRUPT_RESUME_INVALID` |
+| `CT-015` | `GET /citations/{chunk_id}/source` | 引用回跳成功 | 合法 `chunk_id` | `200` | 返回 `document_id/page/bbox/text/context` |
+| `CT-016` | `GET /citations/{chunk_id}/source` | 引用不存在 | 不存在 `chunk_id` | `404` | `success=false`，错误对象完整 |
+| `CT-017` | `GET /dlq/items` | 查询 DLQ 列表 | 无 | `200` | 返回 `items[]/total` |
+| `CT-018` | `POST /dlq/items/{item_id}/requeue` | 重放 DLQ 项 | item 状态 `open` | `202` | 返回新 `job_id` 且条目变 `requeued` |
+| `CT-019` | `POST /dlq/items/{item_id}/discard` | 缺失审批字段 | `reason/reviewer_id` 为空 | `400` | `error.code=DLQ_DISCARD_REQUIRES_APPROVAL` |
+| `CT-020` | `POST /dlq/items/{item_id}/discard` | 合法丢弃 | `reason + reviewer_id` | `200` | 条目状态 `discarded` |
 
 ## 5. 关键断言模板
 
@@ -84,10 +97,11 @@
 
 ## 7. Gate B-1 验收映射
 
-1. 统一响应模型与错误对象：`CT-001/006/008/010/012`。
+1. 统一响应模型与错误对象：`CT-001/006/010/014/016/019`。
 2. 幂等策略：`CT-002/003`。
-3. 异步任务契约：`CT-001/005/007/009`。
-4. `resume_token` 与 citation schema：`CT-009/010/011`。
+3. 异步任务契约：`CT-001/005/007/009/011/013/018`。
+4. `resume_token` 与 citation schema：`CT-013/014/015`。
+5. B-2 状态机运维动作（cancel/DLQ）：`CT-011/012/017/018/019/020`。
 
 ## 8. 后续自动化建议
 

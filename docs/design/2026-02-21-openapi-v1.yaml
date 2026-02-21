@@ -3,8 +3,8 @@ info:
   title: Bid Evaluation Assistant API
   version: v2026.02.21-r3
   description: |
-    Gate B-1 OpenAPI contract subset for async job submission, HITL resume,
-    job status query, and citation source lookup.
+    Gate C OpenAPI contract subset for async job submission, parse/resume/cancel,
+    job status query, DLQ operations, and citation source lookup.
 servers:
   - url: /api/v1
 security:
@@ -139,6 +139,35 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /documents/{document_id}/parse:
+    post:
+      operationId: parseDocument
+      summary: Enqueue parse/index job for an uploaded document
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DocumentId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ParseAcceptedResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Document not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /evaluations/{evaluation_id}/resume:
     post:
       operationId: resumeEvaluation
@@ -207,6 +236,116 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /jobs/{job_id}/cancel:
+    post:
+      operationId: cancelJob
+      summary: Cancel a non-terminal async job
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CancelAcceptedResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Cancel conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /dlq/items:
+    get:
+      operationId: listDlqItems
+      summary: List DLQ items
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DlqListResponse'
+
+  /dlq/items/{item_id}/requeue:
+    post:
+      operationId: requeueDlqItem
+      summary: Requeue an open DLQ item
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ItemId'
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DlqRequeueAcceptedResponse'
+        '404':
+          description: DLQ item not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Requeue conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /dlq/items/{item_id}/discard:
+    post:
+      operationId: discardDlqItem
+      summary: Discard a DLQ item with approval fields
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ItemId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DlqDiscardRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DlqDiscardResponse'
+        '400':
+          description: Missing approval fields
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: DLQ item not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /citations/{chunk_id}/source:
     get:
@@ -260,6 +399,18 @@ components:
         type: string
     ChunkId:
       name: chunk_id
+      in: path
+      required: true
+      schema:
+        type: string
+    DocumentId:
+      name: document_id
+      in: path
+      required: true
+      schema:
+        type: string
+    ItemId:
+      name: item_id
       in: path
       required: true
       schema:
@@ -390,6 +541,30 @@ components:
         meta:
           $ref: '#/components/schemas/Meta'
 
+    ParseAcceptedData:
+      type: object
+      required: [document_id, job_id, status]
+      properties:
+        document_id:
+          type: string
+        job_id:
+          type: string
+        status:
+          type: string
+          enum: [queued]
+
+    ParseAcceptedResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/ParseAcceptedData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
     ResumeRequest:
       type: object
       required: [resume_token, decision, comment]
@@ -437,7 +612,7 @@ components:
       properties:
         type:
           type: string
-          enum: [document, evaluation]
+          enum: [document, evaluation, job]
         id:
           type: string
 
@@ -449,7 +624,7 @@ components:
           type: string
         job_type:
           type: string
-          enum: [upload, parse, evaluation, resume]
+          enum: [upload, parse, evaluation, resume, requeue]
         status:
           type: string
           enum:
@@ -486,6 +661,31 @@ components:
           const: true
         data:
           $ref: '#/components/schemas/JobStatusData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    CancelAcceptedData:
+      type: object
+      required: [job_id, status, error_code]
+      properties:
+        job_id:
+          type: string
+        status:
+          type: string
+          enum: [failed]
+        error_code:
+          type: string
+          enum: [JOB_CANCELLED]
+
+    CancelAcceptedResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/CancelAcceptedData'
         meta:
           $ref: '#/components/schemas/Meta'
 
@@ -531,5 +731,100 @@ components:
           const: true
         data:
           $ref: '#/components/schemas/CitationSourceData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    DlqItem:
+      type: object
+      required: [dlq_id, job_id, error_class, error_code, status]
+      properties:
+        dlq_id:
+          type: string
+        job_id:
+          type: string
+        error_class:
+          type: string
+        error_code:
+          type: string
+        status:
+          type: string
+          enum: [open, requeued, discarded]
+
+    DlqListData:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DlqItem'
+        total:
+          type: integer
+          minimum: 0
+
+    DlqListResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/DlqListData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    DlqRequeueAcceptedData:
+      type: object
+      required: [dlq_id, job_id, status]
+      properties:
+        dlq_id:
+          type: string
+        job_id:
+          type: string
+        status:
+          type: string
+          enum: [queued]
+
+    DlqRequeueAcceptedResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/DlqRequeueAcceptedData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    DlqDiscardRequest:
+      type: object
+      required: [reason, reviewer_id]
+      properties:
+        reason:
+          type: string
+        reviewer_id:
+          type: string
+
+    DlqDiscardData:
+      type: object
+      required: [dlq_id, status]
+      properties:
+        dlq_id:
+          type: string
+        status:
+          type: string
+          enum: [discarded]
+
+    DlqDiscardResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/DlqDiscardData'
         meta:
           $ref: '#/components/schemas/Meta'
