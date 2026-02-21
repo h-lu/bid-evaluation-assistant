@@ -48,7 +48,10 @@ def test_dlq_list_and_requeue_flow(client):
     assert list_resp.status_code == 200
     assert any(x["dlq_id"] == item_id for x in list_resp.json()["data"]["items"])
 
-    rq_resp = client.post(f"/api/v1/dlq/items/{item_id}/requeue")
+    rq_resp = client.post(
+        f"/api/v1/dlq/items/{item_id}/requeue",
+        headers={"Idempotency-Key": "idem_dlq_requeue_1"},
+    )
     assert rq_resp.status_code == 202
     rq_data = rq_resp.json()["data"]
     assert rq_data["dlq_id"] == item_id
@@ -68,7 +71,11 @@ def test_dlq_discard_requires_approval(client):
     )
     item_id = seeded["dlq_id"]
 
-    bad = client.post(f"/api/v1/dlq/items/{item_id}/discard", json={"reason": ""})
+    bad = client.post(
+        f"/api/v1/dlq/items/{item_id}/discard",
+        json={"reason": ""},
+        headers={"Idempotency-Key": "idem_dlq_discard_1"},
+    )
     assert bad.status_code == 400
     assert bad.json()["error"]["code"] == "DLQ_DISCARD_REQUIRES_APPROVAL"
 
@@ -78,6 +85,43 @@ def test_dlq_discard_requires_approval(client):
             "reason": "manual replacement completed",
             "reviewer_id": "u_reviewer_1",
         },
+        headers={"Idempotency-Key": "idem_dlq_discard_2"},
     )
     assert ok.status_code == 200
     assert ok.json()["data"]["status"] == "discarded"
+
+
+def test_dlq_write_endpoints_require_idempotency_key(client):
+    seeded = store.seed_dlq_item(
+        job_id="job_failed_3",
+        error_class="transient",
+        error_code="RAG_UPSTREAM_UNAVAILABLE",
+    )
+    item_id = seeded["dlq_id"]
+
+    requeue = client.post(f"/api/v1/dlq/items/{item_id}/requeue")
+    assert requeue.status_code == 400
+    assert requeue.json()["error"]["code"] == "IDEMPOTENCY_MISSING"
+
+    discard = client.post(
+        f"/api/v1/dlq/items/{item_id}/discard",
+        json={"reason": "manual", "reviewer_id": "u_1"},
+    )
+    assert discard.status_code == 400
+    assert discard.json()["error"]["code"] == "IDEMPOTENCY_MISSING"
+
+
+def test_dlq_requeue_is_idempotent_with_same_key(client):
+    seeded = store.seed_dlq_item(
+        job_id="job_failed_4",
+        error_class="transient",
+        error_code="RAG_UPSTREAM_UNAVAILABLE",
+    )
+    item_id = seeded["dlq_id"]
+    headers = {"Idempotency-Key": "idem_dlq_requeue_same"}
+
+    first = client.post(f"/api/v1/dlq/items/{item_id}/requeue", headers=headers)
+    second = client.post(f"/api/v1/dlq/items/{item_id}/requeue", headers=headers)
+    assert first.status_code == 202
+    assert second.status_code == 202
+    assert first.json()["data"] == second.json()["data"]

@@ -369,11 +369,30 @@ def create_app() -> FastAPI:
         return success_envelope({"items": items, "total": len(items)}, _trace_id_from_request(request))
 
     @app.post("/api/v1/dlq/items/{item_id}/requeue")
-    def requeue_dlq_item(item_id: str, request: Request):
-        data = store.requeue_dlq_item(
-            dlq_id=item_id,
-            trace_id=_trace_id_from_request(request),
+    def requeue_dlq_item(
+        item_id: str,
+        request: Request,
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    ):
+        if not idempotency_key:
+            raise ApiError(
+                code="IDEMPOTENCY_MISSING",
+                message="Idempotency-Key header is required",
+                error_class="validation",
+                retryable=False,
+                http_status=400,
+            )
+        payload = {"dlq_id": item_id}
+        data = store.run_idempotent(
+            endpoint=f"POST:/api/v1/dlq/items/{item_id}/requeue",
             tenant_id=_tenant_id_from_request(request),
+            idempotency_key=idempotency_key,
+            payload=payload,
+            execute=lambda: store.requeue_dlq_item(
+                dlq_id=item_id,
+                trace_id=_trace_id_from_request(request),
+                tenant_id=_tenant_id_from_request(request),
+            ),
         )
         return JSONResponse(
             status_code=202,
@@ -381,12 +400,32 @@ def create_app() -> FastAPI:
         )
 
     @app.post("/api/v1/dlq/items/{item_id}/discard")
-    def discard_dlq_item(item_id: str, payload: DlqDiscardRequest, request: Request):
-        data = store.discard_dlq_item(
-            dlq_id=item_id,
-            reason=payload.reason,
-            reviewer_id=payload.reviewer_id,
+    def discard_dlq_item(
+        item_id: str,
+        payload: DlqDiscardRequest,
+        request: Request,
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    ):
+        if not idempotency_key:
+            raise ApiError(
+                code="IDEMPOTENCY_MISSING",
+                message="Idempotency-Key header is required",
+                error_class="validation",
+                retryable=False,
+                http_status=400,
+            )
+        req_payload = payload.model_dump(mode="json")
+        data = store.run_idempotent(
+            endpoint=f"POST:/api/v1/dlq/items/{item_id}/discard",
             tenant_id=_tenant_id_from_request(request),
+            idempotency_key=idempotency_key,
+            payload=req_payload,
+            execute=lambda: store.discard_dlq_item(
+                dlq_id=item_id,
+                reason=payload.reason,
+                reviewer_id=payload.reviewer_id,
+                tenant_id=_tenant_id_from_request(request),
+            ),
         )
         return success_envelope(data, _trace_id_from_request(request))
 
