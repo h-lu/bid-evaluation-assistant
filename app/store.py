@@ -439,5 +439,85 @@ class InMemoryStore:
             "next_cursor": next_cursor,
         }
 
+    def run_job_once(
+        self,
+        *,
+        job_id: str,
+        tenant_id: str,
+        force_fail: bool = False,
+    ) -> dict[str, Any]:
+        job = self.get_job_for_tenant(job_id=job_id, tenant_id=tenant_id)
+        if job is None:
+            raise ApiError(
+                code="JOB_NOT_FOUND",
+                message="job not found",
+                error_class="validation",
+                retryable=False,
+                http_status=404,
+            )
+
+        status = job["status"]
+        if status in {"queued", "retrying", "needs_manual_decision"}:
+            job = self.transition_job_status(
+                job_id=job_id,
+                new_status="running",
+                tenant_id=tenant_id,
+            )
+            status = job["status"]
+
+        if status != "running":
+            raise ApiError(
+                code="WF_STATE_TRANSITION_INVALID",
+                message=f"job cannot run from status: {status}",
+                error_class="business_rule",
+                retryable=False,
+                http_status=409,
+            )
+
+        if force_fail:
+            self.transition_job_status(
+                job_id=job_id,
+                new_status="dlq_pending",
+                tenant_id=tenant_id,
+            )
+            self.transition_job_status(
+                job_id=job_id,
+                new_status="dlq_recorded",
+                tenant_id=tenant_id,
+            )
+            dlq_item = self.seed_dlq_item(
+                job_id=job_id,
+                error_class="transient",
+                error_code="INTERNAL_DEBUG_FORCED_FAIL",
+                tenant_id=tenant_id,
+            )
+            failed_job = self.transition_job_status(
+                job_id=job_id,
+                new_status="failed",
+                tenant_id=tenant_id,
+            )
+            failed_job["last_error"] = {
+                "code": "INTERNAL_DEBUG_FORCED_FAIL",
+                "message": "forced failure by internal debug run",
+                "retryable": True,
+                "class": "transient",
+            }
+            return {
+                "job_id": job_id,
+                "final_status": "failed",
+                "dlq_id": dlq_item["dlq_id"],
+            }
+
+        self.transition_job_status(
+            job_id=job_id,
+            new_status="succeeded",
+            tenant_id=tenant_id,
+        )
+        return {
+            "job_id": job_id,
+            "final_status": "succeeded",
+            "dlq_id": None,
+        }
+
 
 store = InMemoryStore()

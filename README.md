@@ -171,3 +171,4 @@ uvicorn app.main:app --reload
 10. `POST /api/v1/dlq/items/{item_id}/requeue`
 11. `POST /api/v1/dlq/items/{item_id}/discard`
 12. `POST /api/v1/internal/jobs/{job_id}/transition`（内部回放测试）
+13. `POST /api/v1/internal/jobs/{job_id}/run`（内部回放执行）

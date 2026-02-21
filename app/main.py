@@ -458,6 +458,28 @@ def create_app() -> FastAPI:
             _trace_id_from_request(request),
         )
 
+    @app.post("/api/v1/internal/jobs/{job_id}/run")
+    def internal_run_job(
+        job_id: str,
+        request: Request,
+        force_fail: bool = Query(default=False),
+        x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
+    ):
+        if x_internal_debug != "true":
+            raise ApiError(
+                code="AUTH_FORBIDDEN",
+                message="internal endpoint forbidden",
+                error_class="security_sensitive",
+                retryable=False,
+                http_status=403,
+            )
+        result = store.run_job_once(
+            job_id=job_id,
+            tenant_id=_tenant_id_from_request(request),
+            force_fail=force_fail,
+        )
+        return success_envelope(result, _trace_id_from_request(request))
+
     return app
 
 
