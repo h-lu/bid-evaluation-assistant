@@ -348,6 +348,7 @@ paths:
         - BearerAuth: []
       parameters:
         - $ref: '#/components/parameters/ItemId'
+        - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '202':
           description: Accepted
@@ -355,6 +356,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DlqRequeueAcceptedResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '404':
           description: DLQ item not found
           content:
@@ -376,6 +383,7 @@ paths:
         - BearerAuth: []
       parameters:
         - $ref: '#/components/parameters/ItemId'
+        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
