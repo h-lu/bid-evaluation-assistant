@@ -1,8 +1,8 @@
 # 辅助评标专家系统 —— 端到端架构设计
 
-> 版本：v5.2
+> 版本：v5.3
 > 设计日期：2026-02-20
-> 更新日期：2026-02-20
+> 更新日期：2026-02-21
 > 状态：已批准
 
 ---
@@ -49,10 +49,24 @@
 - `docs/research/2026-02-20-agentic-procure-audit-ai-research.md`
 - `docs/research/2026-02-20-ragflow-research.md`
 - `docs/research/2026-02-20-github-projects-round2.md`
+- `docs/research/2026-02-21-architecture-validation.md` ⭐ **v5.3新增** 架构验证报告（Context7 + Web Search）
 
 ---
 
 ## 〇.1 版本更新要点
+
+### v5.3 更新要点（2026-02-21）
+
+> **来源文档**: `docs/research/2026-02-21-architecture-validation.md`（基于 Context7 + Web Search 验证）
+
+基于 Context7（LangGraph/LightRAG/DSPy 官方文档）和 Web Search 验证，本版本新增：
+
+| 更新项 | 来源 | 说明 |
+|--------|------|------|
+| **事件总线设计** | 模块化单体最佳实践 | 模块间解耦通信 → 详见 **2.5** |
+| **LightRAG 引用包含** | Context7 LightRAG 文档 | `include_references=True` 配置 → 详见 **3.2** |
+| **查询模式自动选择器** | LightRAG QueryParam | local/global/hybrid/mix 自动切换 → 详见 **3.2.1** |
+| **DeepEval CI/CD 集成** | DeepEval 官方文档 | pytest 幻觉检测 → 详见 **6.3.1** |
 
 ### v5.2 更新要点（2026-02-20）
 
@@ -307,6 +321,198 @@ src/modules/evaluation/
     ├── router.py            # FastAPI 路由
     └── schemas.py           # Pydantic 模型
 ```
+
+### 2.5 事件总线设计（模块间通信）⭐ v5.3 新增
+
+> **来源**: `docs/research/2026-02-21-architecture-validation.md` - 模块化单体最佳实践
+> **借鉴价值**: ⭐⭐⭐⭐⭐ 模块解耦、未来可演进到消息队列
+
+**设计原则**: 模块间通过事件通信，避免直接依赖，保持松耦合。
+
+**事件总线架构：**
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                         事件总线架构（模块间通信）                                    │
+│                    来源: 模块化单体最佳实践 2025                                     │
+├─────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                     │
+│   ┌─────────────┐     ┌─────────────┐     ┌─────────────┐     ┌─────────────┐    │
+│   │  documents  │     │  retrieval  │     │  evaluation │     │  compliance │    │
+│   │   模块      │     │    模块     │     │    模块     │     │    模块     │    │
+│   └──────┬──────┘     └──────┬──────┘     └──────┬──────┘     └──────┬──────┘    │
+│          │                   │                   │                   │            │
+│          │ publish           │ subscribe         │ publish           │ subscribe  │
+│          ▼                   ▼                   ▼                   ▼            │
+│   ┌───────────────────────────────────────────────────────────────────────────┐  │
+│   │                        EventBus（内存事件总线）                             │  │
+│   │  • 同步/异步事件分发                                                      │  │
+│   │  • 类型安全的事件定义                                                     │  │
+│   │  • 未来可替换为 Redis/Kafka                                               │  │
+│   └───────────────────────────────────────────────────────────────────────────┘  │
+│                                                                                     │
+│   事件流：                                                                          │
+│   ┌─────────────────────────────────────────────────────────────────────────┐    │
+│   │  DocumentParsed ────→ retrieval.reindex()                               │    │
+│   │  ScoreCalculated ───→ compliance.check()                                │    │
+│   │  ReviewRequested ───→ notification.send()                               │    │
+│   │  ComplianceChecked ─→ evaluation.update_status()                        │    │
+│   └─────────────────────────────────────────────────────────────────────────┘    │
+│                                                                                     │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**事件总线实现：**
+
+```python
+# 文件: backend/src/core/events.py
+# 来源: 模块化单体最佳实践 2025
+
+from typing import Callable, Dict, List, Any
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
+import asyncio
+
+class EventType(Enum):
+    """领域事件类型"""
+    # 文档事件
+    DOCUMENT_UPLOADED = "document_uploaded"
+    DOCUMENT_PARSED = "document_parsed"
+    DOCUMENT_CHUNKED = "document_chunked"
+
+    # 检索事件
+    INDEX_UPDATED = "index_updated"
+    REINDEX_COMPLETED = "reindex_completed"
+
+    # 评估事件
+    SCORE_CALCULATED = "score_calculated"
+    REVIEW_REQUESTED = "review_requested"
+    EVALUATION_COMPLETED = "evaluation_completed"
+
+    # 合规事件
+    COMPLIANCE_CHECKED = "compliance_checked"
+    RISK_ALERT = "risk_alert"
+
+@dataclass
+class DomainEvent:
+    """领域事件基类"""
+    type: EventType
+    payload: Dict[str, Any]
+    source_module: str
+    timestamp: datetime = field(default_factory=datetime.now)
+    correlation_id: str = ""  # 用于追踪同一业务流程
+
+class EventBus:
+    """
+    内存事件总线
+
+    特点：
+    - 同步/异步事件分发
+    - 类型安全
+    - 未来可替换为 Redis/Kafka
+    """
+
+    def __init__(self):
+        self._handlers: Dict[EventType, List[Callable]] = {}
+        self._async_handlers: Dict[EventType, List[Callable]] = {}
+
+    def subscribe(
+        self,
+        event_type: EventType,
+        handler: Callable,
+        async_mode: bool = False
+    ):
+        """订阅事件"""
+        if async_mode:
+            if event_type not in self._async_handlers:
+                self._async_handlers[event_type] = []
+            self._async_handlers[event_type].append(handler)
+        else:
+            if event_type not in self._handlers:
+                self._handlers[event_type] = []
+            self._handlers[event_type].append(handler)
+
+    def publish(self, event: DomainEvent):
+        """发布事件（同步）"""
+        # 同步处理器
+        handlers = self._handlers.get(event.type, [])
+        for handler in handlers:
+            try:
+                handler(event)
+            except Exception as e:
+                # 日志记录但不中断
+                print(f"Event handler error: {e}")
+
+        # 异步处理器（需要事件循环）
+        async_handlers = self._async_handlers.get(event.type, [])
+        if async_handlers:
+            try:
+                loop = asyncio.get_event_loop()
+                for handler in async_handlers:
+                    loop.create_task(handler(event))
+            except RuntimeError:
+                pass  # 没有事件循环
+
+    async def publish_async(self, event: DomainEvent):
+        """发布事件（异步）"""
+        # 同步处理器
+        handlers = self._handlers.get(event.type, [])
+        for handler in handlers:
+            try:
+                handler(event)
+            except Exception as e:
+                print(f"Event handler error: {e}")
+
+        # 异步处理器
+        async_handlers = self._async_handlers.get(event.type, [])
+        for handler in async_handlers:
+            try:
+                await handler(event)
+            except Exception as e:
+                print(f"Async event handler error: {e}")
+
+# 全局事件总线实例
+event_bus = EventBus()
+```
+
+**模块订阅示例：**
+
+```python
+# 文件: backend/src/modules/retrieval/application/services.py
+
+from core.events import EventBus, EventType, DomainEvent
+
+class RetrievalService:
+    """检索服务 - 订阅文档解析事件"""
+
+    def __init__(self, event_bus: EventBus):
+        self.event_bus = event_bus
+        # 订阅文档解析完成事件
+        self.event_bus.subscribe(
+            EventType.DOCUMENT_PARSED,
+            self.on_document_parsed,
+            async_mode=True
+        )
+
+    async def on_document_parsed(self, event: DomainEvent):
+        """文档解析完成后重新索引"""
+        doc_id = event.payload.get("doc_id")
+        await self.reindex_document(doc_id)
+
+    async def reindex_document(self, doc_id: str):
+        """重新索引文档"""
+        # 将文档 chunks 插入 LightRAG
+        ...
+```
+
+**未来演进路径：**
+
+| 阶段 | 事件总线 | 说明 |
+|------|----------|------|
+| **Phase 1（当前）** | 内存 EventBus | 简单、快速、无外部依赖 |
+| **Phase 2** | Redis Pub/Sub | 支持多实例、持久化 |
+| **Phase 3** | Kafka | 企业级、高吞吐、Exactly-Once |
 
 ---
 
@@ -609,6 +815,309 @@ class LightRAGService:
 | **Local** | 查询具体实体、精确信息 | "供应商A的注册资金是多少？" |
 | **Global** | 全局理解、对比分析 | "各供应商的技术方案有何差异？" |
 | **Hybrid** | 综合查询（推荐） | "评估供应商A的综合实力" |
+| **Mix** | 知识图谱 + 向量检索 | "供应商A的产品资质关系" |
+| **Naive** | 简单向量检索 | 快速预览，无图谱增强 |
+| **Bypass** | 直接 LLM，不检索 | 简单问题无需 RAG |
+
+**LightRAG 引用包含配置 ⭐ v5.3 新增：**
+
+> **来源**: Context7 LightRAG 文档 - `docs/research/2026-02-21-architecture-validation.md`
+
+```python
+# 推荐：启用 include_references 获取引用来源
+from lightrag import LightRAG, QueryParam
+
+# 查询时包含引用
+result = await rag.aquery(
+    query,
+    param=QueryParam(
+        mode="hybrid",
+        include_references=True,  # ⭐ 关键：返回引用来源
+        enable_rerank=True,
+        top_k=60,
+        chunk_top_k=20,
+        max_entity_tokens=6000,
+        max_relation_tokens=8000,
+    )
+)
+
+# 返回值结构
+# result.response  - 生成的回答
+# result.references - 引用来源列表 [{doc_id, page, text}, ...]
+```
+
+**LightRAG 完整查询参数：**
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `mode` | "global" | 检索模式：local/global/hybrid/mix/naive/bypass |
+| `include_references` | False | ⭐ 是否在响应中包含引用来源 |
+| `only_need_context` | False | 只返回上下文，不生成响应 |
+| `only_need_prompt` | False | 只返回 Prompt，用于调试 |
+| `enable_rerank` | True | 启用重排序 |
+| `top_k` | 60 | 检索数量 |
+| `chunk_top_k` | 20 | Chunk 检索数量 |
+| `conversation_history` | [] | 多轮对话历史 |
+
+### 3.2.1 查询模式自动选择器 ⭐ v5.3 新增
+
+> **来源**: `docs/research/2026-02-21-architecture-validation.md` - LightRAG QueryParam 文档
+> **借鉴价值**: ⭐⭐⭐⭐ 根据查询类型自动选择最优检索模式
+
+**核心思路**: 不同类型的查询适合不同的检索模式，自动选择可以提高检索质量。
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                         查询模式自动选择器                                           │
+│                    来源: LightRAG QueryParam 文档                                   │
+├─────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                     │
+│   用户查询                                                                          │
+│       │                                                                             │
+│       ▼                                                                             │
+│   ┌─────────────────────────────────────────────────────────────────────────────┐  │
+│   │                     QueryModeSelector                                        │  │
+│   │                                                                             │  │
+│   │  查询分类规则：                                                              │  │
+│   │  ┌─────────────────────────────────────────────────────────────────────────┐│  │
+│   │  │ • 实体查询（"供应商A的..."）    → local                                 ││  │
+│   │  │ • 对比查询（"哪家供应商..."）   → global                                ││  │
+│   │  │ • 关系追溯（"...的关系/资质"）  → mix                                   ││  │
+│   │  │ • 简单问题（"什么是..."）       → naive                                 ││  │
+│   │  │ • 综合评估（"评估/分析..."）    → hybrid（默认）                        ││  │
+│   │  └─────────────────────────────────────────────────────────────────────────┘│  │
+│   │                                                                             │  │
+│   └─────────────────────────────────────────────────────────────────────────────┘  │
+│       │                                                                             │
+│       ▼                                                                             │
+│   LightRAG.aquery(query, mode=selected_mode)                                       │
+│                                                                                     │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**实现代码：**
+
+```python
+# 文件: backend/src/modules/retrieval/application/query_mode_selector.py
+# 来源: LightRAG QueryParam 最佳实践
+
+import re
+from typing import Literal
+from dataclasses import dataclass
+
+QueryMode = Literal["local", "global", "hybrid", "mix", "naive", "bypass"]
+
+@dataclass
+class QueryClassification:
+    """查询分类结果"""
+    mode: QueryMode
+    confidence: float
+    reason: str
+
+class QueryModeSelector:
+    """
+    查询模式自动选择器
+
+    根据查询特征自动选择最适合的 LightRAG 检索模式
+    """
+
+    # 实体查询模式（查询具体实体信息）
+    ENTITY_PATTERNS = [
+        r"(.+?)的(.+)",           # "供应商A的注册资金"
+        r"(.+?)是否有(.+)",       # "供应商A是否有资质"
+        r"查询(.+?)的(.+)",       # "查询供应商B的业绩"
+        r"(.+?)是多少",           # "注册资本是多少"
+    ]
+
+    # 对比查询模式（需要全局视角）
+    COMPARISON_PATTERNS = [
+        r"哪家(.+?)最",           # "哪家供应商最强"
+        r"比较(.+?)和(.+)",       # "比较供应商A和B"
+        r"各(.+?)的(.+)",         # "各供应商的技术方案"
+        r"对比(.+?)",             # "对比分析"
+        r"排名",                  # "供应商排名"
+    ]
+
+    # 关系追溯模式（需要图谱关系）
+    RELATION_PATTERNS = [
+        r"(.+?)的(.+?)关系",      # "供应商A的产品关系"
+        r"(.+?)关联的(.+)",       # "与供应商A关联的资质"
+        r"(.+?)的资质证书",       # "供应商A的资质证书"
+        r"(.+?)的(.+?)链",        # "供应链关系链"
+    ]
+
+    # 简单查询模式（无需复杂检索）
+    SIMPLE_PATTERNS = [
+        r"什么是(.+)",            # "什么是评标"
+        r"如何(.+)",              # "如何评分"
+        r"定义",                  # "定义查询"
+    ]
+
+    def select(self, query: str) -> QueryClassification:
+        """
+        根据查询内容选择最优检索模式
+
+        Args:
+            query: 用户查询
+
+        Returns:
+            QueryClassification: 分类结果
+        """
+        query = query.strip()
+
+        # 1. 检查关系追溯模式
+        for pattern in self.RELATION_PATTERNS:
+            if re.search(pattern, query):
+                return QueryClassification(
+                    mode="mix",
+                    confidence=0.85,
+                    reason="检测到关系追溯查询，使用 mix 模式（图谱+向量）"
+                )
+
+        # 2. 检查对比查询模式
+        for pattern in self.COMPARISON_PATTERNS:
+            if re.search(pattern, query):
+                return QueryClassification(
+                    mode="global",
+                    confidence=0.85,
+                    reason="检测到对比/排名查询，使用 global 模式获取全局视角"
+                )
+
+        # 3. 检查实体查询模式
+        for pattern in self.ENTITY_PATTERNS:
+            if re.search(pattern, query):
+                return QueryClassification(
+                    mode="local",
+                    confidence=0.80,
+                    reason="检测到实体查询，使用 local 模式聚焦具体实体"
+                )
+
+        # 4. 检查简单查询模式
+        for pattern in self.SIMPLE_PATTERNS:
+            if re.search(pattern, query):
+                return QueryClassification(
+                    mode="naive",
+                    confidence=0.75,
+                    reason="检测到简单查询，使用 naive 模式快速检索"
+                )
+
+        # 5. 默认使用 hybrid 模式
+        return QueryClassification(
+            mode="hybrid",
+            confidence=0.70,
+            reason="综合查询，使用 hybrid 模式（推荐）"
+        )
+
+    def get_recommended_params(self, query: str) -> dict:
+        """
+        获取推荐的查询参数
+
+        Args:
+            query: 用户查询
+
+        Returns:
+            dict: QueryParam 推荐配置
+        """
+        classification = self.select(query)
+
+        params = {
+            "mode": classification.mode,
+            "include_references": True,  # 始终包含引用
+            "enable_rerank": True,
+        }
+
+        # 根据模式调整参数
+        if classification.mode == "local":
+            params.update({
+                "top_k": 40,
+                "max_entity_tokens": 6000,
+            })
+        elif classification.mode == "global":
+            params.update({
+                "top_k": 60,
+                "max_relation_tokens": 8000,
+            })
+        elif classification.mode == "mix":
+            params.update({
+                "top_k": 60,
+                "chunk_top_k": 30,
+            })
+
+        return params
+
+
+# 使用示例
+selector = QueryModeSelector()
+
+# 测试不同查询
+test_queries = [
+    "供应商A的注册资金是多少？",       # → local
+    "哪家供应商综合实力最强？",         # → global
+    "供应商A的产品资质关系是什么？",   # → mix
+    "什么是评标？",                    # → naive
+    "评估供应商A的技术方案",           # → hybrid
+]
+
+for query in test_queries:
+    result = selector.select(query)
+    print(f"查询: {query}")
+    print(f"  模式: {result.mode}, 原因: {result.reason}")
+    print()
+```
+
+**集成到检索服务：**
+
+```python
+# 文件: backend/src/modules/retrieval/application/services.py
+
+from .query_mode_selector import QueryModeSelector
+
+class LightRAGService:
+    """LightRAG 检索服务"""
+
+    def __init__(self, working_dir: str):
+        self.rag = LightRAG(working_dir=working_dir, ...)
+        self.mode_selector = QueryModeSelector()
+
+    async def retrieve(
+        self,
+        query: str,
+        mode: str = "auto"  # ⭐ 支持 auto 自动选择
+    ) -> dict:
+        """
+        检索接口
+
+        Args:
+            query: 查询内容
+            mode: 检索模式，"auto" 表示自动选择
+        """
+        # 自动选择模式
+        if mode == "auto":
+            classification = self.mode_selector.select(query)
+            mode = classification.mode
+            # 可记录 classification 用于调试/优化
+
+        # 执行查询
+        result = await self.rag.aquery(
+            query,
+            param=QueryParam(
+                mode=mode,
+                include_references=True,  # ⭐ 始终包含引用
+                enable_rerank=True,
+                **self.mode_selector.get_recommended_params(query)
+            )
+        )
+
+        return {
+            "context": result.context,
+            "entities": result.entities,
+            "relations": result.relations,
+            "sources": result.sources,
+            "references": result.references,  # ⭐ 引用来源
+            "mode_used": mode,
+            "confidence": result.confidence,
+        }
+```
 
 **知识图谱在评标中的应用：**
 
@@ -1618,6 +2127,215 @@ class RAGCheckerDiagnosis:
 | Hallucination | 幻觉率 | < 0.05 |
 | Tool Call Accuracy | 工具调用准确率 | ≥ 0.90 |
 
+### 6.3.1 DeepEval CI/CD 集成 ⭐ v5.3 新增
+
+> **来源**: `docs/research/2026-02-21-architecture-validation.md` - DeepEval 官方文档
+> **借鉴价值**: ⭐⭐⭐⭐ pytest 集成，幻觉检测自动化
+
+**核心思路**: 将 DeepEval 集成到 pytest 中，实现 CI/CD 自动化评估。
+
+**测试用例设计：**
+
+```python
+# 文件: backend/tests/evaluation/test_bid_evaluation.py
+# 来源: DeepEval pytest 集成最佳实践
+
+import pytest
+from deepeval import assert_test
+from deepeval.metrics import (
+    HallucinationMetric,
+    FaithfulnessMetric,
+    ContextRelevancyMetric,
+    AnswerRelevancyMetric
+)
+from deepeval.test_case import LLMTestCase
+
+# 测试数据
+EVALUATION_TEST_CASES = [
+    {
+        "input": "评估供应商A的资质是否符合招标要求？",
+        "context": ["招标文件要求ISO9001认证", "供应商A持有ISO9001认证证书"],
+        "expected_keywords": ["符合", "ISO9001"],
+    },
+    {
+        "input": "供应商B的报价是否具有竞争力？",
+        "context": ["供应商B报价100万元", "市场平均价格120万元", "其他供应商报价110-130万元"],
+        "expected_keywords": ["竞争力", "低于"],
+    },
+]
+
+class TestBidEvaluation:
+    """评标评估测试"""
+
+    @pytest.mark.asyncio
+    async def test_hallucination(self, evaluation_result, retrieved_context):
+        """测试评标结果是否有幻觉"""
+        test_case = LLMTestCase(
+            input="评估供应商A的资质",
+            actual_output=evaluation_result,
+            context=retrieved_context
+        )
+
+        metric = HallucinationMetric(
+            minimum_score=0.95,  # 幻觉率 < 5%
+            model="gpt-4o"
+        )
+
+        assert_test(test_case, [metric])
+
+    @pytest.mark.asyncio
+    async def test_faithfulness(self, evaluation_result, retrieved_context):
+        """测试评标结果忠实度"""
+        test_case = LLMTestCase(
+            input="评估供应商A的技术方案",
+            actual_output=evaluation_result,
+            context=retrieved_context
+        )
+
+        metric = FaithfulnessMetric(
+            minimum_score=0.90,  # 忠实度 > 90%
+            model="gpt-4o"
+        )
+
+        assert_test(test_case, [metric])
+
+    @pytest.mark.asyncio
+    async def test_context_relevancy(self, query, retrieved_context):
+        """测试检索上下文相关性"""
+        test_case = LLMTestCase(
+            input=query,
+            context=retrieved_context
+        )
+
+        metric = ContextRelevancyMetric(
+            minimum_score=0.80,
+            model="gpt-4o"
+        )
+
+        assert_test(test_case, [metric])
+
+    @pytest.mark.asyncio
+    async def test_answer_relevancy(self, query, evaluation_result):
+        """测试回答相关性"""
+        test_case = LLMTestCase(
+            input=query,
+            actual_output=evaluation_result
+        )
+
+        metric = AnswerRelevancyMetric(
+            minimum_score=0.85,
+            model="gpt-4o"
+        )
+
+        assert_test(test_case, [metric])
+
+    @pytest.mark.parametrize("test_case_data", EVALUATION_TEST_CASES)
+    @pytest.mark.asyncio
+    async def test_evaluation_quality(self, test_case_data, rag_service):
+        """参数化测试：评估多个场景"""
+        # 执行检索
+        result = await rag_service.retrieve(
+            test_case_data["input"],
+            mode="auto"
+        )
+
+        # 构建测试用例
+        test_case = LLMTestCase(
+            input=test_case_data["input"],
+            actual_output=result["context"],
+            context=test_case_data["context"]
+        )
+
+        # 验证幻觉
+        hallucination_metric = HallucinationMetric(minimum_score=0.90)
+        # 验证忠实度
+        faithfulness_metric = FaithfulnessMetric(minimum_score=0.85)
+
+        assert_test(test_case, [hallucination_metric, faithfulness_metric])
+```
+
+**CI/CD 配置（GitHub Actions）：**
+
+```yaml
+# 文件: .github/workflows/evaluation.yml
+# 来源: DeepEval CI/CD 最佳实践
+
+name: RAG Evaluation
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  evaluation:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -e ".[dev]"
+          pip install deepeval pytest-asyncio
+
+      - name: Run evaluation tests
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          pytest tests/evaluation/ -v --tb=short -x
+
+      - name: Upload evaluation results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evaluation-results
+          path: tests/evaluation/results/
+```
+
+**评估指标阈值：**
+
+| 指标 | 通过阈值 | 警告阈值 | 说明 |
+|------|----------|----------|------|
+| Hallucination | ≥ 0.95 | 0.90-0.95 | 幻觉率 < 5% |
+| Faithfulness | ≥ 0.90 | 0.85-0.90 | 忠实度 > 90% |
+| Context Relevancy | ≥ 0.80 | 0.70-0.80 | 上下文相关性 |
+| Answer Relevancy | ≥ 0.85 | 0.75-0.85 | 回答相关性 |
+
+**评估数据集自动生成：**
+
+```python
+# 文件: backend/scripts/generate_eval_dataset.py
+# 来源: DeepEval Synthesizer
+
+from deepeval.synthesizer import Synthesizer
+
+# 从招标/投标文档自动生成测试用例
+synthesizer = Synthesizer(model="gpt-4o")
+
+test_cases = synthesizer.generate_goldens_from_docs(
+    document_paths=[
+        "./data/招标文件/",
+        "./data/投标文件/",
+        "./data/法规/",
+    ],
+    max_goldens_per_document=5,
+    include_expected_output=True
+)
+
+# 保存评估数据集
+synthesizer.save_as(
+    file_path="./tests/evaluation/eval_dataset.json",
+    type="json"
+)
+```
+
 ### 6.4 可观测性（Langfuse）
 
 ```
@@ -2089,8 +2807,21 @@ dependencies = [
   - 不采用：Neo4j + Milvus + MinIO 复杂架构
   - 详见：`docs/research/2026-02-20-yuxi-know-vs-rag-anything-analysis.md`
 
+**v5.3 新增参考来源（2026-02-21）：**
+> 来源: `docs/research/2026-02-21-architecture-validation.md`（Context7 + Web Search 验证）
+
+- **Context7 LangGraph**: https://context7.com/langchain-ai/langgraph/llms.txt
+  - 借鉴：interrupt 机制、Human-in-the-Loop 最佳实践
+- **Context7 LightRAG**: https://github.com/hkuds/lightrag/blob/main/README.md
+  - 借鉴：QueryParam 配置、include_references、查询模式选择
+- **Context7 DSPy**: https://dspy.ai/tutorials/agents
+  - 借鉴：MIPROv2 优化器配置
+- **DeepEval**: https://github.com/confident-ai/deepeval ⭐⭐⭐⭐⭐ (6.5k+ stars)
+  - 借鉴：**pytest CI/CD 集成** → 详见 6.3.1
+  - 借鉴：幻觉检测、评估数据集自动生成
+
 ---
 
-*设计文档版本：v5.2*
-*最后更新：2026-02-20*
-*更新内容：新增点对点应答格式(ProposalLLM)、溯源引用展示(kotaemon)、RAGChecker诊断；完善研究来源标注*
+*设计文档版本：v5.3*
+*最后更新：2026-02-21*
+*更新内容：新增事件总线设计(2.5)、LightRAG引用配置(3.2)、查询模式选择器(3.2.1)、DeepEval CI/CD(6.3.1)；基于Context7+WebSearch验证*
