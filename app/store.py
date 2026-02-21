@@ -60,18 +60,45 @@ class InMemoryStore:
             "job_type": "evaluation",
             "status": "queued",
             "retry_count": 0,
-            "trace_id": None,
+            "trace_id": payload.get("trace_id"),
             "resource": {
                 "type": "evaluation",
                 "id": evaluation_id,
             },
             "payload": payload,
+            "last_error": None,
         }
         return {
             "evaluation_id": evaluation_id,
             "job_id": job_id,
             "status": "queued",
         }
+
+    def create_upload_job(self, payload: dict[str, Any]) -> dict[str, Any]:
+        document_id = f"doc_{uuid.uuid4().hex[:12]}"
+        job_id = f"job_{uuid.uuid4().hex[:12]}"
+        self.jobs[job_id] = {
+            "job_id": job_id,
+            "job_type": "upload",
+            "status": "queued",
+            "retry_count": 0,
+            "trace_id": payload.get("trace_id"),
+            "resource": {
+                "type": "document",
+                "id": document_id,
+            },
+            "payload": payload,
+            "last_error": None,
+        }
+        return {
+            "document_id": document_id,
+            "job_id": job_id,
+            "status": "queued",
+            "next": f"/api/v1/jobs/{job_id}",
+        }
+
+    def get_job(self, job_id: str) -> dict[str, Any] | None:
+        return self.jobs.get(job_id)
 
 
 store = InMemoryStore()

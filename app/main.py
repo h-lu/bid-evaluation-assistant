@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import uuid
 
-from fastapi import FastAPI, Header, Request
+from fastapi import FastAPI, File, Form, Header, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -112,12 +113,79 @@ def create_app() -> FastAPI:
             endpoint="POST:/api/v1/evaluations",
             idempotency_key=idempotency_key,
             payload=payload.model_dump(mode="json"),
-            execute=lambda: store.create_evaluation_job(payload.model_dump(mode="json")),
+            execute=lambda: store.create_evaluation_job(
+                {
+                    **payload.model_dump(mode="json"),
+                    "trace_id": _trace_id_from_request(request),
+                }
+            ),
         )
         return JSONResponse(
             status_code=202,
             content=success_envelope(data, _trace_id_from_request(request)),
         )
+
+    @app.post("/api/v1/documents/upload")
+    async def upload_document(
+        request: Request,
+        project_id: str = Form(...),
+        supplier_id: str = Form(...),
+        doc_type: str = Form(...),
+        file: UploadFile = File(...),
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    ):
+        if not idempotency_key:
+            raise ApiError(
+                code="IDEMPOTENCY_MISSING",
+                message="Idempotency-Key header is required",
+                error_class="validation",
+                retryable=False,
+                http_status=400,
+            )
+
+        file_bytes = await file.read()
+        payload = {
+            "project_id": project_id,
+            "supplier_id": supplier_id,
+            "doc_type": doc_type,
+            "filename": file.filename or "upload.bin",
+            "file_sha256": hashlib.sha256(file_bytes).hexdigest(),
+            "trace_id": _trace_id_from_request(request),
+        }
+        data = store.run_idempotent(
+            endpoint="POST:/api/v1/documents/upload",
+            idempotency_key=idempotency_key,
+            payload=payload,
+            execute=lambda: store.create_upload_job(payload),
+        )
+        return JSONResponse(
+            status_code=202,
+            content=success_envelope(data, _trace_id_from_request(request)),
+        )
+
+    @app.get("/api/v1/jobs/{job_id}")
+    def get_job(job_id: str, request: Request):
+        job = store.get_job(job_id)
+        if job is None:
+            raise ApiError(
+                code="JOB_NOT_FOUND",
+                message="job not found",
+                error_class="validation",
+                retryable=False,
+                http_status=404,
+            )
+
+        data = {
+            "job_id": job["job_id"],
+            "job_type": job["job_type"],
+            "status": job["status"],
+            "progress_pct": 0,
+            "retry_count": job["retry_count"],
+            "trace_id": job.get("trace_id") or _trace_id_from_request(request),
+            "resource": job["resource"],
+            "last_error": job.get("last_error"),
+        }
+        return success_envelope(data, _trace_id_from_request(request))
 
     return app
 
