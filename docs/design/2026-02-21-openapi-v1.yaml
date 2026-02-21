@@ -755,11 +755,22 @@ components:
           minimum: 1
           maximum: 100
           default: 20
+        enable_rerank:
+          type: boolean
+          default: true
         doc_scope:
           type: array
           items:
             type: string
             enum: [tender, bid, attachment]
+        must_include_terms:
+          type: array
+          items:
+            type: string
+        must_exclude_terms:
+          type: array
+          items:
+            type: string
 
     RetrievalItemMetadata:
       type: object

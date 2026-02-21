@@ -154,6 +154,9 @@ def create_app() -> FastAPI:
             high_risk=payload.high_risk,
             top_k=payload.top_k,
             doc_scope=list(payload.doc_scope),
+            enable_rerank=payload.enable_rerank,
+            must_include_terms=payload.must_include_terms,
+            must_exclude_terms=payload.must_exclude_terms,
         )
         return success_envelope(data, _trace_id_from_request(request))
 
@@ -168,6 +171,9 @@ def create_app() -> FastAPI:
             high_risk=payload.high_risk,
             top_k=payload.top_k,
             doc_scope=list(payload.doc_scope),
+            enable_rerank=payload.enable_rerank,
+            must_include_terms=payload.must_include_terms,
+            must_exclude_terms=payload.must_exclude_terms,
         )
         return success_envelope(data, _trace_id_from_request(request))
 

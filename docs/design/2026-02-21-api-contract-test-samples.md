@@ -73,6 +73,8 @@
 | `CT-032` | `POST /retrieval/query` | 租户/项目过滤 | 混合租户与项目样本 | `200` | 仅返回当前租户且 `project_id` 命中项 |
 | `CT-033` | `POST /retrieval/preview` | 预览返回最小证据 | 与 query 相同入参 | `200` | `data.items[*]` 含 `chunk_id/document_id/page/bbox/text` |
 | `CT-034` | `POST /retrieval/preview` | 预览继承模式选择 | `query_type=summary` | `200` | `data.selected_mode=hybrid` |
+| `CT-035` | `POST /retrieval/query` | 约束词过滤 | `must_include_terms + must_exclude_terms` | `200` | 仅返回满足约束词的候选 |
+| `CT-036` | `POST /retrieval/query` | rerank 降级 | `enable_rerank=false` | `200` | `data.degraded=true` 且 `score_rerank=null` |
 
 ## 5. 关键断言模板
 

@@ -47,7 +47,10 @@ class RetrievalQueryRequest(BaseModel):
     query_type: Literal["fact", "relation", "comparison", "summary", "risk"]
     high_risk: bool = False
     top_k: int = Field(default=20, ge=1, le=100)
+    enable_rerank: bool = True
     doc_scope: list[Literal["tender", "bid", "attachment"]] = Field(default_factory=list)
+    must_include_terms: list[str] = Field(default_factory=list)
+    must_exclude_terms: list[str] = Field(default_factory=list)
 
 
 def success_envelope(data: Any, trace_id: str, message: str = "ok") -> dict[str, Any]:

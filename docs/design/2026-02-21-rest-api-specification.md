@@ -291,6 +291,9 @@
   "supplier_id": "sup_xxx",
   "query": "投标文件中与交付周期相关的承诺",
   "query_type": "relation",
+  "must_include_terms": ["交付", "周期"],
+  "must_exclude_terms": ["质保"],
+  "enable_rerank": true,
   "top_k": 20,
   "doc_scope": ["bid"]
 }
@@ -333,6 +336,7 @@
 
 1. `REQ_VALIDATION_FAILED`
 2. `TENANT_SCOPE_VIOLATION`
+3. rerank 降级时 `data.degraded=true`，并回退到原召回分排序
 
 ### 5.7 `POST /retrieval/preview`
 

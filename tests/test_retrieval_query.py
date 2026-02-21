@@ -152,3 +152,42 @@ def test_retrieval_preview_uses_hybrid_for_summary(client):
     )
     assert resp.status_code == 200
     assert resp.json()["data"]["selected_mode"] == "hybrid"
+
+
+def test_retrieval_query_applies_term_constraints(client):
+    _seed_retrieval_sources()
+    resp = client.post(
+        "/api/v1/retrieval/query",
+        headers={"x-tenant-id": "tenant_a"},
+        json={
+            "project_id": "prj_a",
+            "supplier_id": "sup_a",
+            "query": "delivery and warranty",
+            "query_type": "fact",
+            "must_include_terms": ["delivery"],
+            "must_exclude_terms": ["warranty"],
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["total"] == 1
+    assert data["items"][0]["chunk_id"] == "ck_retr_a1"
+
+
+def test_retrieval_query_degrades_when_rerank_disabled(client):
+    _seed_retrieval_sources()
+    resp = client.post(
+        "/api/v1/retrieval/query",
+        headers={"x-tenant-id": "tenant_a"},
+        json={
+            "project_id": "prj_a",
+            "supplier_id": "sup_a",
+            "query": "delivery",
+            "query_type": "fact",
+            "enable_rerank": False,
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["degraded"] is True
+    assert data["items"][0]["score_rerank"] is None

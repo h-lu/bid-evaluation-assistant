@@ -382,6 +382,9 @@ class InMemoryStore:
         high_risk: bool,
         top_k: int,
         doc_scope: list[str],
+        enable_rerank: bool = True,
+        must_include_terms: list[str] | None = None,
+        must_exclude_terms: list[str] | None = None,
     ) -> dict[str, Any]:
         selected_mode = self._select_retrieval_mode(query_type=query_type, high_risk=high_risk)
         candidates = [x for x in self.citation_sources.values() if x.get("tenant_id") == tenant_id]
@@ -390,11 +393,25 @@ class InMemoryStore:
         if doc_scope:
             scope = set(doc_scope)
             candidates = [x for x in candidates if x.get("doc_type") in scope]
+        include_terms = [x.lower() for x in (must_include_terms or []) if x.strip()]
+        exclude_terms = [x.lower() for x in (must_exclude_terms or []) if x.strip()]
+        if include_terms:
+            candidates = [
+                x
+                for x in candidates
+                if all(term in str(x.get("text", "")).lower() for term in include_terms)
+            ]
+        if exclude_terms:
+            candidates = [
+                x
+                for x in candidates
+                if all(term not in str(x.get("text", "")).lower() for term in exclude_terms)
+            ]
 
         items = []
         for source in candidates:
             score_raw = float(source.get("score_raw", 0.5))
-            score_rerank = min(1.0, score_raw + 0.05)
+            score_rerank = None if not enable_rerank else min(1.0, score_raw + 0.05)
             items.append(
                 {
                     "chunk_id": source.get("chunk_id"),
@@ -410,13 +427,16 @@ class InMemoryStore:
                     },
                 }
             )
-
-        items = sorted(items, key=lambda x: x["score_rerank"], reverse=True)[:top_k]
+        if enable_rerank:
+            items = sorted(items, key=lambda x: x["score_rerank"], reverse=True)
+        else:
+            items = sorted(items, key=lambda x: x["score_raw"], reverse=True)
+        items = items[:top_k]
         return {
             "query": query,
             "query_type": query_type,
             "selected_mode": selected_mode,
-            "degraded": False,
+            "degraded": not enable_rerank,
             "items": items,
             "total": len(items),
         }
@@ -432,6 +452,9 @@ class InMemoryStore:
         high_risk: bool,
         top_k: int,
         doc_scope: list[str],
+        enable_rerank: bool = True,
+        must_include_terms: list[str] | None = None,
+        must_exclude_terms: list[str] | None = None,
     ) -> dict[str, Any]:
         base = self.retrieval_query(
             tenant_id=tenant_id,
@@ -442,6 +465,9 @@ class InMemoryStore:
             high_risk=high_risk,
             top_k=top_k,
             doc_scope=doc_scope,
+            enable_rerank=enable_rerank,
+            must_include_terms=must_include_terms,
+            must_exclude_terms=must_exclude_terms,
         )
         preview_items = []
         for item in base["items"]:
