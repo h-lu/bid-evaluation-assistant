@@ -1,0 +1,535 @@
+openapi: 3.1.0
+info:
+  title: Bid Evaluation Assistant API
+  version: v2026.02.21-r3
+  description: |
+    Gate B-1 OpenAPI contract subset for async job submission, HITL resume,
+    job status query, and citation source lookup.
+servers:
+  - url: /api/v1
+security:
+  - BearerAuth: []
+
+paths:
+  /documents/upload:
+    post:
+      operationId: uploadDocument
+      summary: Upload a document and enqueue parse/index job
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [project_id, supplier_id, doc_type, file]
+              properties:
+                project_id:
+                  type: string
+                supplier_id:
+                  type: string
+                doc_type:
+                  type: string
+                  enum: [tender, bid, attachment]
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadAcceptedResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                validation_failed:
+                  value:
+                    success: false
+                    error:
+                      code: REQ_VALIDATION_FAILED
+                      message: invalid payload
+                      retryable: false
+                      class: validation
+                    meta:
+                      trace_id: trace_xxx
+                      request_id: req_xxx
+        '403':
+          description: Tenant scope violation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                tenant_scope_violation:
+                  value:
+                    success: false
+                    error:
+                      code: TENANT_SCOPE_VIOLATION
+                      message: tenant mismatch
+                      retryable: false
+                      class: security_sensitive
+                    meta:
+                      trace_id: trace_xxx
+                      request_id: req_xxx
+        '409':
+          description: Idempotency conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                idempotency_conflict:
+                  value:
+                    success: false
+                    error:
+                      code: IDEMPOTENCY_CONFLICT
+                      message: same key with different payload
+                      retryable: false
+                      class: validation
+                    meta:
+                      trace_id: trace_xxx
+                      request_id: req_xxx
+
+  /evaluations:
+    post:
+      operationId: createEvaluation
+      summary: Create an evaluation and enqueue async workflow job
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEvaluationRequest'
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvaluationAcceptedResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Tenant scope violation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Idempotency conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /evaluations/{evaluation_id}/resume:
+    post:
+      operationId: resumeEvaluation
+      summary: Resume interrupted HITL workflow
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EvaluationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResumeRequest'
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResumeAcceptedResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Invalid resume token or workflow state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalid_resume_token:
+                  value:
+                    success: false
+                    error:
+                      code: WF_INTERRUPT_RESUME_INVALID
+                      message: resume token expired or mismatched
+                      retryable: false
+                      class: business_rule
+                    meta:
+                      trace_id: trace_xxx
+                      request_id: req_xxx
+
+  /jobs/{job_id}:
+    get:
+      operationId: getJobStatus
+      summary: Query async job status
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobStatusResponse'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /citations/{chunk_id}/source:
+    get:
+      operationId: getCitationSource
+      summary: Resolve citation to source content and viewport hint
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ChunkId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CitationSourceResponse'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 8
+      description: Required for all write endpoints
+    JobId:
+      name: job_id
+      in: path
+      required: true
+      schema:
+        type: string
+    EvaluationId:
+      name: evaluation_id
+      in: path
+      required: true
+      schema:
+        type: string
+    ChunkId:
+      name: chunk_id
+      in: path
+      required: true
+      schema:
+        type: string
+
+  schemas:
+    Meta:
+      type: object
+      required: [trace_id]
+      properties:
+        trace_id:
+          type: string
+        request_id:
+          type: string
+
+    ErrorObject:
+      type: object
+      required: [code, message, retryable, class]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        retryable:
+          type: boolean
+        class:
+          type: string
+          enum: [validation, business_rule, transient, permanent, security_sensitive]
+        details:
+          type: object
+          additionalProperties: true
+        retry_after_seconds:
+          type: integer
+          minimum: 1
+
+    ErrorResponse:
+      type: object
+      required: [success, error, meta]
+      properties:
+        success:
+          type: boolean
+          const: false
+        error:
+          $ref: '#/components/schemas/ErrorObject'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    UploadAcceptedData:
+      type: object
+      required: [document_id, job_id, status, next]
+      properties:
+        document_id:
+          type: string
+        job_id:
+          type: string
+        status:
+          type: string
+          enum: [queued]
+        next:
+          type: string
+
+    UploadAcceptedResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/UploadAcceptedData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    CreateEvaluationRequest:
+      type: object
+      required: [project_id, supplier_id, rule_pack_version, evaluation_scope, query_options]
+      properties:
+        project_id:
+          type: string
+        supplier_id:
+          type: string
+        rule_pack_version:
+          type: string
+        evaluation_scope:
+          type: object
+          required: [include_doc_types, force_hitl]
+          properties:
+            include_doc_types:
+              type: array
+              items:
+                type: string
+                enum: [tender, bid, attachment]
+            force_hitl:
+              type: boolean
+        query_options:
+          type: object
+          required: [mode_hint, top_k]
+          properties:
+            mode_hint:
+              type: string
+              enum: [local, global, hybrid, mix]
+            top_k:
+              type: integer
+              minimum: 1
+              maximum: 200
+
+    EvaluationAcceptedData:
+      type: object
+      required: [evaluation_id, job_id, status]
+      properties:
+        evaluation_id:
+          type: string
+        job_id:
+          type: string
+        status:
+          type: string
+          enum: [queued]
+
+    EvaluationAcceptedResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/EvaluationAcceptedData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    ResumeRequest:
+      type: object
+      required: [resume_token, decision, comment]
+      properties:
+        resume_token:
+          type: string
+        decision:
+          type: string
+          enum: [approve, reject, edit_scores]
+        comment:
+          type: string
+        edited_scores:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+
+    ResumeAcceptedData:
+      type: object
+      required: [evaluation_id, job_id, status]
+      properties:
+        evaluation_id:
+          type: string
+        job_id:
+          type: string
+        status:
+          type: string
+          enum: [queued]
+
+    ResumeAcceptedResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/ResumeAcceptedData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    JobResource:
+      type: object
+      required: [type, id]
+      properties:
+        type:
+          type: string
+          enum: [document, evaluation]
+        id:
+          type: string
+
+    JobStatusData:
+      type: object
+      required: [job_id, job_type, status, retry_count, trace_id, resource]
+      properties:
+        job_id:
+          type: string
+        job_type:
+          type: string
+          enum: [upload, parse, evaluation, resume]
+        status:
+          type: string
+          enum:
+            - queued
+            - running
+            - retrying
+            - succeeded
+            - failed
+            - needs_manual_decision
+            - dlq_pending
+            - dlq_recorded
+        progress_pct:
+          type: integer
+          minimum: 0
+          maximum: 100
+        retry_count:
+          type: integer
+          minimum: 0
+        trace_id:
+          type: string
+        resource:
+          $ref: '#/components/schemas/JobResource'
+        last_error:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/ErrorObject'
+
+    JobStatusResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/JobStatusData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    CitationSourceData:
+      type: object
+      required: [chunk_id, document_id, page, bbox, text, context]
+      properties:
+        chunk_id:
+          type: string
+        document_id:
+          type: string
+        filename:
+          type: string
+        page:
+          type: integer
+          minimum: 1
+        bbox:
+          type: array
+          minItems: 4
+          maxItems: 4
+          items:
+            type: number
+        text:
+          type: string
+        context:
+          type: string
+        viewport_hint:
+          type: object
+          required: [scale, unit]
+          properties:
+            scale:
+              type: number
+            unit:
+              type: string
+              enum: [pdf_point]
+
+    CitationSourceResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/CitationSourceData'
+        meta:
+          $ref: '#/components/schemas/Meta'

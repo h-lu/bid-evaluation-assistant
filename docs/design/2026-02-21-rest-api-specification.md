@@ -337,6 +337,9 @@
 1. 所有接口必须声明 request/response schema。
 2. 破坏性变更必须升级 minor 版本并提供迁移说明。
 3. 废弃接口保留至少一个发布周期。
+4. OpenAPI 基线文件：`docs/design/2026-02-21-openapi-v1.yaml`。
+5. 契约测试样例：`docs/design/2026-02-21-api-contract-test-samples.md`。
+6. 任何接口字段变更必须同步更新上述两个文件。
 
 ## 12. 验收标准
 

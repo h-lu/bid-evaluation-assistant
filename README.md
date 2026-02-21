@@ -75,12 +75,14 @@
 6. `docs/design/2026-02-21-retrieval-and-scoring-spec.md`
 7. `docs/design/2026-02-21-langgraph-agent-workflow-spec.md`
 8. `docs/design/2026-02-21-rest-api-specification.md`
-9. `docs/design/2026-02-21-data-model-and-storage-spec.md`
-10. `docs/design/2026-02-21-error-handling-and-dlq-spec.md`
-11. `docs/design/2026-02-21-security-design.md`
-12. `docs/design/2026-02-21-frontend-interaction-spec.md`
-13. `docs/design/2026-02-21-testing-strategy.md`
-14. `docs/design/2026-02-21-deployment-config.md`
+9. `docs/design/2026-02-21-openapi-v1.yaml`
+10. `docs/design/2026-02-21-api-contract-test-samples.md`
+11. `docs/design/2026-02-21-data-model-and-storage-spec.md`
+12. `docs/design/2026-02-21-error-handling-and-dlq-spec.md`
+13. `docs/design/2026-02-21-security-design.md`
+14. `docs/design/2026-02-21-frontend-interaction-spec.md`
+15. `docs/design/2026-02-21-testing-strategy.md`
+16. `docs/design/2026-02-21-deployment-config.md`
 
 `Agent 开发治理`
 

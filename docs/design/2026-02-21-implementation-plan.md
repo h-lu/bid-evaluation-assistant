@@ -72,6 +72,11 @@ Gate A 设计冻结
 
 验收：OpenAPI + 契约测试样例通过。
 
+B-1 输出物：
+
+1. `docs/design/2026-02-21-openapi-v1.yaml`
+2. `docs/design/2026-02-21-api-contract-test-samples.md`
+
 ### B-2 任务系统骨架
 
 任务：
