@@ -15,6 +15,7 @@ from app.quality_gates import evaluate_quality_gate
 from app.schemas import (
     CostGateEvaluateRequest,
     CreateEvaluationRequest,
+    DataFeedbackRunRequest,
     DlqDiscardRequest,
     InternalTransitionRequest,
     PerformanceGateEvaluateRequest,
@@ -25,6 +26,7 @@ from app.schemas import (
     RetrievalQueryRequest,
     ResumeRequest,
     SecurityGateEvaluateRequest,
+    StrategyTuningApplyRequest,
     error_envelope,
     success_envelope,
 )
@@ -814,6 +816,54 @@ def create_app() -> FastAPI:
             release_id=payload.release_id,
             consecutive_threshold=payload.consecutive_threshold,
             breaches=[x.model_dump(mode="json") for x in payload.breaches],
+            tenant_id=_tenant_id_from_request(request),
+            trace_id=_trace_id_from_request(request),
+        )
+        return success_envelope(data, _trace_id_from_request(request))
+
+    @app.post("/api/v1/internal/ops/data-feedback/run")
+    def internal_run_data_feedback(
+        payload: DataFeedbackRunRequest,
+        request: Request,
+        x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
+    ):
+        if x_internal_debug != "true":
+            raise ApiError(
+                code="AUTH_FORBIDDEN",
+                message="internal endpoint forbidden",
+                error_class="security_sensitive",
+                retryable=False,
+                http_status=403,
+            )
+        data = store.run_data_feedback(
+            release_id=payload.release_id,
+            dlq_ids=list(payload.dlq_ids),
+            version_bump=payload.version_bump,
+            include_manual_override_candidates=payload.include_manual_override_candidates,
+            tenant_id=_tenant_id_from_request(request),
+            trace_id=_trace_id_from_request(request),
+        )
+        return success_envelope(data, _trace_id_from_request(request))
+
+    @app.post("/api/v1/internal/ops/strategy-tuning/apply")
+    def internal_apply_strategy_tuning(
+        payload: StrategyTuningApplyRequest,
+        request: Request,
+        x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
+    ):
+        if x_internal_debug != "true":
+            raise ApiError(
+                code="AUTH_FORBIDDEN",
+                message="internal endpoint forbidden",
+                error_class="security_sensitive",
+                retryable=False,
+                http_status=403,
+            )
+        data = store.apply_strategy_tuning(
+            release_id=payload.release_id,
+            selector=payload.selector.model_dump(mode="json"),
+            score_calibration=payload.score_calibration.model_dump(mode="json"),
+            tool_policy=payload.tool_policy.model_dump(mode="json"),
             tenant_id=_tenant_id_from_request(request),
             trace_id=_trace_id_from_request(request),
         )

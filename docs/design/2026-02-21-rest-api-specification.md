@@ -143,6 +143,18 @@
 5. 回滚执行顺序固定为：`model_config -> retrieval_params -> workflow_version -> release_version`。
 6. 回滚执行后必须触发一次 `replay verification`。
 
+### 4.11 Internal Ops（Gate F 运行优化）
+
+1. `POST /internal/ops/data-feedback/run`
+2. `POST /internal/ops/strategy-tuning/apply`
+
+说明：
+
+1. 仅运维优化流水线使用，必须携带 `x-internal-debug: true`。
+2. 数据回流会将 DLQ 样本写入反例集，并将人审改判样本写入黄金集候选。
+3. 每次回流执行都必须产出新的评估数据集版本号。
+4. 策略优化同步更新 selector 阈值、评分校准参数、工具权限审批策略。
+
 ## 5. 字段级契约（关键接口示例）
 
 ### 5.1 `POST /documents/upload`
@@ -724,6 +736,97 @@
 1. 当且仅当存在 `consecutive_failures >= consecutive_threshold` 的 breach 时触发回滚。
 2. 回滚完成后必须创建并执行一次回放验证任务。
 3. `rollback_completed_within_30m=false` 视为 Gate E 验收失败。
+
+### 5.17 `POST /internal/ops/data-feedback/run`
+
+请求体：
+
+```json
+{
+  "release_id": "rel_20260222_01",
+  "dlq_ids": ["dlq_xxx"],
+  "version_bump": "patch",
+  "include_manual_override_candidates": true
+}
+```
+
+响应 `200`：
+
+```json
+{
+  "success": true,
+  "data": {
+    "release_id": "rel_20260222_01",
+    "counterexample_added": 1,
+    "gold_candidates_added": 1,
+    "dataset_version_before": "v1.0.0",
+    "dataset_version_after": "v1.0.1"
+  },
+  "meta": {
+    "trace_id": "trace_xxx"
+  }
+}
+```
+
+规则说明：
+
+1. `dlq_ids` 为空时按当前租户全量 DLQ 样本回流。
+2. 仅 `resume_submitted` 且 `decision in {reject, edit_scores}` 的审计样本计入黄金集候选。
+3. `dataset_version_after` 必须不同于 `dataset_version_before`。
+
+### 5.18 `POST /internal/ops/strategy-tuning/apply`
+
+请求体：
+
+```json
+{
+  "release_id": "rel_20260222_01",
+  "selector": {
+    "risk_mix_threshold": 0.72,
+    "relation_mode": "global"
+  },
+  "score_calibration": {
+    "confidence_scale": 1.05,
+    "score_bias": -0.5
+  },
+  "tool_policy": {
+    "require_double_approval_actions": ["dlq_discard"],
+    "allowed_tools": ["retrieval", "evaluation", "dlq"]
+  }
+}
+```
+
+响应 `200`：
+
+```json
+{
+  "success": true,
+  "data": {
+    "release_id": "rel_20260222_01",
+    "strategy_version": "stg_v2",
+    "selector": {
+      "risk_mix_threshold": 0.72,
+      "relation_mode": "global"
+    },
+    "score_calibration": {
+      "confidence_scale": 1.05,
+      "score_bias": -0.5
+    },
+    "tool_policy": {
+      "require_double_approval_actions": ["dlq_discard"],
+      "allowed_tools": ["retrieval", "evaluation", "dlq"]
+    }
+  },
+  "meta": {
+    "trace_id": "trace_xxx"
+  }
+}
+```
+
+规则说明：
+
+1. 每次策略变更必须生成新 `strategy_version`。
+2. 高风险动作审批策略变更必须体现在 `tool_policy` 字段返回值中。
 
 ### 5.11 `GET /evaluations/{evaluation_id}/audit-logs`
 
