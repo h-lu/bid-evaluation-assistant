@@ -68,3 +68,22 @@ def test_store_factory_uses_sqlite_backend_when_configured(monkeypatch, tmp_path
     store_reloaded = create_store_from_env()
     reloaded_job = store_reloaded.get_job_for_tenant(job_id=created["job_id"], tenant_id="tenant_store")
     assert reloaded_job is not None
+
+
+def test_sqlite_store_persists_workflow_checkpoints(tmp_path: Path):
+    db_path = tmp_path / "checkpoints.sqlite3"
+    store1 = SqliteBackedStore(str(db_path))
+    created = store1.create_evaluation_job(_evaluation_payload())
+    job = store1.get_job_for_tenant(job_id=created["job_id"], tenant_id="tenant_store")
+    assert job is not None
+    thread_id = job["thread_id"]
+
+    run = store1.run_job_once(job_id=created["job_id"], tenant_id="tenant_store")
+    assert run["final_status"] == "succeeded"
+    checkpoints = store1.list_workflow_checkpoints(thread_id=thread_id, tenant_id="tenant_store")
+    assert checkpoints
+
+    store2 = SqliteBackedStore(str(db_path))
+    reloaded_checkpoints = store2.list_workflow_checkpoints(thread_id=thread_id, tenant_id="tenant_store")
+    assert reloaded_checkpoints
+    assert reloaded_checkpoints[-1]["status"] == "succeeded"

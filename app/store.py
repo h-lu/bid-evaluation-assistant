@@ -51,6 +51,7 @@ class InMemoryStore:
         self.resume_tokens: dict[str, dict[str, Any]] = {}
         self.audit_logs: list[dict[str, Any]] = []
         self.domain_events_outbox: dict[str, dict[str, Any]] = {}
+        self.workflow_checkpoints: dict[str, list[dict[str, Any]]] = {}
         self.citation_sources: dict[str, dict[str, Any]] = {}
         self.dlq_items: dict[str, dict[str, Any]] = {}
         self.release_rollout_policies: dict[str, dict[str, Any]] = {}
@@ -80,6 +81,7 @@ class InMemoryStore:
         self.resume_tokens.clear()
         self.audit_logs.clear()
         self.domain_events_outbox.clear()
+        self.workflow_checkpoints.clear()
         self.citation_sources.clear()
         self.dlq_items.clear()
         self.release_rollout_policies.clear()
@@ -114,6 +116,10 @@ class InMemoryStore:
     @staticmethod
     def _utcnow_iso() -> str:
         return datetime.now(UTC).isoformat()
+
+    @staticmethod
+    def _new_thread_id(prefix: str) -> str:
+        return f"thr_{prefix}_{uuid.uuid4().hex[:10]}"
 
     @staticmethod
     def _select_parser(*, filename: str, doc_type: str | None) -> ParseRoute:
@@ -218,6 +224,7 @@ class InMemoryStore:
     def create_evaluation_job(self, payload: dict[str, Any]) -> dict[str, Any]:
         evaluation_id = f"ev_{uuid.uuid4().hex[:12]}"
         job_id = f"job_{uuid.uuid4().hex[:12]}"
+        thread_id = self._new_thread_id("eval")
         tenant_id = payload.get("tenant_id", "tenant_default")
         force_hitl = bool(payload.get("evaluation_scope", {}).get("force_hitl", False))
         include_doc_types = payload.get("evaluation_scope", {}).get("include_doc_types", [])
@@ -246,6 +253,7 @@ class InMemoryStore:
             "job_type": "evaluation",
             "status": "queued",
             "retry_count": 0,
+            "thread_id": thread_id,
             "tenant_id": tenant_id,
             "trace_id": payload.get("trace_id"),
             "resource": {
@@ -281,6 +289,7 @@ class InMemoryStore:
             "needs_human_review": needs_human_review,
             "trace_id": payload.get("trace_id") or "",
             "tenant_id": tenant_id,
+            "thread_id": thread_id,
             "interrupt": interrupt_payload,
         }
         self.append_outbox_event(
@@ -344,11 +353,13 @@ class InMemoryStore:
         tenant_id = payload.get("tenant_id", "tenant_default")
         self._assert_tenant_scope(document["tenant_id"], tenant_id)
         job_id = f"job_{uuid.uuid4().hex[:12]}"
+        thread_id = self._new_thread_id("parse")
         self.jobs[job_id] = {
             "job_id": job_id,
             "job_type": "parse",
             "status": "queued",
             "retry_count": 0,
+            "thread_id": thread_id,
             "tenant_id": tenant_id,
             "trace_id": payload.get("trace_id"),
             "resource": {
@@ -562,11 +573,16 @@ class InMemoryStore:
     def create_resume_job(self, *, evaluation_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         job_id = f"job_{uuid.uuid4().hex[:12]}"
         tenant_id = payload.get("tenant_id", "tenant_default")
+        report = self.evaluation_reports.get(evaluation_id)
+        thread_id = str(report.get("thread_id", "")) if isinstance(report, dict) else ""
+        if not thread_id:
+            thread_id = self._new_thread_id("resume")
         self.jobs[job_id] = {
             "job_id": job_id,
             "job_type": "resume",
             "status": "queued",
             "retry_count": 0,
+            "thread_id": thread_id,
             "tenant_id": tenant_id,
             "trace_id": payload.get("trace_id"),
             "resource": {
@@ -576,7 +592,6 @@ class InMemoryStore:
             "payload": payload,
             "last_error": None,
         }
-        report = self.evaluation_reports.get(evaluation_id)
         if report is not None:
             self._assert_tenant_scope(report.get("tenant_id", "tenant_default"), tenant_id)
             report["needs_human_review"] = False
@@ -623,6 +638,43 @@ class InMemoryStore:
             for x in self.audit_logs
             if x.get("tenant_id") == tenant_id and x.get("evaluation_id") == evaluation_id
         ]
+
+    def append_workflow_checkpoint(
+        self,
+        *,
+        thread_id: str,
+        job_id: str,
+        tenant_id: str,
+        node: str,
+        status: str,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        items = self.workflow_checkpoints.setdefault(thread_id, [])
+        checkpoint = {
+            "checkpoint_id": f"cp_{uuid.uuid4().hex[:12]}",
+            "thread_id": thread_id,
+            "job_id": job_id,
+            "seq": len(items) + 1,
+            "node": node,
+            "status": status,
+            "payload": payload or {},
+            "tenant_id": tenant_id,
+            "created_at": self._utcnow_iso(),
+        }
+        items.append(checkpoint)
+        return checkpoint
+
+    def list_workflow_checkpoints(
+        self,
+        *,
+        thread_id: str,
+        tenant_id: str,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        items = self.workflow_checkpoints.get(thread_id, [])
+        scoped = [x for x in items if x.get("tenant_id") == tenant_id]
+        scoped = sorted(scoped, key=lambda x: int(x.get("seq", 0)))
+        return scoped[: max(1, min(limit, 1000))]
 
     def append_outbox_event(
         self,
@@ -891,6 +943,7 @@ class InMemoryStore:
             "job_type": "requeue",
             "status": "queued",
             "retry_count": 0,
+            "thread_id": self._new_thread_id("requeue"),
             "tenant_id": tenant_id,
             "trace_id": trace_id,
             "resource": {
@@ -1146,6 +1199,7 @@ class InMemoryStore:
             "job_type": "replay_verification",
             "status": "queued",
             "retry_count": 0,
+            "thread_id": self._new_thread_id("replay"),
             "tenant_id": tenant_id,
             "trace_id": trace_id,
             "resource": {
@@ -1343,6 +1397,9 @@ class InMemoryStore:
                 retryable=False,
                 http_status=404,
             )
+        thread_id = str(job.get("thread_id") or self._new_thread_id("job"))
+        if not job.get("thread_id"):
+            job["thread_id"] = thread_id
 
         status = job["status"]
         if status in {"queued", "retrying", "needs_manual_decision"}:
@@ -1352,6 +1409,14 @@ class InMemoryStore:
                 tenant_id=tenant_id,
             )
             status = job["status"]
+            self.append_workflow_checkpoint(
+                thread_id=thread_id,
+                job_id=job_id,
+                tenant_id=tenant_id,
+                node="job_started",
+                status="running",
+                payload={"job_type": job.get("job_type", "")},
+            )
         if job.get("job_type") == "parse":
             manifest = self.get_parse_manifest_for_tenant(job_id=job_id, tenant_id=tenant_id)
             if manifest is not None:
@@ -1391,6 +1456,14 @@ class InMemoryStore:
                     if manifest is not None:
                         manifest["status"] = "retrying"
                         manifest["error_code"] = error_code
+                self.append_workflow_checkpoint(
+                    thread_id=thread_id,
+                    job_id=job_id,
+                    tenant_id=tenant_id,
+                    node="job_retrying",
+                    status="retrying",
+                    payload={"retry_count": retried_job.get("retry_count", 0), "error_code": error_code},
+                )
                 return {
                     "job_id": job_id,
                     "final_status": "retrying",
@@ -1444,6 +1517,14 @@ class InMemoryStore:
                 document_id = job.get("resource", {}).get("id")
                 if isinstance(document_id, str) and document_id in self.documents:
                     self.documents[document_id]["status"] = "parse_failed"
+            self.append_workflow_checkpoint(
+                thread_id=thread_id,
+                job_id=job_id,
+                tenant_id=tenant_id,
+                node="job_failed",
+                status="failed",
+                payload={"error_code": error_code, "retry_count": failed_job.get("retry_count", 0)},
+            )
             return {
                 "job_id": job_id,
                 "final_status": "failed",
@@ -1499,6 +1580,14 @@ class InMemoryStore:
                                 "score_raw": 0.78,
                             },
                         )
+        self.append_workflow_checkpoint(
+            thread_id=thread_id,
+            job_id=job_id,
+            tenant_id=tenant_id,
+            node="job_succeeded",
+            status="succeeded",
+            payload={"retry_count": job.get("retry_count", 0)},
+        )
         return {
             "job_id": job_id,
             "final_status": "succeeded",
@@ -1555,6 +1644,7 @@ class SqliteBackedStore(InMemoryStore):
             "resume_tokens": self.resume_tokens,
             "audit_logs": self.audit_logs,
             "domain_events_outbox": self.domain_events_outbox,
+            "workflow_checkpoints": self.workflow_checkpoints,
             "citation_sources": self.citation_sources,
             "dlq_items": self.dlq_items,
             "release_rollout_policies": self.release_rollout_policies,
@@ -1598,6 +1688,11 @@ class SqliteBackedStore(InMemoryStore):
         self.domain_events_outbox = (
             payload.get("domain_events_outbox", {})
             if isinstance(payload.get("domain_events_outbox"), dict)
+            else {}
+        )
+        self.workflow_checkpoints = (
+            payload.get("workflow_checkpoints", {})
+            if isinstance(payload.get("workflow_checkpoints"), dict)
             else {}
         )
         self.citation_sources = (

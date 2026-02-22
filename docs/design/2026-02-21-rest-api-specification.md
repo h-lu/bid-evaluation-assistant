@@ -172,6 +172,16 @@
 3. 队列消息最小字段：`event_id/job_id/tenant_id/trace_id/job_type/attempt`。
 4. 队列消费保持租户隔离，跨租户不可见。
 
+### 4.13 Internal Workflow（生产化调试）
+
+1. `GET /internal/workflows/{thread_id}/checkpoints`
+
+说明：
+
+1. 仅内部联调使用，必须携带 `x-internal-debug: true`。
+2. checkpoint 查询按 `thread_id + tenant_id` 过滤。
+3. `thread_id` 由任务创建时分配，并在 resume 任务中复用。
+
 ## 5. 字段级契约（关键接口示例）
 
 ### 5.1 `POST /documents/upload`
@@ -278,6 +288,7 @@
     "status": "running",
     "progress_pct": 65,
     "retry_count": 1,
+    "thread_id": "thr_eval_xxx",
     "trace_id": "trace_xxx",
     "resource": {
       "type": "evaluation",
@@ -928,6 +939,43 @@
 {
   "message_id": "msg_xxx",
   "requeue": true
+}
+```
+
+### 5.21 `GET /internal/workflows/{thread_id}/checkpoints`
+
+请求参数：
+
+1. `thread_id`（path，必填）
+2. `limit`（query，可选，默认 `100`，范围 `1..1000`）
+
+响应 `200`：
+
+```json
+{
+  "success": true,
+  "data": {
+    "thread_id": "thr_eval_xxx",
+    "items": [
+      {
+        "checkpoint_id": "cp_xxx",
+        "thread_id": "thr_eval_xxx",
+        "job_id": "job_xxx",
+        "seq": 1,
+        "node": "job_started",
+        "status": "running",
+        "payload": {
+          "job_type": "parse"
+        },
+        "tenant_id": "tenant_a",
+        "created_at": "2026-02-22T10:00:00Z"
+      }
+    ],
+    "total": 1
+  },
+  "meta": {
+    "trace_id": "trace_xxx"
+  }
 }
 ```
 

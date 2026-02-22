@@ -609,6 +609,44 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /internal/workflows/{thread_id}/checkpoints:
+    get:
+      operationId: internalListWorkflowCheckpoints
+      summary: List workflow checkpoints for one thread
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+        - name: thread_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowCheckpointListResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /internal/outbox/events:
     get:
       operationId: internalListOutboxEvents
@@ -1959,6 +1997,57 @@ components:
         meta:
           $ref: '#/components/schemas/Meta'
 
+    WorkflowCheckpoint:
+      type: object
+      required: [checkpoint_id, thread_id, job_id, seq, node, status, payload, tenant_id, created_at]
+      properties:
+        checkpoint_id:
+          type: string
+        thread_id:
+          type: string
+        job_id:
+          type: string
+        seq:
+          type: integer
+          minimum: 1
+        node:
+          type: string
+        status:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+        tenant_id:
+          type: string
+        created_at:
+          type: string
+
+    WorkflowCheckpointListData:
+      type: object
+      required: [thread_id, items, total]
+      properties:
+        thread_id:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowCheckpoint'
+        total:
+          type: integer
+          minimum: 0
+
+    WorkflowCheckpointListResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/WorkflowCheckpointListData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
     RolloutProjectSize:
       type: string
       enum: [small, medium, large]
@@ -2899,7 +2988,7 @@ components:
 
     JobStatusData:
       type: object
-      required: [job_id, job_type, status, retry_count, trace_id, resource]
+      required: [job_id, job_type, status, retry_count, thread_id, trace_id, resource]
       properties:
         job_id:
           type: string
@@ -2924,6 +3013,8 @@ components:
         retry_count:
           type: integer
           minimum: 0
+        thread_id:
+          type: string
         trace_id:
           type: string
         resource:

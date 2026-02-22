@@ -353,6 +353,7 @@ def create_app() -> FastAPI:
                     "job_type": job["job_type"],
                     "status": job["status"],
                     "retry_count": job.get("retry_count", 0),
+                    "thread_id": job.get("thread_id"),
                     "trace_id": job.get("trace_id") or _trace_id_from_request(request),
                     "resource": job["resource"],
                     "last_error": job.get("last_error"),
@@ -381,6 +382,7 @@ def create_app() -> FastAPI:
             "status": job["status"],
             "progress_pct": 0,
             "retry_count": job["retry_count"],
+            "thread_id": job.get("thread_id"),
             "trace_id": job.get("trace_id") or _trace_id_from_request(request),
             "resource": job["resource"],
             "last_error": job.get("last_error"),
@@ -685,6 +687,31 @@ def create_app() -> FastAPI:
                 http_status=404,
             )
         return success_envelope(manifest, _trace_id_from_request(request))
+
+    @app.get("/api/v1/internal/workflows/{thread_id}/checkpoints")
+    def internal_list_workflow_checkpoints(
+        thread_id: str,
+        request: Request,
+        limit: int = Query(default=100, ge=1, le=1000),
+        x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
+    ):
+        if x_internal_debug != "true":
+            raise ApiError(
+                code="AUTH_FORBIDDEN",
+                message="internal endpoint forbidden",
+                error_class="security_sensitive",
+                retryable=False,
+                http_status=403,
+            )
+        items = store.list_workflow_checkpoints(
+            thread_id=thread_id,
+            tenant_id=_tenant_id_from_request(request),
+            limit=limit,
+        )
+        return success_envelope(
+            {"thread_id": thread_id, "items": items, "total": len(items)},
+            _trace_id_from_request(request),
+        )
 
     @app.post("/api/v1/internal/quality-gates/evaluate")
     def internal_evaluate_quality_gate(

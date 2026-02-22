@@ -1,6 +1,6 @@
 # 工作流与 Worker 生产化规范
 
-> 版本：v2026.02.22-r1  
+> 版本：v2026.02.22-r2  
 > 状态：Draft  
 > 对齐：`docs/plans/2026-02-22-production-capability-plan.md`
 
@@ -58,3 +58,13 @@
 1. `docs/design/2026-02-21-langgraph-agent-workflow-spec.md`
 2. `docs/design/2026-02-21-job-system-and-retry-spec.md`
 3. `docs/design/2026-02-21-error-handling-and-dlq-spec.md`
+
+## 10. 当前实现增量（r2）
+
+1. 作业模型新增 `thread_id`，并在 resume 任务中复用同一 thread。
+2. 新增 workflow checkpoint 事件落库（`job_started/retrying/failed/succeeded`）。
+3. 新增内部查询接口：`GET /api/v1/internal/workflows/{thread_id}/checkpoints`。
+4. `SqliteBackedStore` 快照已纳入 checkpoint 状态，支持重启后恢复查询。
+5. 新增回归：
+   - `tests/test_workflow_checkpoints.py`
+   - `tests/test_store_persistence_backend.py`（checkpoint 持久化）
