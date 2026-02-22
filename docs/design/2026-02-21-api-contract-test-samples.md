@@ -6,7 +6,7 @@
 
 ## 1. 目标
 
-1. 为 Gate B-1 提供“可执行的契约测试样例”基线。
+1. 为 Gate B-1/B-2 提供“可执行的契约测试样例”基线。
 2. 覆盖统一响应模型、幂等、异步任务、HITL 恢复、citation 返回。
 3. 为后续自动化契约测试提供最小样例集合。
 
@@ -15,10 +15,29 @@
 基于 `docs/design/2026-02-21-openapi-v1.yaml` 的核心接口子集：
 
 1. `POST /api/v1/documents/upload`
-2. `POST /api/v1/evaluations`
-3. `POST /api/v1/evaluations/{evaluation_id}/resume`
-4. `GET /api/v1/jobs/{job_id}`
-5. `GET /api/v1/citations/{chunk_id}/source`
+2. `POST /api/v1/documents/{document_id}/parse`
+3. `POST /api/v1/evaluations`
+4. `POST /api/v1/evaluations/{evaluation_id}/resume`
+5. `GET /api/v1/jobs/{job_id}`
+6. `POST /api/v1/jobs/{job_id}/cancel`
+7. `GET /api/v1/jobs?status=&type=&cursor=&limit=`
+8. `GET /api/v1/citations/{chunk_id}/source`
+9. `GET /api/v1/dlq/items`
+10. `POST /api/v1/dlq/items/{item_id}/requeue`
+11. `POST /api/v1/dlq/items/{item_id}/discard`
+12. `POST /api/v1/retrieval/query`
+13. `POST /api/v1/retrieval/preview`
+14. `GET /api/v1/evaluations/{evaluation_id}/report`
+15. `GET /api/v1/documents/{document_id}`
+16. `GET /api/v1/documents/{document_id}/chunks`
+17. `GET /api/v1/evaluations/{evaluation_id}/audit-logs`
+18. `POST /api/v1/internal/quality-gates/evaluate`
+19. `POST /api/v1/internal/performance-gates/evaluate`
+20. `POST /api/v1/internal/security-gates/evaluate`
+21. `POST /api/v1/internal/cost-gates/evaluate`
+22. `POST /api/v1/internal/release/rollout/plan`
+23. `POST /api/v1/internal/release/rollout/decision`
+24. `POST /api/v1/internal/release/rollback/execute`
 
 ## 3. 执行约定
 
@@ -37,12 +56,70 @@
 | `CT-004` | `POST /documents/upload` | 租户越权 | JWT 租户与资源归属不一致 | `403` | `error.code=TENANT_SCOPE_VIOLATION` |
 | `CT-005` | `POST /evaluations` | 正常评估受理 | 合法 `project_id/supplier_id/rule_pack_version` | `202` | `data.evaluation_id/job_id/status=queued` |
 | `CT-006` | `POST /evaluations` | 参数校验失败 | `top_k=0` 或缺失必填字段 | `400` | `error.code=REQ_VALIDATION_FAILED` |
-| `CT-007` | `GET /jobs/{job_id}` | 查询运行中任务 | 已存在 `job_id` | `200` | `data.status` 在状态字典内 |
-| `CT-008` | `GET /jobs/{job_id}` | 查询不存在任务 | 不存在 `job_id` | `404` | `success=false`，错误对象完整 |
-| `CT-009` | `POST /evaluations/{evaluation_id}/resume` | 合法恢复 | 合法 `resume_token + decision + comment` | `202` | 返回新的 `job_id` |
-| `CT-010` | `POST /evaluations/{evaluation_id}/resume` | token 非法/过期 | `resume_token` 无效 | `409` | `error.code=WF_INTERRUPT_RESUME_INVALID` |
-| `CT-011` | `GET /citations/{chunk_id}/source` | 引用回跳成功 | 合法 `chunk_id` | `200` | 返回 `document_id/page/bbox/text/context` |
-| `CT-012` | `GET /citations/{chunk_id}/source` | 引用不存在 | 不存在 `chunk_id` | `404` | `success=false`，错误对象完整 |
+| `CT-007` | `POST /documents/{document_id}/parse` | 正常解析受理 | 合法 `document_id` + `Idempotency-Key` | `202` | `data.document_id/job_id/status=queued` |
+| `CT-048` | `POST /documents/upload` | 自动投递 parse | 合法上传后读取返回 `job_id` | `202` | `job_type=parse` 且存在 parse manifest，文档状态 `parse_queued` |
+| `CT-008` | `POST /documents/{document_id}/parse` | 缺失幂等键 | 不带 `Idempotency-Key` | `400` | `error.code=IDEMPOTENCY_MISSING` |
+| `CT-009` | `GET /jobs/{job_id}` | 查询运行中任务 | 已存在 `job_id` | `200` | `data.status` 在状态字典内 |
+| `CT-010` | `GET /jobs/{job_id}` | 查询不存在任务 | 不存在 `job_id` | `404` | `success=false`，错误对象完整 |
+| `CT-011` | `POST /jobs/{job_id}/cancel` | 正常取消 | 合法 `job_id` + `Idempotency-Key` | `202` | `data.status=failed,error_code=JOB_CANCELLED` |
+| `CT-012` | `POST /jobs/{job_id}/cancel` | 终态冲突 | 任务已 `succeeded/failed` | `409` | `error.code=JOB_CANCEL_CONFLICT` |
+| `CT-013` | `POST /evaluations/{evaluation_id}/resume` | 合法恢复 | 合法 `resume_token + decision + comment + editor.reviewer_id` | `202` | 返回新的 `job_id` |
+| `CT-014` | `POST /evaluations/{evaluation_id}/resume` | token 非法/过期 | `resume_token` 无效 | `409` | `error.code=WF_INTERRUPT_RESUME_INVALID` |
+| `CT-038` | `POST /evaluations/{evaluation_id}/resume` | 缺失 reviewer | 无 `editor.reviewer_id` | `400` | `error.code=WF_INTERRUPT_REVIEWER_REQUIRED` |
+| `CT-039` | `POST /evaluations/{evaluation_id}/resume` | token 单次有效 | 同 `resume_token` 二次提交 | `409` | `error.code=WF_INTERRUPT_RESUME_INVALID` |
+| `CT-062` | `POST /evaluations/{evaluation_id}/resume` | token 24h 过期 | `issued_at` 超过 24h 的 token | `409` | `error.code=WF_INTERRUPT_RESUME_INVALID` |
+| `CT-015` | `GET /citations/{chunk_id}/source` | 引用回跳成功 | 合法 `chunk_id` | `200` | 返回 `document_id/page/bbox/text/context` |
+| `CT-016` | `GET /citations/{chunk_id}/source` | 引用不存在 | 不存在 `chunk_id` | `404` | `success=false`，错误对象完整 |
+| `CT-017` | `GET /dlq/items` | 查询 DLQ 列表 | 无 | `200` | 返回 `items[]/total` |
+| `CT-018` | `POST /dlq/items/{item_id}/requeue` | 重放 DLQ 项 | item 状态 `open` | `202` | 返回新 `job_id` 且条目变 `requeued` |
+| `CT-019` | `POST /dlq/items/{item_id}/discard` | 缺失审批字段 | `reason/reviewer_id` 为空 | `400` | `error.code=DLQ_DISCARD_REQUIRES_APPROVAL` |
+| `CT-020` | `POST /dlq/items/{item_id}/discard` | 合法丢弃 | `reason + reviewer_id` | `200` | 条目状态 `discarded` |
+| `CT-021` | `GET /jobs` | 列表查询 | 默认参数 | `200` | 返回 `items[]/total` |
+| `CT-022` | `GET /jobs?type=evaluation` | 类型过滤 | `type=evaluation` | `200` | 全部 `job_type=evaluation` |
+| `CT-023` | `GET /jobs?limit=1&cursor=...` | 游标分页 | 有效 `cursor/limit` | `200` | 返回 `next_cursor` 且可翻页 |
+| `CT-024` | `GET /jobs/{job_id}` | 跨租户读取 | 资源租户与当前租户不一致 | `403` | `error.code=TENANT_SCOPE_VIOLATION` |
+| `CT-025` | `POST /documents/{document_id}/parse` | 跨租户写入 | 文档租户与当前租户不一致 | `403` | `error.code=TENANT_SCOPE_VIOLATION` |
+| `CT-026` | `GET /jobs?type=evaluation` | 租户级列表隔离 | 混合租户样本 | `200` | 仅返回当前租户任务 |
+| `CT-027` | `POST /dlq/items/{item_id}/requeue` | 缺失幂等键 | 不带 `Idempotency-Key` | `400` | `error.code=IDEMPOTENCY_MISSING` |
+| `CT-028` | `POST /dlq/items/{item_id}/discard` | 缺失幂等键 | 不带 `Idempotency-Key` | `400` | `error.code=IDEMPOTENCY_MISSING` |
+| `CT-029` | `POST /dlq/items/{item_id}/requeue` | 幂等重放 | 同 key + 同 body | `202` | 返回相同 `job_id` |
+| `CT-063` | `POST /dlq/items/{item_id}/requeue/discard` | DLQ 操作审计 | 成功执行 `requeue` 与 `discard` | `200/202` | 写入 `dlq_requeue_submitted/dlq_discard_submitted` 审计动作 |
+| `CT-030` | `POST /retrieval/query` | 模式选择（relation） | `query_type=relation` | `200` | `data.selected_mode=global` |
+| `CT-031` | `POST /retrieval/query` | 高风险强制 mix | `query_type=fact + high_risk=true` | `200` | `data.selected_mode=mix` |
+| `CT-032` | `POST /retrieval/query` | 租户/项目过滤 | 混合租户与项目样本 | `200` | 仅返回当前租户且 `project_id` 命中项 |
+| `CT-033` | `POST /retrieval/preview` | 预览返回最小证据 | 与 query 相同入参 | `200` | `data.items[*]` 含 `chunk_id/document_id/page/bbox/text` |
+| `CT-034` | `POST /retrieval/preview` | 预览继承模式选择 | `query_type=summary` | `200` | `data.selected_mode=hybrid` |
+| `CT-035` | `POST /retrieval/query` | 约束词过滤 | `must_include_terms + must_exclude_terms` | `200` | 仅返回满足约束词的候选 |
+| `CT-036` | `POST /retrieval/query` | rerank 降级 | `enable_rerank=false` | `200` | `data.degraded=true` 且 `score_rerank=null` |
+| `CT-046` | `POST /retrieval/query` | 约束保持改写输出 | 任意合法 query | `200` | `rewritten_query/rewrite_reason/constraints_preserved/constraint_diff` 字段存在 |
+| `CT-037` | `GET /evaluations/{evaluation_id}/report` | 报告查询 | 合法 `evaluation_id` | `200` | 返回 `total_score/confidence/criteria_results/citations` |
+| `CT-047` | `GET /evaluations/{evaluation_id}/report` | 引用覆盖率字段 | 合法 `evaluation_id` | `200` | 返回 `citation_coverage` 且 `criteria_results[*].citations` 非空 |
+| `CT-049` | `GET /evaluations/{evaluation_id}/report` | 硬约束阻断软评分 | `include_doc_types` 不含 `bid` | `200` | `total_score=0` 且 `criteria_results[*].hard_pass=false` |
+| `CT-040` | `GET /evaluations/{evaluation_id}/report` | HITL 中断负载 | `evaluation_scope.force_hitl=true` | `200` | `needs_human_review=true` 且 `interrupt.resume_token` 存在 |
+| `CT-041` | `GET /documents/{document_id}` | 文档详情查询 | 合法 `document_id` | `200` | 返回文档元数据与状态 |
+| `CT-042` | `GET /documents/{document_id}/chunks` | 解析分块查询 | parse 成功后查询 | `200` | 返回 `chunk_id/pages/positions/heading_path/chunk_type` |
+| `CT-043` | `GET /documents/{document_id}/chunks` | 跨租户阻断 | 文档归属租户不一致 | `403` | `error.code=TENANT_SCOPE_VIOLATION` |
+| `CT-044` | `GET /evaluations/{evaluation_id}/audit-logs` | 恢复审计查询 | 完成一次 resume 后查询 | `200` | 返回 `resume_submitted` 日志 |
+| `CT-045` | `GET /evaluations/{evaluation_id}/audit-logs` | 跨租户阻断 | evaluation 租户不一致 | `403` | `error.code=TENANT_SCOPE_VIOLATION` |
+| `CT-050` | `POST /internal/quality-gates/evaluate` | 质量门禁通过 | 指标全部达阈值 + `x-internal-debug=true` | `200` | `passed=true` 且 `ragchecker.triggered=false` |
+| `CT-051` | `POST /internal/quality-gates/evaluate` | 质量门禁阻断 | 任一指标跌破阈值 | `200` | `passed=false` 且返回 `failed_checks[]`、`ragchecker.triggered=true` |
+| `CT-052` | `POST /internal/quality-gates/evaluate` | 内部接口鉴权 | 缺失 `x-internal-debug=true` | `403` | `error.code=AUTH_FORBIDDEN` |
+| `CT-053` | `POST /internal/performance-gates/evaluate` | 性能门禁通过 | P95 与队列/缓存指标达阈值 | `200` | `passed=true` 且 `failed_checks=[]` |
+| `CT-054` | `POST /internal/performance-gates/evaluate` | 性能门禁阻断 | 任一 P95 或队列/缓存指标越界 | `200` | `passed=false` 且返回对应失败码 |
+| `CT-055` | `POST /internal/performance-gates/evaluate` | 内部接口鉴权 | 缺失 `x-internal-debug=true` | `403` | `error.code=AUTH_FORBIDDEN` |
+| `CT-056` | `POST /internal/security-gates/evaluate` | 安全门禁通过 | 越权/绕过/脱敏/密钥扫描均通过 | `200` | `passed=true` 且 `failed_checks=[]` |
+| `CT-057` | `POST /internal/security-gates/evaluate` | 安全门禁阻断 | 任一安全阻断项非 0 或审批覆盖不足 | `200` | `passed=false` 且返回对应失败码 |
+| `CT-058` | `POST /internal/security-gates/evaluate` | 内部接口鉴权 | 缺失 `x-internal-debug=true` | `403` | `error.code=AUTH_FORBIDDEN` |
+| `CT-059` | `POST /internal/cost-gates/evaluate` | 成本门禁通过 | `task_cost_p95 <= baseline*1.2` 且降级与预算告警通过 | `200` | `passed=true` 且 `failed_checks=[]` |
+| `CT-060` | `POST /internal/cost-gates/evaluate` | 成本门禁阻断 | 成本超阈值或降级/预算告警失败 | `200` | `passed=false` 且返回对应失败码 |
+| `CT-061` | `POST /internal/cost-gates/evaluate` | 内部接口鉴权 | 缺失 `x-internal-debug=true` | `403` | `error.code=AUTH_FORBIDDEN` |
+| `CT-064` | `POST /internal/release/rollout/plan` | 灰度策略建档 | 提交租户白名单、规模放量层级与高风险 HITL 开关 | `200` | 返回 `release_id/tenant_whitelist/project_sizes/high_risk_hitl_enforced` |
+| `CT-065` | `POST /internal/release/rollout/decision` | 灰度准入通过 | tenant 在白名单且项目规模在已放量层级 | `200` | `admitted=true` 且 `reasons=[]` |
+| `CT-066` | `POST /internal/release/rollout/decision` | 灰度准入阻断 | tenant 不在白名单或规模未放量 | `200` | `admitted=false` 且 `reasons` 含阻断码 |
+| `CT-067` | `POST /internal/release/rollout/decision` | 高风险强制 HITL | `high_risk=true` | `200` | `force_hitl=true` |
+| `CT-068` | `POST /internal/release/rollback/execute` | 回滚触发并回放 | 任一 breach 连续超阈值（默认 2 次） | `200` | 返回固定回滚顺序，且 `replay_verification.status=succeeded` |
+| `CT-069` | `POST /internal/release/rollback/execute` | 不触发回滚 | 所有 breach 未达连续阈值 | `200` | `triggered=false` 且 `replay_verification=null` |
+| `CT-070` | `POST /internal/release/(rollout|rollback)/*` | 内部接口鉴权 | 缺失 `x-internal-debug=true` | `403` | `error.code=AUTH_FORBIDDEN` |
 
 ## 5. 关键断言模板
 
@@ -84,10 +161,13 @@
 
 ## 7. Gate B-1 验收映射
 
-1. 统一响应模型与错误对象：`CT-001/006/008/010/012`。
-2. 幂等策略：`CT-002/003`。
-3. 异步任务契约：`CT-001/005/007/009`。
-4. `resume_token` 与 citation schema：`CT-009/010/011`。
+1. 统一响应模型与错误对象：`CT-001/006/010/014/016/019/024/025`。
+2. 幂等策略：`CT-002/003/027/028/029`。
+3. 异步任务契约：`CT-001/005/007/009/011/013/018/021/023/048`。
+4. `resume_token` 与 citation schema：`CT-013/014/015`。
+5. B-2 状态机运维动作（cancel/DLQ）：`CT-011/012/017/018/019/020/022`。
+6. 多租户隔离：`CT-024/025/026/032`。
+7. Gate E 灰度与回滚：`CT-064/065/066/067/068/069/070`。
 
 ## 8. 后续自动化建议
 

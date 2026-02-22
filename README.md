@@ -142,3 +142,40 @@ Gate A 设计冻结
 1. SSOT 变更优先级最高，其他文档必须与 SSOT 对齐。
 2. 任何新增实现细节，必须同步落到对应专项文档，不允许只写在临时说明。
 3. 合并前必须跑一次全量一致性检查：术语、状态机、错误码、接口字段、门禁阈值。
+
+## 8. 最小 API 骨架（Gate C 分支）
+
+`codex/gate-c-api-skeleton` 分支包含最小可运行 FastAPI 骨架，用于承接 Gate B 契约并推进 Gate C。
+
+本地运行：
+
+```bash
+python3 -m pip install -e '.[dev]'
+pytest -v
+uvicorn app.main:app --reload
+```
+
+说明：本骨架通过中间件模拟“JWT 注入租户上下文”，本地可用 `x-tenant-id` 请求头验证租户隔离行为。
+
+当前已覆盖最小接口：
+
+1. `POST /api/v1/documents/upload`
+2. `POST /api/v1/documents/{document_id}/parse`
+3. `POST /api/v1/evaluations`
+4. `GET /api/v1/jobs/{job_id}`
+5. `GET /api/v1/jobs?status=&type=&cursor=&limit=`
+6. `POST /api/v1/jobs/{job_id}/cancel`
+7. `POST /api/v1/evaluations/{evaluation_id}/resume`
+8. `GET /api/v1/citations/{chunk_id}/source`
+9. `GET /api/v1/dlq/items`
+10. `POST /api/v1/dlq/items/{item_id}/requeue`
+11. `POST /api/v1/dlq/items/{item_id}/discard`
+12. `POST /api/v1/internal/jobs/{job_id}/transition`（内部回放测试）
+13. `POST /api/v1/internal/jobs/{job_id}/run`（内部回放执行）
+14. `GET /api/v1/internal/parse-manifests/{job_id}`（内部解析 manifest 调试）
+15. `POST /api/v1/retrieval/query`
+16. `POST /api/v1/retrieval/preview`
+17. `GET /api/v1/evaluations/{evaluation_id}/report`
+18. `GET /api/v1/documents/{document_id}`
+19. `GET /api/v1/documents/{document_id}/chunks`
+20. `GET /api/v1/evaluations/{evaluation_id}/audit-logs`

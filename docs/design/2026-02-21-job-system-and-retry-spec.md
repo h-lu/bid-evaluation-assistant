@@ -122,6 +122,16 @@ running/retrying
 1. 每次回放记录 `trace_id/job_id/retry_count/status_transition`。
 2. 任一案例失败，Gate B-2 不通过。
 
+### 6.1 开发态回放触发（内测接口）
+
+用于 Gate C 骨架验证的内部接口：
+
+1. `POST /api/v1/internal/jobs/{job_id}/run`：成功路径（`queued/running -> succeeded`）。
+2. `POST /api/v1/internal/jobs/{job_id}/run?force_fail=true`：直接进入 DLQ 终态路径。
+3. `POST /api/v1/internal/jobs/{job_id}/run?transient_fail=true`：
+   - 第 1~3 次：`running -> retrying`，并累加 `retry_count`。
+   - 第 4 次：`running/retrying -> dlq_pending -> dlq_recorded -> failed`。
+
 ## 7. 监控与告警
 
 1. `retrying` 比例超过阈值触发告警。

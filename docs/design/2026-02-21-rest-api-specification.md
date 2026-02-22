@@ -77,8 +77,8 @@
 
 ### 4.3 Documents
 
-1. `POST /documents/upload` -> `202 + job_id`
-2. `POST /documents/{document_id}/parse` -> `202 + job_id`
+1. `POST /documents/upload` -> `202 + parse job_id`（上传后自动投递 parse）
+2. `POST /documents/{document_id}/parse` -> `202 + job_id`（手动重投/补投）
 3. `GET /documents/{document_id}`
 4. `GET /documents/{document_id}/chunks`
 
@@ -111,6 +111,37 @@
 1. `GET /citations/{chunk_id}/source`
 
 返回最小字段：`document_id/page/bbox/text/context`。
+
+### 4.9 Internal Gates（内部调试）
+
+1. `POST /internal/quality-gates/evaluate`
+2. `POST /internal/performance-gates/evaluate`
+3. `POST /internal/security-gates/evaluate`
+4. `POST /internal/cost-gates/evaluate`
+
+说明：
+
+1. 仅内部调试与门禁流水线使用，必须携带 `x-internal-debug: true`。
+2. 质量门禁输入 RAGAS/DeepEval/citation 指标，返回通过/阻断结论。
+3. 性能门禁输入 P95、队列稳定性与缓存命中率指标。
+4. 安全门禁输入越权/绕过/审批/脱敏/密钥扫描结果。
+5. 成本门禁输入成本 P95、模型降级可用性与预算告警覆盖率。
+6. 当质量门禁不达标时，触发 `RAGChecker` 诊断流程标记。
+
+### 4.10 Internal Release（Gate E 内部发布控制）
+
+1. `POST /internal/release/rollout/plan`
+2. `POST /internal/release/rollout/decision`
+3. `POST /internal/release/rollback/execute`
+
+说明：
+
+1. 仅灰度/回滚流水线使用，必须携带 `x-internal-debug: true`。
+2. 灰度放量顺序固定为“租户白名单 -> 项目规模分层（small/medium/large）”。
+3. `high_risk=true` 时强制 `force_hitl=true`，不可绕过。
+4. 回滚触发条件为“任一门禁连续超阈值（默认阈值 2 次）”。
+5. 回滚执行顺序固定为：`model_config -> retrieval_params -> workflow_version -> release_version`。
+6. 回滚执行后必须触发一次 `replay verification`。
 
 ## 5. 字段级契约（关键接口示例）
 
@@ -146,6 +177,11 @@
   }
 }
 ```
+
+说明：
+
+1. `data.job_id` 对应自动投递的 parse 任务，可直接用于 `GET /jobs/{job_id}` 查询。
+2. 上传受理后文档状态进入 `parse_queued`。
 
 错误：
 
@@ -195,6 +231,11 @@
 }
 ```
 
+规则说明：
+
+1. 评分流程先执行规则引擎硬约束判定。
+2. 当硬约束不通过时，报告返回 `criteria_results[*].hard_pass=false`，并阻断软评分（总分为 `0`，风险等级提升）。
+
 ### 5.3 `GET /jobs/{job_id}`
 
 响应 `200`：
@@ -230,6 +271,9 @@
   "resume_token": "rt_xxx",
   "decision": "approve",
   "comment": "证据充分，允许继续",
+  "editor": {
+    "reviewer_id": "u_xxx"
+  },
   "edited_scores": []
 }
 ```
@@ -254,6 +298,12 @@
 
 1. `WF_INTERRUPT_RESUME_INVALID`
 2. `REQ_VALIDATION_FAILED`
+3. `WF_INTERRUPT_REVIEWER_REQUIRED`
+
+约束：
+
+1. `resume_token` 单次有效。
+2. `resume_token` 自签发起 24 小时内有效，超时后返回 `WF_INTERRUPT_RESUME_INVALID`。
 
 ### 5.5 `GET /citations/{chunk_id}/source`
 
@@ -281,6 +331,440 @@
 }
 ```
 
+### 5.6 `POST /internal/quality-gates/evaluate`
+
+请求体：
+
+```json
+{
+  "dataset_id": "ds_gate_d_smoke",
+  "metrics": {
+    "ragas": {
+      "context_precision": 0.82,
+      "context_recall": 0.81,
+      "faithfulness": 0.91,
+      "response_relevancy": 0.87
+    },
+    "deepeval": {
+      "hallucination_rate": 0.03
+    },
+    "citation": {
+      "resolvable_rate": 0.99
+    }
+  }
+}
+```
+
+响应 `200`：
+
+```json
+{
+  "success": true,
+  "data": {
+    "gate": "quality",
+    "passed": true,
+    "failed_checks": [],
+    "thresholds": {
+      "ragas_context_precision_min": 0.8,
+      "ragas_context_recall_min": 0.8,
+      "ragas_faithfulness_min": 0.9,
+      "ragas_response_relevancy_min": 0.85,
+      "deepeval_hallucination_rate_max": 0.05,
+      "citation_resolvable_rate_min": 0.98
+    },
+    "values": {
+      "context_precision": 0.82,
+      "context_recall": 0.81,
+      "faithfulness": 0.91,
+      "response_relevancy": 0.87,
+      "hallucination_rate": 0.03,
+      "citation_resolvable_rate": 0.99
+    },
+    "ragchecker": {
+      "triggered": false,
+      "reason_codes": []
+    }
+  },
+  "meta": {
+    "trace_id": "trace_xxx"
+  }
+}
+```
+
+### 5.7 `POST /internal/performance-gates/evaluate`
+
+请求体：
+
+```json
+{
+  "dataset_id": "ds_perf_smoke",
+  "metrics": {
+    "api_p95_s": 1.2,
+    "retrieval_p95_s": 3.5,
+    "parse_50p_p95_s": 170.0,
+    "evaluation_p95_s": 100.0,
+    "queue_dlq_rate": 0.006,
+    "cache_hit_rate": 0.75
+  }
+}
+```
+
+响应 `200`：返回 `gate=performance`、`passed`、`failed_checks`、阈值与观测值。
+
+### 5.8 `POST /internal/security-gates/evaluate`
+
+请求体：
+
+```json
+{
+  "dataset_id": "ds_security_smoke",
+  "metrics": {
+    "tenant_scope_violations": 0,
+    "auth_bypass_findings": 0,
+    "high_risk_approval_coverage": 1.0,
+    "log_redaction_failures": 0,
+    "secret_scan_findings": 0
+  }
+}
+```
+
+响应 `200`：返回 `gate=security`、`passed`、`failed_checks`、阈值与观测值。
+
+### 5.9 `POST /internal/cost-gates/evaluate`
+
+请求体：
+
+```json
+{
+  "dataset_id": "ds_cost_smoke",
+  "metrics": {
+    "task_cost_p95": 1.08,
+    "baseline_task_cost_p95": 1.0,
+    "routing_degrade_passed": true,
+    "degrade_availability": 0.997,
+    "budget_alert_coverage": 1.0
+  }
+}
+```
+
+响应 `200`：返回 `gate=cost`、`passed`、`failed_checks`、阈值与观测值。
+
+### 5.10 `POST /retrieval/query`
+
+请求体：
+
+```json
+{
+  "project_id": "prj_xxx",
+  "supplier_id": "sup_xxx",
+  "query": "投标文件中与交付周期相关的承诺",
+  "query_type": "relation",
+  "must_include_terms": ["交付", "周期"],
+  "must_exclude_terms": ["质保"],
+  "enable_rerank": true,
+  "top_k": 20,
+  "doc_scope": ["bid"]
+}
+```
+
+响应 `200`：
+
+```json
+{
+  "success": true,
+  "data": {
+    "query": "投标文件中与交付周期相关的承诺",
+    "rewritten_query": "投标文件 与 交付周期 相关承诺",
+    "rewrite_reason": "normalize_whitespace_and_terms",
+    "constraints_preserved": true,
+    "constraint_diff": [],
+    "query_type": "relation",
+    "selected_mode": "global",
+    "degraded": false,
+    "items": [
+      {
+        "chunk_id": "ck_xxx",
+        "score_raw": 0.82,
+        "score_rerank": 0.89,
+        "reason": "matched relation intent",
+        "metadata": {
+          "project_id": "prj_xxx",
+          "supplier_id": "sup_xxx",
+          "doc_type": "bid",
+          "page": 8,
+          "bbox": [120.2, 310.0, 520.8, 365.4]
+        }
+      }
+    ],
+    "total": 1
+  },
+  "meta": {
+    "trace_id": "trace_xxx"
+  }
+}
+```
+
+错误：
+
+1. `REQ_VALIDATION_FAILED`
+2. `TENANT_SCOPE_VIOLATION`
+3. rerank 降级时 `data.degraded=true`，并回退到原召回分排序
+
+### 5.11 `POST /retrieval/preview`
+
+请求体：与 `POST /retrieval/query` 相同。
+
+响应 `200`：
+
+```json
+{
+  "success": true,
+  "data": {
+    "query": "投标文件中与交付周期相关的承诺",
+    "selected_mode": "global",
+    "items": [
+      {
+        "chunk_id": "ck_xxx",
+        "document_id": "doc_xxx",
+        "page": 8,
+        "bbox": [120.2, 310.0, 520.8, 365.4],
+        "text": "原文片段..."
+      }
+    ],
+    "total": 1
+  },
+  "meta": {
+    "trace_id": "trace_xxx"
+  }
+}
+```
+
+### 5.12 `GET /evaluations/{evaluation_id}/report`
+
+响应 `200`：
+
+```json
+{
+  "success": true,
+  "data": {
+    "evaluation_id": "ev_xxx",
+    "supplier_id": "sup_xxx",
+    "total_score": 88.5,
+    "confidence": 0.78,
+    "citation_coverage": 1.0,
+    "risk_level": "medium",
+    "criteria_results": [
+      {
+        "criteria_id": "delivery",
+        "score": 18.0,
+        "max_score": 20.0,
+        "hard_pass": true,
+        "reason": "交付周期满足要求",
+        "citations": ["ck_xxx"],
+        "confidence": 0.81
+      }
+    ],
+    "citations": ["ck_xxx"],
+    "needs_human_review": false,
+    "trace_id": "trace_xxx",
+    "interrupt": null
+  },
+  "meta": {
+    "trace_id": "trace_xxx"
+  }
+}
+```
+
+### 5.13 `GET /documents/{document_id}`
+
+响应 `200`：
+
+```json
+{
+  "success": true,
+  "data": {
+    "document_id": "doc_xxx",
+    "project_id": "prj_xxx",
+    "supplier_id": "sup_xxx",
+    "doc_type": "bid",
+    "filename": "bid.pdf",
+    "status": "indexed"
+  },
+  "meta": {
+    "trace_id": "trace_xxx"
+  }
+}
+```
+
+### 5.14 `GET /documents/{document_id}/chunks`
+
+响应 `200`：
+
+```json
+{
+  "success": true,
+  "data": {
+    "document_id": "doc_xxx",
+    "items": [
+      {
+        "chunk_id": "ck_xxx",
+        "document_id": "doc_xxx",
+        "pages": [1],
+        "positions": [
+          {
+            "page": 1,
+            "bbox": [100, 120, 520, 380],
+            "start": 0,
+            "end": 128
+          }
+        ],
+        "section": "投标响应",
+        "heading_path": ["第一章", "响应说明"],
+        "chunk_type": "text",
+        "parser": "mineru",
+        "parser_version": "v0",
+        "text": "原文片段..."
+      }
+    ],
+    "total": 1
+  },
+  "meta": {
+    "trace_id": "trace_xxx"
+  }
+}
+```
+
+### 5.15 `POST /internal/release/rollout/decision`
+
+请求体：
+
+```json
+{
+  "release_id": "rel_20260222_01",
+  "tenant_id": "tenant_a",
+  "project_size": "small",
+  "high_risk": true
+}
+```
+
+响应 `200`：
+
+```json
+{
+  "success": true,
+  "data": {
+    "release_id": "rel_20260222_01",
+    "admitted": true,
+    "stage": "tenant_whitelist+project_size",
+    "matched_whitelist": true,
+    "force_hitl": true,
+    "reasons": []
+  },
+  "meta": {
+    "trace_id": "trace_xxx"
+  }
+}
+```
+
+规则说明：
+
+1. 若租户不在白名单，`admitted=false` 且 `reasons` 含 `TENANT_NOT_IN_WHITELIST`。
+2. 若项目规模未放量，`admitted=false` 且 `reasons` 含 `PROJECT_SIZE_NOT_ENABLED`。
+3. 若 `high_risk=true`，无条件返回 `force_hitl=true`。
+
+### 5.16 `POST /internal/release/rollback/execute`
+
+请求体：
+
+```json
+{
+  "release_id": "rel_20260222_01",
+  "consecutive_threshold": 2,
+  "breaches": [
+    {
+      "gate": "quality",
+      "metric_code": "DEEPEVAL_HALLUCINATION_RATE_HIGH",
+      "consecutive_failures": 2
+    }
+  ]
+}
+```
+
+响应 `200`：
+
+```json
+{
+  "success": true,
+  "data": {
+    "release_id": "rel_20260222_01",
+    "triggered": true,
+    "trigger_gate": "quality",
+    "rollback_order": [
+      "model_config",
+      "retrieval_params",
+      "workflow_version",
+      "release_version"
+    ],
+    "replay_verification": {
+      "job_id": "job_xxx",
+      "status": "succeeded"
+    },
+    "elapsed_minutes": 8,
+    "rollback_completed_within_30m": true,
+    "service_restored": true
+  },
+  "meta": {
+    "trace_id": "trace_xxx"
+  }
+}
+```
+
+规则说明：
+
+1. 当且仅当存在 `consecutive_failures >= consecutive_threshold` 的 breach 时触发回滚。
+2. 回滚完成后必须创建并执行一次回放验证任务。
+3. `rollback_completed_within_30m=false` 视为 Gate E 验收失败。
+
+### 5.11 `GET /evaluations/{evaluation_id}/audit-logs`
+
+响应 `200`：
+
+```json
+{
+  "success": true,
+  "data": {
+    "evaluation_id": "ev_xxx",
+    "items": [
+      {
+        "audit_id": "audit_xxx",
+        "action": "resume_submitted",
+        "reviewer_id": "u_xxx",
+        "decision": "approve",
+        "comment": "证据充分，允许继续",
+        "trace_id": "trace_xxx",
+        "occurred_at": "2026-02-21T09:30:00Z"
+      }
+    ],
+    "total": 1
+  },
+  "meta": {
+    "trace_id": "trace_xxx"
+  }
+}
+```
+
+当命中 HITL 条件（例如 `force_hitl=true`）时，`data.interrupt` 返回：
+
+```json
+{
+  "type": "human_review",
+  "evaluation_id": "ev_xxx",
+  "reasons": ["force_hitl"],
+  "suggested_actions": ["approve", "reject", "edit_scores"],
+  "resume_token": "rt_xxx"
+}
+```
+
 ## 6. 长任务契约
 
 ### 6.1 提交返回
@@ -301,6 +785,13 @@
 ### 6.2 任务状态
 
 `queued -> running -> retrying -> succeeded|failed`
+
+### 5.15 `POST /dlq/items/{item_id}/requeue|discard`
+
+约束：
+
+1. `requeue/discard` 成功后必须写审计日志。
+2. 审计动作分别为 `dlq_requeue_submitted`、`dlq_discard_submitted`。
 
 附加状态：`needs_manual_decision`, `dlq_pending`, `dlq_recorded`。
 

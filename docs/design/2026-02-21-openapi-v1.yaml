@@ -3,8 +3,9 @@ info:
   title: Bid Evaluation Assistant API
   version: v2026.02.21-r3
   description: |
-    Gate B-1 OpenAPI contract subset for async job submission, HITL resume,
-    job status query, and citation source lookup.
+    Gate C OpenAPI contract subset for async job submission, parse/resume/cancel,
+    job status query, DLQ operations, citation source lookup, retrieval query/preview,
+    and evaluation report lookup.
 servers:
   - url: /api/v1
 security:
@@ -14,7 +15,7 @@ paths:
   /documents/upload:
     post:
       operationId: uploadDocument
-      summary: Upload a document and enqueue parse/index job
+      summary: Upload a document and auto-enqueue parse/index job
       security:
         - BearerAuth: []
       parameters:
@@ -139,6 +140,217 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /evaluations/{evaluation_id}/report:
+    get:
+      operationId: getEvaluationReport
+      summary: Get evaluation scoring report with citation coverage fields
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EvaluationId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvaluationReportResponse'
+        '404':
+          description: Evaluation report not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Tenant scope violation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /evaluations/{evaluation_id}/audit-logs:
+    get:
+      operationId: listEvaluationAuditLogs
+      summary: List audit logs for an evaluation
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EvaluationId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvaluationAuditLogListResponse'
+        '404':
+          description: Evaluation not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Tenant scope violation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /retrieval/query:
+    post:
+      operationId: retrievalQuery
+      summary: Query retrieval candidates with mode selection and metadata filtering
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RetrievalQueryRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetrievalQueryResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Tenant scope violation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /retrieval/preview:
+    post:
+      operationId: retrievalPreview
+      summary: Preview retrieval evidence without scoring flow
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RetrievalQueryRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetrievalPreviewResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Tenant scope violation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /documents/{document_id}/parse:
+    post:
+      operationId: parseDocument
+      summary: Enqueue parse/index job for an uploaded document
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DocumentId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ParseAcceptedResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Tenant scope violation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Document not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /documents/{document_id}:
+    get:
+      operationId: getDocument
+      summary: Get document metadata and status
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DocumentId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentResponse'
+        '403':
+          description: Tenant scope violation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Document not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /documents/{document_id}/chunks:
+    get:
+      operationId: listDocumentChunks
+      summary: List parsed chunks for a document
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DocumentId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentChunkListResponse'
+        '403':
+          description: Tenant scope violation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Document not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /evaluations/{evaluation_id}/resume:
     post:
       operationId: resumeEvaluation
@@ -207,6 +419,173 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Tenant scope violation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /jobs:
+    get:
+      operationId: listJobs
+      summary: List jobs with optional filters and cursor pagination
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: type
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobListResponse'
+  /jobs/{job_id}/cancel:
+    post:
+      operationId: cancelJob
+      summary: Cancel a non-terminal async job
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CancelAcceptedResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Tenant scope violation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Cancel conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /dlq/items:
+    get:
+      operationId: listDlqItems
+      summary: List DLQ items
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DlqListResponse'
+
+  /dlq/items/{item_id}/requeue:
+    post:
+      operationId: requeueDlqItem
+      summary: Requeue an open DLQ item
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ItemId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DlqRequeueAcceptedResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: DLQ item not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Requeue conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /dlq/items/{item_id}/discard:
+    post:
+      operationId: discardDlqItem
+      summary: Discard a DLQ item with approval fields
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ItemId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DlqDiscardRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DlqDiscardResponse'
+        '400':
+          description: Missing approval fields
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: DLQ item not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /citations/{chunk_id}/source:
     get:
@@ -225,6 +604,265 @@ paths:
                 $ref: '#/components/schemas/CitationSourceResponse'
         '404':
           description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /internal/quality-gates/evaluate:
+    post:
+      operationId: internalEvaluateQualityGate
+      summary: Evaluate Gate D quality thresholds and ragchecker trigger
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QualityGateEvaluateRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QualityGateEvaluateResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /internal/performance-gates/evaluate:
+    post:
+      operationId: internalEvaluatePerformanceGate
+      summary: Evaluate Gate D performance thresholds
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PerformanceGateEvaluateRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PerformanceGateEvaluateResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /internal/security-gates/evaluate:
+    post:
+      operationId: internalEvaluateSecurityGate
+      summary: Evaluate Gate D security blocking checks
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SecurityGateEvaluateRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SecurityGateEvaluateResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /internal/cost-gates/evaluate:
+    post:
+      operationId: internalEvaluateCostGate
+      summary: Evaluate Gate D cost thresholds and degradation availability
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CostGateEvaluateRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CostGateEvaluateResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /internal/release/rollout/plan:
+    post:
+      operationId: internalPlanReleaseRollout
+      summary: Save Gate E tenant-whitelist and project-size rollout policy
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RolloutPlanRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RolloutPlanResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /internal/release/rollout/decision:
+    post:
+      operationId: internalDecideReleaseRollout
+      summary: Evaluate Gate E rollout admission for tenant and project size
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RolloutDecisionRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RolloutDecisionResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /internal/release/rollback/execute:
+    post:
+      operationId: internalExecuteReleaseRollback
+      summary: Execute Gate E rollback order and trigger replay verification
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RollbackExecuteRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RollbackExecuteResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Internal endpoint forbidden
           content:
             application/json:
               schema:
@@ -260,6 +898,18 @@ components:
         type: string
     ChunkId:
       name: chunk_id
+      in: path
+      required: true
+      schema:
+        type: string
+    DocumentId:
+      name: document_id
+      in: path
+      required: true
+      schema:
+        type: string
+    ItemId:
+      name: item_id
       in: path
       required: true
       schema:
@@ -307,6 +957,673 @@ components:
         meta:
           $ref: '#/components/schemas/Meta'
 
+    QualityGateRagasMetrics:
+      type: object
+      required: [context_precision, context_recall, faithfulness, response_relevancy]
+      properties:
+        context_precision:
+          type: number
+          minimum: 0
+          maximum: 1
+        context_recall:
+          type: number
+          minimum: 0
+          maximum: 1
+        faithfulness:
+          type: number
+          minimum: 0
+          maximum: 1
+        response_relevancy:
+          type: number
+          minimum: 0
+          maximum: 1
+
+    QualityGateDeepEvalMetrics:
+      type: object
+      required: [hallucination_rate]
+      properties:
+        hallucination_rate:
+          type: number
+          minimum: 0
+          maximum: 1
+
+    QualityGateCitationMetrics:
+      type: object
+      required: [resolvable_rate]
+      properties:
+        resolvable_rate:
+          type: number
+          minimum: 0
+          maximum: 1
+
+    QualityGateMetrics:
+      type: object
+      required: [ragas, deepeval, citation]
+      properties:
+        ragas:
+          $ref: '#/components/schemas/QualityGateRagasMetrics'
+        deepeval:
+          $ref: '#/components/schemas/QualityGateDeepEvalMetrics'
+        citation:
+          $ref: '#/components/schemas/QualityGateCitationMetrics'
+
+    QualityGateEvaluateRequest:
+      type: object
+      required: [dataset_id, metrics]
+      properties:
+        dataset_id:
+          type: string
+        metrics:
+          $ref: '#/components/schemas/QualityGateMetrics'
+
+    QualityGateThresholds:
+      type: object
+      required:
+        [
+          ragas_context_precision_min,
+          ragas_context_recall_min,
+          ragas_faithfulness_min,
+          ragas_response_relevancy_min,
+          deepeval_hallucination_rate_max,
+          citation_resolvable_rate_min,
+        ]
+      properties:
+        ragas_context_precision_min:
+          type: number
+        ragas_context_recall_min:
+          type: number
+        ragas_faithfulness_min:
+          type: number
+        ragas_response_relevancy_min:
+          type: number
+        deepeval_hallucination_rate_max:
+          type: number
+        citation_resolvable_rate_min:
+          type: number
+
+    QualityGateValues:
+      type: object
+      required:
+        [
+          context_precision,
+          context_recall,
+          faithfulness,
+          response_relevancy,
+          hallucination_rate,
+          citation_resolvable_rate,
+        ]
+      properties:
+        context_precision:
+          type: number
+        context_recall:
+          type: number
+        faithfulness:
+          type: number
+        response_relevancy:
+          type: number
+        hallucination_rate:
+          type: number
+        citation_resolvable_rate:
+          type: number
+
+    QualityGateRagchecker:
+      type: object
+      required: [triggered, reason_codes]
+      properties:
+        triggered:
+          type: boolean
+        reason_codes:
+          type: array
+          items:
+            type: string
+
+    QualityGateEvaluateData:
+      type: object
+      required: [gate, dataset_id, passed, failed_checks, thresholds, values, ragchecker]
+      properties:
+        gate:
+          type: string
+          enum: [quality]
+        dataset_id:
+          type: string
+        passed:
+          type: boolean
+        failed_checks:
+          type: array
+          items:
+            type: string
+        thresholds:
+          $ref: '#/components/schemas/QualityGateThresholds'
+        values:
+          $ref: '#/components/schemas/QualityGateValues'
+        ragchecker:
+          $ref: '#/components/schemas/QualityGateRagchecker'
+
+    QualityGateEvaluateResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/QualityGateEvaluateData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    PerformanceGateMetrics:
+      type: object
+      required: [api_p95_s, retrieval_p95_s, parse_50p_p95_s, evaluation_p95_s, queue_dlq_rate, cache_hit_rate]
+      properties:
+        api_p95_s:
+          type: number
+          minimum: 0
+        retrieval_p95_s:
+          type: number
+          minimum: 0
+        parse_50p_p95_s:
+          type: number
+          minimum: 0
+        evaluation_p95_s:
+          type: number
+          minimum: 0
+        queue_dlq_rate:
+          type: number
+          minimum: 0
+          maximum: 1
+        cache_hit_rate:
+          type: number
+          minimum: 0
+          maximum: 1
+
+    PerformanceGateEvaluateRequest:
+      type: object
+      required: [dataset_id, metrics]
+      properties:
+        dataset_id:
+          type: string
+        metrics:
+          $ref: '#/components/schemas/PerformanceGateMetrics'
+
+    PerformanceGateThresholds:
+      type: object
+      required:
+        [
+          api_p95_s_max,
+          retrieval_p95_s_max,
+          parse_50p_p95_s_max,
+          evaluation_p95_s_max,
+          queue_dlq_rate_max,
+          cache_hit_rate_min,
+        ]
+      properties:
+        api_p95_s_max:
+          type: number
+        retrieval_p95_s_max:
+          type: number
+        parse_50p_p95_s_max:
+          type: number
+        evaluation_p95_s_max:
+          type: number
+        queue_dlq_rate_max:
+          type: number
+        cache_hit_rate_min:
+          type: number
+
+    PerformanceGateValues:
+      type: object
+      required: [api_p95_s, retrieval_p95_s, parse_50p_p95_s, evaluation_p95_s, queue_dlq_rate, cache_hit_rate]
+      properties:
+        api_p95_s:
+          type: number
+        retrieval_p95_s:
+          type: number
+        parse_50p_p95_s:
+          type: number
+        evaluation_p95_s:
+          type: number
+        queue_dlq_rate:
+          type: number
+        cache_hit_rate:
+          type: number
+
+    PerformanceGateEvaluateData:
+      type: object
+      required: [gate, dataset_id, passed, failed_checks, thresholds, values]
+      properties:
+        gate:
+          type: string
+          enum: [performance]
+        dataset_id:
+          type: string
+        passed:
+          type: boolean
+        failed_checks:
+          type: array
+          items:
+            type: string
+        thresholds:
+          $ref: '#/components/schemas/PerformanceGateThresholds'
+        values:
+          $ref: '#/components/schemas/PerformanceGateValues'
+
+    PerformanceGateEvaluateResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/PerformanceGateEvaluateData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    SecurityGateMetrics:
+      type: object
+      required:
+        [
+          tenant_scope_violations,
+          auth_bypass_findings,
+          high_risk_approval_coverage,
+          log_redaction_failures,
+          secret_scan_findings,
+        ]
+      properties:
+        tenant_scope_violations:
+          type: integer
+          minimum: 0
+        auth_bypass_findings:
+          type: integer
+          minimum: 0
+        high_risk_approval_coverage:
+          type: number
+          minimum: 0
+          maximum: 1
+        log_redaction_failures:
+          type: integer
+          minimum: 0
+        secret_scan_findings:
+          type: integer
+          minimum: 0
+
+    SecurityGateEvaluateRequest:
+      type: object
+      required: [dataset_id, metrics]
+      properties:
+        dataset_id:
+          type: string
+        metrics:
+          $ref: '#/components/schemas/SecurityGateMetrics'
+
+    SecurityGateThresholds:
+      type: object
+      required:
+        [
+          tenant_scope_violations_max,
+          auth_bypass_findings_max,
+          high_risk_approval_coverage_min,
+          log_redaction_failures_max,
+          secret_scan_findings_max,
+        ]
+      properties:
+        tenant_scope_violations_max:
+          type: integer
+        auth_bypass_findings_max:
+          type: integer
+        high_risk_approval_coverage_min:
+          type: number
+        log_redaction_failures_max:
+          type: integer
+        secret_scan_findings_max:
+          type: integer
+
+    SecurityGateValues:
+      type: object
+      required:
+        [
+          tenant_scope_violations,
+          auth_bypass_findings,
+          high_risk_approval_coverage,
+          log_redaction_failures,
+          secret_scan_findings,
+        ]
+      properties:
+        tenant_scope_violations:
+          type: integer
+        auth_bypass_findings:
+          type: integer
+        high_risk_approval_coverage:
+          type: number
+        log_redaction_failures:
+          type: integer
+        secret_scan_findings:
+          type: integer
+
+    SecurityGateEvaluateData:
+      type: object
+      required: [gate, dataset_id, passed, failed_checks, thresholds, values]
+      properties:
+        gate:
+          type: string
+          enum: [security]
+        dataset_id:
+          type: string
+        passed:
+          type: boolean
+        failed_checks:
+          type: array
+          items:
+            type: string
+        thresholds:
+          $ref: '#/components/schemas/SecurityGateThresholds'
+        values:
+          $ref: '#/components/schemas/SecurityGateValues'
+
+    SecurityGateEvaluateResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/SecurityGateEvaluateData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    CostGateMetrics:
+      type: object
+      required: [task_cost_p95, baseline_task_cost_p95, routing_degrade_passed, degrade_availability, budget_alert_coverage]
+      properties:
+        task_cost_p95:
+          type: number
+          minimum: 0
+        baseline_task_cost_p95:
+          type: number
+          exclusiveMinimum: 0
+        routing_degrade_passed:
+          type: boolean
+        degrade_availability:
+          type: number
+          minimum: 0
+          maximum: 1
+        budget_alert_coverage:
+          type: number
+          minimum: 0
+          maximum: 1
+
+    CostGateEvaluateRequest:
+      type: object
+      required: [dataset_id, metrics]
+      properties:
+        dataset_id:
+          type: string
+        metrics:
+          $ref: '#/components/schemas/CostGateMetrics'
+
+    CostGateThresholds:
+      type: object
+      required: [task_cost_p95_ratio_max, degrade_availability_min, budget_alert_coverage_min, routing_degrade_passed_required]
+      properties:
+        task_cost_p95_ratio_max:
+          type: number
+        degrade_availability_min:
+          type: number
+        budget_alert_coverage_min:
+          type: number
+        routing_degrade_passed_required:
+          type: boolean
+
+    CostGateValues:
+      type: object
+      required:
+        [
+          task_cost_p95,
+          baseline_task_cost_p95,
+          task_cost_p95_ratio,
+          routing_degrade_passed,
+          degrade_availability,
+          budget_alert_coverage,
+        ]
+      properties:
+        task_cost_p95:
+          type: number
+        baseline_task_cost_p95:
+          type: number
+        task_cost_p95_ratio:
+          type: number
+        routing_degrade_passed:
+          type: boolean
+        degrade_availability:
+          type: number
+        budget_alert_coverage:
+          type: number
+
+    CostGateEvaluateData:
+      type: object
+      required: [gate, dataset_id, passed, failed_checks, thresholds, values]
+      properties:
+        gate:
+          type: string
+          enum: [cost]
+        dataset_id:
+          type: string
+        passed:
+          type: boolean
+        failed_checks:
+          type: array
+          items:
+            type: string
+        thresholds:
+          $ref: '#/components/schemas/CostGateThresholds'
+        values:
+          $ref: '#/components/schemas/CostGateValues'
+
+    CostGateEvaluateResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/CostGateEvaluateData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    RolloutProjectSize:
+      type: string
+      enum: [small, medium, large]
+
+    RolloutPlanRequest:
+      type: object
+      required: [release_id, tenant_whitelist, enabled_project_sizes, high_risk_hitl_enforced]
+      properties:
+        release_id:
+          type: string
+        tenant_whitelist:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+        enabled_project_sizes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/RolloutProjectSize'
+        high_risk_hitl_enforced:
+          type: boolean
+
+    RolloutPlanData:
+      type: object
+      required: [release_id, tenant_whitelist, enabled_project_sizes, high_risk_hitl_enforced]
+      properties:
+        release_id:
+          type: string
+        tenant_whitelist:
+          type: array
+          items:
+            type: string
+        enabled_project_sizes:
+          type: array
+          items:
+            $ref: '#/components/schemas/RolloutProjectSize'
+        high_risk_hitl_enforced:
+          type: boolean
+
+    RolloutPlanResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/RolloutPlanData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    RolloutDecisionRequest:
+      type: object
+      required: [release_id, tenant_id, project_size, high_risk]
+      properties:
+        release_id:
+          type: string
+        tenant_id:
+          type: string
+        project_size:
+          $ref: '#/components/schemas/RolloutProjectSize'
+        high_risk:
+          type: boolean
+
+    RolloutDecisionData:
+      type: object
+      required: [release_id, admitted, stage, matched_whitelist, force_hitl, reasons]
+      properties:
+        release_id:
+          type: string
+        admitted:
+          type: boolean
+        stage:
+          type: string
+          enum: ['tenant_whitelist+project_size']
+        matched_whitelist:
+          type: boolean
+        force_hitl:
+          type: boolean
+        reasons:
+          type: array
+          items:
+            type: string
+
+    RolloutDecisionResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/RolloutDecisionData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    RollbackGateBreach:
+      type: object
+      required: [gate, metric_code, consecutive_failures]
+      properties:
+        gate:
+          type: string
+          enum: [quality, performance, security, cost]
+        metric_code:
+          type: string
+        consecutive_failures:
+          type: integer
+          minimum: 1
+
+    RollbackExecuteRequest:
+      type: object
+      required: [release_id, breaches]
+      properties:
+        release_id:
+          type: string
+        consecutive_threshold:
+          type: integer
+          minimum: 1
+          default: 2
+        breaches:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/RollbackGateBreach'
+
+    RollbackReplayVerification:
+      type: object
+      required: [job_id, status]
+      properties:
+        job_id:
+          type: string
+        status:
+          type: string
+          enum: [queued, running, succeeded, failed]
+
+    RollbackExecuteData:
+      type: object
+      required:
+        [
+          release_id,
+          triggered,
+          trigger_gate,
+          rollback_order,
+          replay_verification,
+          elapsed_minutes,
+          rollback_completed_within_30m,
+          service_restored,
+        ]
+      properties:
+        release_id:
+          type: string
+        triggered:
+          type: boolean
+        trigger_gate:
+          oneOf:
+            - type: 'null'
+            - type: string
+              enum: [quality, performance, security, cost]
+        rollback_order:
+          type: array
+          minItems: 4
+          maxItems: 4
+          items:
+            type: string
+            enum: [model_config, retrieval_params, workflow_version, release_version]
+        replay_verification:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/RollbackReplayVerification'
+        elapsed_minutes:
+          type: integer
+          minimum: 0
+        rollback_completed_within_30m:
+          type: boolean
+        service_restored:
+          type: boolean
+
+    RollbackExecuteResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/RollbackExecuteData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
     UploadAcceptedData:
       type: object
       required: [document_id, job_id, status, next]
@@ -315,6 +1632,7 @@ components:
           type: string
         job_id:
           type: string
+          description: Auto-enqueued parse job id
         status:
           type: string
           enum: [queued]
@@ -390,9 +1708,296 @@ components:
         meta:
           $ref: '#/components/schemas/Meta'
 
+    EvaluationCriteriaResult:
+      type: object
+      required: [criteria_id, score, max_score, hard_pass, reason, citations, confidence]
+      properties:
+        criteria_id:
+          type: string
+        score:
+          type: number
+        max_score:
+          type: number
+        hard_pass:
+          type: boolean
+        reason:
+          type: string
+        citations:
+          type: array
+          items:
+            type: string
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+
+    HumanReviewInterrupt:
+      type: object
+      required: [type, evaluation_id, reasons, suggested_actions, resume_token]
+      properties:
+        type:
+          type: string
+          enum: [human_review]
+        evaluation_id:
+          type: string
+        reasons:
+          type: array
+          items:
+            type: string
+        suggested_actions:
+          type: array
+          items:
+            type: string
+            enum: [approve, reject, edit_scores]
+        resume_token:
+          type: string
+
+    EvaluationReportData:
+      type: object
+      required:
+        [
+          evaluation_id,
+          supplier_id,
+          total_score,
+          confidence,
+          citation_coverage,
+          risk_level,
+          criteria_results,
+          citations,
+          needs_human_review,
+          trace_id,
+          interrupt,
+        ]
+      properties:
+        evaluation_id:
+          type: string
+        supplier_id:
+          type: string
+        total_score:
+          type: number
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        citation_coverage:
+          type: number
+          minimum: 0
+          maximum: 1
+        risk_level:
+          type: string
+          enum: [low, medium, high]
+        criteria_results:
+          type: array
+          items:
+            $ref: '#/components/schemas/EvaluationCriteriaResult'
+        citations:
+          type: array
+          items:
+            type: string
+        needs_human_review:
+          type: boolean
+        trace_id:
+          type: string
+        interrupt:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/HumanReviewInterrupt'
+
+    EvaluationReportResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/EvaluationReportData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    EvaluationAuditLog:
+      type: object
+      required: [audit_id, action, reviewer_id, decision, comment, trace_id, occurred_at]
+      properties:
+        audit_id:
+          type: string
+        action:
+          type: string
+          enum: [resume_submitted]
+        reviewer_id:
+          type: string
+        decision:
+          type: string
+        comment:
+          type: string
+        trace_id:
+          type: string
+        occurred_at:
+          type: string
+
+    EvaluationAuditLogListData:
+      type: object
+      required: [evaluation_id, items, total]
+      properties:
+        evaluation_id:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/EvaluationAuditLog'
+        total:
+          type: integer
+          minimum: 0
+
+    EvaluationAuditLogListResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/EvaluationAuditLogListData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    ParseAcceptedData:
+      type: object
+      required: [document_id, job_id, status]
+      properties:
+        document_id:
+          type: string
+        job_id:
+          type: string
+        status:
+          type: string
+          enum: [queued]
+
+    ParseAcceptedResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/ParseAcceptedData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    DocumentData:
+      type: object
+      required: [document_id, project_id, supplier_id, doc_type, filename, status]
+      properties:
+        document_id:
+          type: string
+        project_id:
+          type: string
+        supplier_id:
+          type: string
+        doc_type:
+          type: string
+          enum: [tender, bid, attachment]
+        filename:
+          type: string
+        status:
+          type: string
+
+    DocumentResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/DocumentData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    ChunkPosition:
+      type: object
+      required: [page, bbox, start, end]
+      properties:
+        page:
+          type: integer
+          minimum: 1
+        bbox:
+          type: array
+          minItems: 4
+          maxItems: 4
+          items:
+            type: number
+        start:
+          type: integer
+          minimum: 0
+        end:
+          type: integer
+          minimum: 0
+
+    DocumentChunk:
+      type: object
+      required:
+        [chunk_id, document_id, pages, positions, section, heading_path, chunk_type, parser, parser_version, text]
+      properties:
+        chunk_id:
+          type: string
+        document_id:
+          type: string
+        pages:
+          type: array
+          items:
+            type: integer
+            minimum: 1
+        positions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChunkPosition'
+        section:
+          type: string
+        heading_path:
+          type: array
+          items:
+            type: string
+        chunk_type:
+          type: string
+          enum: [text, table, image, formula, list]
+        parser:
+          type: string
+        parser_version:
+          type: string
+        text:
+          type: string
+
+    DocumentChunkListData:
+      type: object
+      required: [document_id, items, total]
+      properties:
+        document_id:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DocumentChunk'
+        total:
+          type: integer
+          minimum: 0
+
+    DocumentChunkListResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/DocumentChunkListData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
     ResumeRequest:
       type: object
-      required: [resume_token, decision, comment]
+      required: [resume_token, decision, comment, editor]
       properties:
         resume_token:
           type: string
@@ -401,6 +2006,12 @@ components:
           enum: [approve, reject, edit_scores]
         comment:
           type: string
+        editor:
+          type: object
+          required: [reviewer_id]
+          properties:
+            reviewer_id:
+              type: string
         edited_scores:
           type: array
           items:
@@ -431,13 +2042,195 @@ components:
         meta:
           $ref: '#/components/schemas/Meta'
 
+    RetrievalQueryRequest:
+      type: object
+      required: [project_id, supplier_id, query, query_type]
+      properties:
+        project_id:
+          type: string
+        supplier_id:
+          type: string
+        query:
+          type: string
+          minLength: 1
+        query_type:
+          type: string
+          enum: [fact, relation, comparison, summary, risk]
+        high_risk:
+          type: boolean
+          default: false
+        top_k:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+        enable_rerank:
+          type: boolean
+          default: true
+        doc_scope:
+          type: array
+          items:
+            type: string
+            enum: [tender, bid, attachment]
+        must_include_terms:
+          type: array
+          items:
+            type: string
+        must_exclude_terms:
+          type: array
+          items:
+            type: string
+
+    RetrievalItemMetadata:
+      type: object
+      required: [project_id, supplier_id, doc_type, page, bbox]
+      properties:
+        project_id:
+          type: string
+        supplier_id:
+          type: string
+        doc_type:
+          type: string
+          enum: [tender, bid, attachment]
+        page:
+          type: integer
+          minimum: 1
+        bbox:
+          type: array
+          minItems: 4
+          maxItems: 4
+          items:
+            type: number
+
+    RetrievalItem:
+      type: object
+      required: [chunk_id, score_raw, reason, metadata]
+      properties:
+        chunk_id:
+          type: string
+        score_raw:
+          type: number
+        score_rerank:
+          oneOf:
+            - type: 'null'
+            - type: number
+        reason:
+          type: string
+        metadata:
+          $ref: '#/components/schemas/RetrievalItemMetadata'
+
+    RetrievalQueryData:
+      type: object
+      required:
+        [
+          query,
+          rewritten_query,
+          rewrite_reason,
+          constraints_preserved,
+          constraint_diff,
+          query_type,
+          selected_mode,
+          degraded,
+          items,
+          total,
+        ]
+      properties:
+        query:
+          type: string
+        rewritten_query:
+          type: string
+        rewrite_reason:
+          type: string
+        constraints_preserved:
+          type: boolean
+        constraint_diff:
+          type: array
+          items:
+            type: string
+        query_type:
+          type: string
+          enum: [fact, relation, comparison, summary, risk]
+        selected_mode:
+          type: string
+          enum: [local, global, hybrid, mix]
+        degraded:
+          type: boolean
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RetrievalItem'
+        total:
+          type: integer
+          minimum: 0
+
+    RetrievalQueryResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/RetrievalQueryData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    RetrievalPreviewItem:
+      type: object
+      required: [chunk_id, document_id, page, bbox, text]
+      properties:
+        chunk_id:
+          type: string
+        document_id:
+          type: string
+        page:
+          type: integer
+          minimum: 1
+        bbox:
+          type: array
+          minItems: 4
+          maxItems: 4
+          items:
+            type: number
+        text:
+          type: string
+
+    RetrievalPreviewData:
+      type: object
+      required: [query, selected_mode, items, total]
+      properties:
+        query:
+          type: string
+        selected_mode:
+          type: string
+          enum: [local, global, hybrid, mix]
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RetrievalPreviewItem'
+        total:
+          type: integer
+          minimum: 0
+
+    RetrievalPreviewResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/RetrievalPreviewData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
     JobResource:
       type: object
       required: [type, id]
       properties:
         type:
           type: string
-          enum: [document, evaluation]
+          enum: [document, evaluation, job]
         id:
           type: string
 
@@ -449,7 +2242,7 @@ components:
           type: string
         job_type:
           type: string
-          enum: [upload, parse, evaluation, resume]
+          enum: [upload, parse, evaluation, resume, requeue, replay_verification]
         status:
           type: string
           enum:
@@ -486,6 +2279,59 @@ components:
           const: true
         data:
           $ref: '#/components/schemas/JobStatusData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    JobListData:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/JobStatusData'
+        total:
+          type: integer
+          minimum: 0
+        next_cursor:
+          oneOf:
+            - type: 'null'
+            - type: string
+
+    JobListResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/JobListData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    CancelAcceptedData:
+      type: object
+      required: [job_id, status, error_code]
+      properties:
+        job_id:
+          type: string
+        status:
+          type: string
+          enum: [failed]
+        error_code:
+          type: string
+          enum: [JOB_CANCELLED]
+
+    CancelAcceptedResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/CancelAcceptedData'
         meta:
           $ref: '#/components/schemas/Meta'
 
@@ -531,5 +2377,100 @@ components:
           const: true
         data:
           $ref: '#/components/schemas/CitationSourceData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    DlqItem:
+      type: object
+      required: [dlq_id, job_id, error_class, error_code, status]
+      properties:
+        dlq_id:
+          type: string
+        job_id:
+          type: string
+        error_class:
+          type: string
+        error_code:
+          type: string
+        status:
+          type: string
+          enum: [open, requeued, discarded]
+
+    DlqListData:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DlqItem'
+        total:
+          type: integer
+          minimum: 0
+
+    DlqListResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/DlqListData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    DlqRequeueAcceptedData:
+      type: object
+      required: [dlq_id, job_id, status]
+      properties:
+        dlq_id:
+          type: string
+        job_id:
+          type: string
+        status:
+          type: string
+          enum: [queued]
+
+    DlqRequeueAcceptedResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/DlqRequeueAcceptedData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    DlqDiscardRequest:
+      type: object
+      required: [reason, reviewer_id]
+      properties:
+        reason:
+          type: string
+        reviewer_id:
+          type: string
+
+    DlqDiscardData:
+      type: object
+      required: [dlq_id, status]
+      properties:
+        dlq_id:
+          type: string
+        status:
+          type: string
+          enum: [discarded]
+
+    DlqDiscardResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/DlqDiscardData'
         meta:
           $ref: '#/components/schemas/Meta'

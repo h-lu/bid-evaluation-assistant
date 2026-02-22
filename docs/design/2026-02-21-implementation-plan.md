@@ -226,6 +226,10 @@ B-2 输出物：
 
 验收：成本 P95 不突破基线 1.2x。
 
+### Gate D 输出汇总
+
+1. `docs/design/2026-02-22-gate-d-four-gates-checklist.md`
+
 ## 8. Gate E：灰度与回滚
 
 ### E-1 灰度策略
@@ -241,6 +245,10 @@ B-2 输出物：
 3. 回滚后必须触发一次回放验证。
 
 验收：30 分钟内完成回滚并恢复服务。
+
+Gate E 输出物：
+
+1. `docs/design/2026-02-22-gate-e-rollout-and-rollback-checklist.md`
 
 ## 9. Gate F：运行优化
 
