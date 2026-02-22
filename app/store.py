@@ -19,6 +19,7 @@ from app.parser_adapters import (
     disabled_parsers_from_env,
     select_parse_route,
 )
+from app.repositories.jobs import InMemoryJobsRepository
 
 
 @dataclass
@@ -44,6 +45,7 @@ class InMemoryStore:
     def __init__(self) -> None:
         self.idempotency_records: dict[tuple[str, str], IdempotencyRecord] = {}
         self.jobs: dict[str, dict[str, Any]] = {}
+        self.jobs_repository = InMemoryJobsRepository(self.jobs)
         self.documents: dict[str, dict[str, Any]] = {}
         self.document_chunks: dict[str, list[dict[str, Any]]] = {}
         self.evaluation_reports: dict[str, dict[str, Any]] = {}
@@ -124,6 +126,9 @@ class InMemoryStore:
     @staticmethod
     def _new_thread_id(prefix: str) -> str:
         return f"thr_{prefix}_{uuid.uuid4().hex[:10]}"
+
+    def _persist_job(self, *, job: dict[str, Any]) -> dict[str, Any]:
+        return self.jobs_repository.create(job=job)
 
     @staticmethod
     def _select_parser(*, filename: str, doc_type: str | None) -> ParseRoute:
@@ -252,7 +257,8 @@ class InMemoryStore:
                 tenant_id=tenant_id,
                 reasons=["force_hitl"],
             )
-        self.jobs[job_id] = {
+        self._persist_job(
+            job={
             "job_id": job_id,
             "job_type": "evaluation",
             "status": "queued",
@@ -266,7 +272,8 @@ class InMemoryStore:
             },
             "payload": payload,
             "last_error": None,
-        }
+            }
+        )
         self.evaluation_reports[evaluation_id] = {
             "evaluation_id": evaluation_id,
             "supplier_id": payload.get("supplier_id", ""),
@@ -358,7 +365,8 @@ class InMemoryStore:
         self._assert_tenant_scope(document["tenant_id"], tenant_id)
         job_id = f"job_{uuid.uuid4().hex[:12]}"
         thread_id = self._new_thread_id("parse")
-        self.jobs[job_id] = {
+        self._persist_job(
+            job={
             "job_id": job_id,
             "job_type": "parse",
             "status": "queued",
@@ -372,7 +380,8 @@ class InMemoryStore:
             },
             "payload": payload,
             "last_error": None,
-        }
+            }
+        )
         route = self._select_parser(
             filename=document.get("filename", ""),
             doc_type=document.get("doc_type"),
@@ -581,7 +590,8 @@ class InMemoryStore:
         thread_id = str(report.get("thread_id", "")) if isinstance(report, dict) else ""
         if not thread_id:
             thread_id = self._new_thread_id("resume")
-        self.jobs[job_id] = {
+        self._persist_job(
+            job={
             "job_id": job_id,
             "job_type": "resume",
             "status": "queued",
@@ -595,7 +605,8 @@ class InMemoryStore:
             },
             "payload": payload,
             "last_error": None,
-        }
+            }
+        )
         if report is not None:
             self._assert_tenant_scope(report.get("tenant_id", "tenant_default"), tenant_id)
             report["needs_human_review"] = False
@@ -942,7 +953,8 @@ class InMemoryStore:
             )
 
         new_job_id = f"job_{uuid.uuid4().hex[:12]}"
-        self.jobs[new_job_id] = {
+        self._persist_job(
+            job={
             "job_id": new_job_id,
             "job_type": "requeue",
             "status": "queued",
@@ -956,7 +968,8 @@ class InMemoryStore:
             },
             "payload": {"source_dlq_id": dlq_id},
             "last_error": None,
-        }
+            }
+        )
         item["status"] = "requeued"
         self.audit_logs.append(
             {
@@ -1397,7 +1410,8 @@ class InMemoryStore:
         )
 
         replay_job_id = f"job_{uuid.uuid4().hex[:12]}"
-        self.jobs[replay_job_id] = {
+        self._persist_job(
+            job={
             "job_id": replay_job_id,
             "job_type": "replay_verification",
             "status": "queued",
@@ -1414,7 +1428,8 @@ class InMemoryStore:
                 "trigger_gate": trigger_breach.get("gate"),
             },
             "last_error": None,
-        }
+            }
+        )
         replay_result = self.run_job_once(job_id=replay_job_id, tenant_id=tenant_id)
         replay_status = replay_result["final_status"]
 
