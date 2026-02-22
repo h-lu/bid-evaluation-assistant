@@ -1173,6 +1173,76 @@ def create_app() -> FastAPI:
             }
         return success_envelope(data, _trace_id_from_request(request))
 
+    @app.post("/api/v1/internal/worker/queues/{queue_name}/drain-once")
+    def internal_worker_drain_once(
+        queue_name: str,
+        request: Request,
+        max_messages: int = Query(default=1, ge=1, le=100),
+        force_fail: bool = Query(default=False),
+        transient_fail: bool = Query(default=False),
+        error_code: str | None = Query(default=None),
+        x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
+    ):
+        if x_internal_debug != "true":
+            raise ApiError(
+                code="AUTH_FORBIDDEN",
+                message="internal endpoint forbidden",
+                error_class="security_sensitive",
+                retryable=False,
+                http_status=403,
+            )
+        tenant_id = _tenant_id_from_request(request)
+        processed = 0
+        succeeded = 0
+        retrying = 0
+        failed = 0
+        acked = 0
+        requeued = 0
+        message_ids: list[str] = []
+
+        for _ in range(max_messages):
+            msg = queue_backend.dequeue(tenant_id=tenant_id, queue_name=queue_name)
+            if msg is None:
+                break
+            processed += 1
+            message_ids.append(msg.message_id)
+            job_id = str(msg.payload.get("job_id") or "")
+            if not job_id:
+                queue_backend.ack(tenant_id=tenant_id, message_id=msg.message_id)
+                acked += 1
+                continue
+            result = store.run_job_once(
+                job_id=job_id,
+                tenant_id=tenant_id,
+                force_fail=force_fail,
+                transient_fail=transient_fail,
+                force_error_code=error_code,
+            )
+            final_status = str(result.get("final_status"))
+            if final_status == "retrying":
+                queue_backend.nack(tenant_id=tenant_id, message_id=msg.message_id, requeue=True)
+                requeued += 1
+                retrying += 1
+                continue
+            queue_backend.ack(tenant_id=tenant_id, message_id=msg.message_id)
+            acked += 1
+            if final_status == "succeeded":
+                succeeded += 1
+            else:
+                failed += 1
+
+        data = {
+            "queue_name": queue_name,
+            "processed": processed,
+            "succeeded": succeeded,
+            "retrying": retrying,
+            "failed": failed,
+            "acked": acked,
+            "requeued": requeued,
+            "message_ids": message_ids,
+        }
+        return success_envelope(data, _trace_id_from_request(request))
+
     return app
 
 

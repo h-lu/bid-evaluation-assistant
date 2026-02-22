@@ -177,12 +177,14 @@
 ### 4.13 Internal Workflow（生产化调试）
 
 1. `GET /internal/workflows/{thread_id}/checkpoints`
+2. `POST /internal/worker/queues/{queue_name}/drain-once`
 
 说明：
 
 1. 仅内部联调使用，必须携带 `x-internal-debug: true`。
 2. checkpoint 查询按 `thread_id + tenant_id` 过滤。
 3. `thread_id` 由任务创建时分配，并在 resume 任务中复用。
+4. `drain-once` 每次最多消费 `max_messages` 条消息并驱动对应 job 执行。
 
 ## 5. 字段级契约（关键接口示例）
 
@@ -1023,6 +1025,37 @@
     "slo": {
       "success_rate": 0.75
     }
+  },
+  "meta": {
+    "trace_id": "trace_xxx"
+  }
+}
+```
+
+### 5.23 `POST /internal/worker/queues/{queue_name}/drain-once`
+
+请求参数：
+
+1. `queue_name`（path，必填）
+2. `max_messages`（query，可选，默认 `1`，范围 `1..100`）
+3. `force_fail`（query，可选，默认 `false`）
+4. `transient_fail`（query，可选，默认 `false`）
+5. `error_code`（query，可选）
+
+响应 `200`：
+
+```json
+{
+  "success": true,
+  "data": {
+    "queue_name": "jobs",
+    "processed": 1,
+    "succeeded": 1,
+    "retrying": 0,
+    "failed": 0,
+    "acked": 1,
+    "requeued": 0,
+    "message_ids": ["msg_xxx"]
   },
   "meta": {
     "trace_id": "trace_xxx"

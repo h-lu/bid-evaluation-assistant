@@ -923,6 +923,61 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /internal/worker/queues/{queue_name}/drain-once:
+    post:
+      operationId: internalWorkerDrainQueueOnce
+      summary: Drain queue messages once and execute jobs in worker flow
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+        - name: queue_name
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: max_messages
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 1
+        - name: force_fail
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: transient_fail
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: error_code
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkerDrainResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /internal/quality-gates/evaluate:
     post:
       operationId: internalEvaluateQualityGate
@@ -2025,6 +2080,47 @@ components:
           const: true
         data:
           $ref: '#/components/schemas/QueueDequeueData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    WorkerDrainData:
+      type: object
+      required: [queue_name, processed, succeeded, retrying, failed, acked, requeued, message_ids]
+      properties:
+        queue_name:
+          type: string
+        processed:
+          type: integer
+          minimum: 0
+        succeeded:
+          type: integer
+          minimum: 0
+        retrying:
+          type: integer
+          minimum: 0
+        failed:
+          type: integer
+          minimum: 0
+        acked:
+          type: integer
+          minimum: 0
+        requeued:
+          type: integer
+          minimum: 0
+        message_ids:
+          type: array
+          items:
+            type: string
+
+    WorkerDrainResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/WorkerDrainData'
         meta:
           $ref: '#/components/schemas/Meta'
 

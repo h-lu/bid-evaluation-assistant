@@ -1,6 +1,6 @@
 # 工作流与 Worker 生产化规范
 
-> 版本：v2026.02.22-r2  
+> 版本：v2026.02.22-r3  
 > 状态：Draft  
 > 对齐：`docs/plans/2026-02-22-production-capability-plan.md`
 
@@ -59,7 +59,7 @@
 2. `docs/design/2026-02-21-job-system-and-retry-spec.md`
 3. `docs/design/2026-02-21-error-handling-and-dlq-spec.md`
 
-## 10. 当前实现增量（r2）
+## 10. 当前实现增量（r3）
 
 1. 作业模型新增 `thread_id`，并在 resume 任务中复用同一 thread。
 2. 新增 workflow checkpoint 事件落库（`job_started/retrying/failed/succeeded`）。
@@ -68,3 +68,5 @@
 5. 新增回归：
    - `tests/test_workflow_checkpoints.py`
    - `tests/test_store_persistence_backend.py`（checkpoint 持久化）
+6. 新增 Worker 消费接口：`POST /api/v1/internal/worker/queues/{queue_name}/drain-once`。
+7. 新增回归：`tests/test_worker_drain_api.py`（队列消费、作业执行、鉴权）。
