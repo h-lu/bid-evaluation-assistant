@@ -110,6 +110,11 @@ class InMemoryStore:
                 "retryable": True,
                 "message": "parser fallback exhausted",
             },
+            "RAG_UPSTREAM_UNAVAILABLE": {
+                "class": "transient",
+                "retryable": True,
+                "message": "retrieval upstream unavailable",
+            },
             "INTERNAL_DEBUG_FORCED_FAIL": {
                 "class": "transient",
                 "retryable": True,
@@ -830,6 +835,7 @@ class InMemoryStore:
         job_id: str,
         tenant_id: str,
         force_fail: bool = False,
+        transient_fail: bool = False,
         force_error_code: str | None = None,
     ) -> dict[str, Any]:
         job = self.get_job_for_tenant(job_id=job_id, tenant_id=tenant_id)
@@ -866,6 +872,37 @@ class InMemoryStore:
                 retryable=False,
                 http_status=409,
             )
+
+        if transient_fail and not force_fail:
+            error_code = force_error_code or "RAG_UPSTREAM_UNAVAILABLE"
+            error = self._classify_error_code(error_code)
+            current_retry = int(job.get("retry_count", 0))
+
+            if current_retry < 3:
+                retried_job = self.transition_job_status(
+                    job_id=job_id,
+                    new_status="retrying",
+                    tenant_id=tenant_id,
+                )
+                retried_job["last_error"] = {
+                    "code": error_code,
+                    "message": error["message"],
+                    "retryable": True,
+                    "class": "transient",
+                }
+                if job.get("job_type") == "parse":
+                    manifest = self.get_parse_manifest_for_tenant(job_id=job_id, tenant_id=tenant_id)
+                    if manifest is not None:
+                        manifest["status"] = "retrying"
+                        manifest["error_code"] = error_code
+                return {
+                    "job_id": job_id,
+                    "final_status": "retrying",
+                    "retry_count": retried_job.get("retry_count", 0),
+                    "dlq_id": None,
+                }
+            force_fail = True
+            force_error_code = error_code
 
         if force_fail:
             error_code = force_error_code
@@ -914,6 +951,7 @@ class InMemoryStore:
             return {
                 "job_id": job_id,
                 "final_status": "failed",
+                "retry_count": failed_job.get("retry_count", 0),
                 "dlq_id": dlq_item["dlq_id"],
             }
 
@@ -958,6 +996,7 @@ class InMemoryStore:
         return {
             "job_id": job_id,
             "final_status": "succeeded",
+            "retry_count": job.get("retry_count", 0),
             "dlq_id": None,
         }
 

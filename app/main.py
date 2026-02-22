@@ -582,6 +582,7 @@ def create_app() -> FastAPI:
         job_id: str,
         request: Request,
         force_fail: bool = Query(default=False),
+        transient_fail: bool = Query(default=False),
         error_code: str | None = Query(default=None),
         x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
     ):
@@ -597,6 +598,7 @@ def create_app() -> FastAPI:
             job_id=job_id,
             tenant_id=_tenant_id_from_request(request),
             force_fail=force_fail,
+            transient_fail=transient_fail,
             force_error_code=error_code,
         )
         return success_envelope(result, _trace_id_from_request(request))
