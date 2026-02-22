@@ -421,3 +421,25 @@ Gate F 输出物：
 2. LangGraph docs: https://docs.langchain.com/oss/python/langgraph/
 3. LangChain docs: https://docs.langchain.com/oss/python/langchain/
 4. FastAPI docs: https://fastapi.tiangolo.com/
+
+## 14. 生产能力阶段补充（2026-02-22）
+
+说明：Gate A-F 完成后，进入“生产能力填充阶段”，用于将骨架替换为真实实现，不改变既有契约与状态机语义。
+
+补充计划：
+
+1. `docs/plans/2026-02-22-production-capability-plan.md`
+
+补充专项规范：
+
+1. `docs/design/2026-02-22-persistence-and-queue-production-spec.md`
+2. `docs/design/2026-02-22-parser-and-retrieval-production-spec.md`
+3. `docs/design/2026-02-22-workflow-and-worker-production-spec.md`
+4. `docs/design/2026-02-22-security-and-multitenancy-production-spec.md`
+5. `docs/design/2026-02-22-observability-and-deploy-production-spec.md`
+
+执行原则：
+
+1. 先更新文档契约，再替换实现。
+2. 每条轨道独立验收，最后统一真栈回放收口。
+3. 任一轨道故障可独立回退，不破坏整体骨架契约。
