@@ -2737,11 +2737,15 @@ components:
 
     RetrievalItemMetadata:
       type: object
-      required: [project_id, supplier_id, doc_type, page, bbox]
+      required: [tenant_id, project_id, supplier_id, document_id, doc_type, page, bbox]
       properties:
+        tenant_id:
+          type: string
         project_id:
           type: string
         supplier_id:
+          type: string
+        document_id:
           type: string
         doc_type:
           type: string
@@ -2784,6 +2788,7 @@ components:
           constraint_diff,
           query_type,
           selected_mode,
+          index_name,
           degraded,
           items,
           total,
@@ -2807,6 +2812,8 @@ components:
         selected_mode:
           type: string
           enum: [local, global, hybrid, mix]
+        index_name:
+          type: string
         degraded:
           type: boolean
         items:
@@ -2851,13 +2858,15 @@ components:
 
     RetrievalPreviewData:
       type: object
-      required: [query, selected_mode, items, total]
+      required: [query, selected_mode, index_name, items, total]
       properties:
         query:
           type: string
         selected_mode:
           type: string
           enum: [local, global, hybrid, mix]
+        index_name:
+          type: string
         items:
           type: array
           items:

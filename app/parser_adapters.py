@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
+from collections.abc import Iterable
 from typing import Protocol
 
 from app.errors import ApiError
@@ -89,10 +91,24 @@ def select_parse_route(*, filename: str, doc_type: str | None) -> ParseRoute:
     return ParseRoute(selected_parser="ocr", fallback_chain=[])
 
 
-def build_default_parser_registry() -> ParserAdapterRegistry:
+def disabled_parsers_from_env(env: dict[str, str] | None = None) -> set[str]:
+    source = os.environ if env is None else env
+    raw = source.get("BEA_DISABLED_PARSERS", "")
+    if not raw.strip():
+        return set()
+    return {x.strip().lower() for x in raw.split(",") if x.strip()}
+
+
+def build_default_parser_registry(
+    *,
+    disabled_parsers: Iterable[str] | None = None,
+) -> ParserAdapterRegistry:
+    disabled = {x.lower() for x in (disabled_parsers or ())}
     adapters: dict[str, ParserAdapter] = {
         "mineru": StubParserAdapter(name="mineru", section="mineru_parsed"),
         "docling": StubParserAdapter(name="docling", section="docling_parsed"),
         "ocr": StubParserAdapter(name="ocr", section="ocr_fallback"),
     }
+    if disabled:
+        adapters = {name: adapter for name, adapter in adapters.items() if name not in disabled}
     return ParserAdapterRegistry(adapters)

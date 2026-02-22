@@ -13,7 +13,12 @@ from pathlib import Path
 from typing import Any
 
 from app.errors import ApiError
-from app.parser_adapters import ParseRoute, build_default_parser_registry, select_parse_route
+from app.parser_adapters import (
+    ParseRoute,
+    build_default_parser_registry,
+    disabled_parsers_from_env,
+    select_parse_route,
+)
 
 
 @dataclass
@@ -61,7 +66,9 @@ class InMemoryStore:
                 "allowed_tools": ["retrieval", "evaluation", "dlq"],
             },
         }
-        self._parser_registry = build_default_parser_registry()
+        self._parser_registry = build_default_parser_registry(
+            disabled_parsers=disabled_parsers_from_env(),
+        )
 
     def reset(self) -> None:
         self.idempotency_records.clear()
@@ -693,6 +700,10 @@ class InMemoryStore:
         }
         return mapping.get(query_type, "hybrid")
 
+    @staticmethod
+    def _retrieval_index_name(*, tenant_id: str, project_id: str) -> str:
+        return f"lightrag:{tenant_id}:{project_id}"
+
     def retrieval_query(
         self,
         *,
@@ -709,6 +720,7 @@ class InMemoryStore:
         must_exclude_terms: list[str] | None = None,
     ) -> dict[str, Any]:
         selected_mode = self._select_retrieval_mode(query_type=query_type, high_risk=high_risk)
+        index_name = self._retrieval_index_name(tenant_id=tenant_id, project_id=project_id)
         candidates = [x for x in self.citation_sources.values() if x.get("tenant_id") == tenant_id]
         candidates = [x for x in candidates if x.get("project_id") == project_id]
         candidates = [x for x in candidates if x.get("supplier_id") == supplier_id]
@@ -746,8 +758,10 @@ class InMemoryStore:
                     "score_rerank": score_rerank,
                     "reason": f"matched {query_type} intent",
                     "metadata": {
+                        "tenant_id": source.get("tenant_id"),
                         "project_id": source.get("project_id"),
                         "supplier_id": source.get("supplier_id"),
+                        "document_id": source.get("document_id"),
                         "doc_type": source.get("doc_type"),
                         "page": int(source.get("page", 1)),
                         "bbox": source.get("bbox", [0, 0, 1, 1]),
@@ -767,6 +781,7 @@ class InMemoryStore:
             "constraint_diff": rewrite["constraint_diff"],
             "query_type": query_type,
             "selected_mode": selected_mode,
+            "index_name": index_name,
             "degraded": not enable_rerank,
             "items": items,
             "total": len(items),
@@ -815,6 +830,7 @@ class InMemoryStore:
         return {
             "query": query,
             "selected_mode": base["selected_mode"],
+            "index_name": base["index_name"],
             "items": preview_items,
             "total": len(preview_items),
         }

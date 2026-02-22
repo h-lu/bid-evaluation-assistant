@@ -509,6 +509,7 @@
     "constraint_diff": [],
     "query_type": "relation",
     "selected_mode": "global",
+    "index_name": "lightrag:tenant_a:prj_xxx",
     "degraded": false,
     "items": [
       {
@@ -517,8 +518,10 @@
         "score_rerank": 0.89,
         "reason": "matched relation intent",
         "metadata": {
+          "tenant_id": "tenant_a",
           "project_id": "prj_xxx",
           "supplier_id": "sup_xxx",
+          "document_id": "doc_xxx",
           "doc_type": "bid",
           "page": 8,
           "bbox": [120.2, 310.0, 520.8, 365.4]
@@ -551,6 +554,7 @@
   "data": {
     "query": "投标文件中与交付周期相关的承诺",
     "selected_mode": "global",
+    "index_name": "lightrag:tenant_a:prj_xxx",
     "items": [
       {
         "chunk_id": "ck_xxx",

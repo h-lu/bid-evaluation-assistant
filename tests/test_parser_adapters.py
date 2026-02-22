@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import pytest
+
+from app.errors import ApiError
 from app.parser_adapters import build_default_parser_registry, select_parse_route
 
 
@@ -37,3 +40,31 @@ def test_default_parser_registry_builds_chunk_payload():
     assert chunk["text"] == "hello parser"
     assert chunk["pages"] == [1]
     assert chunk["positions"][0]["bbox"] == [100, 120, 520, 380]
+
+
+def test_registry_falls_back_when_selected_parser_disabled():
+    registry = build_default_parser_registry(disabled_parsers={"mineru"})
+    route = select_parse_route(filename="proposal.pdf", doc_type="bid")
+
+    chunk = registry.parse_with_route(
+        route=route,
+        document_id="doc_parser_fallback",
+        default_text="fallback text",
+    )
+
+    assert chunk["parser"] == "docling"
+    assert chunk["parser_version"] == "v0"
+
+
+def test_registry_raises_when_all_parsers_disabled():
+    registry = build_default_parser_registry(disabled_parsers={"mineru", "docling", "ocr"})
+    route = select_parse_route(filename="proposal.pdf", doc_type="bid")
+
+    with pytest.raises(ApiError) as exc:
+        registry.parse_with_route(
+            route=route,
+            document_id="doc_parser_fail",
+            default_text="x",
+        )
+
+    assert exc.value.code == "PARSER_FALLBACK_EXHAUSTED"

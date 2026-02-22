@@ -1,6 +1,6 @@
 # 解析与检索生产化规范
 
-> 版本：v2026.02.22-r3  
+> 版本：v2026.02.22-r5  
 > 状态：Draft  
 > 对齐：`docs/plans/2026-02-22-production-capability-plan.md`
 
@@ -77,7 +77,7 @@
 2. `docs/design/2026-02-21-retrieval-and-scoring-spec.md`
 3. `docs/design/2026-02-21-rest-api-specification.md`
 
-## 8. 当前实现增量（r3）
+## 8. 当前实现增量（r5）
 
 1. parse manifest 已补齐 `run_id` 字段（格式：`prun_*`）。
 2. parse manifest 已补齐 `parser_version` 字段（当前：`v0`）。
@@ -86,3 +86,7 @@
 5. 新增回归断言：
    - `tests/test_parse_manifest_and_error_classification.py`（manifest 最小字段闭环）
    - `tests/test_parser_adapters.py`（路由选择与适配器产物）
+6. 新增适配器禁用开关：`BEA_DISABLED_PARSERS=mineru,docling,...`，用于验证 fallback 链路。
+7. 当主解析器不可用时，`ParserAdapterRegistry` 自动按 `fallback_chain` 继续尝试，直至成功或抛出 `PARSER_FALLBACK_EXHAUSTED`。
+8. 检索结果新增 `index_name=lightrag:{tenant_id}:{project_id}`，用于显式表达租户/项目维度索引路由。
+9. 检索 `items[*].metadata` 补齐 `tenant_id/document_id` 字段，便于后续审计与回放定位。
