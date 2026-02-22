@@ -123,6 +123,32 @@ class CostGateEvaluateRequest(BaseModel):
     metrics: CostGateMetrics
 
 
+class RolloutPlanRequest(BaseModel):
+    release_id: str
+    tenant_whitelist: list[str] = Field(min_length=1)
+    enabled_project_sizes: list[Literal["small", "medium", "large"]] = Field(min_length=1)
+    high_risk_hitl_enforced: bool = True
+
+
+class RolloutDecisionRequest(BaseModel):
+    release_id: str
+    tenant_id: str
+    project_size: Literal["small", "medium", "large"]
+    high_risk: bool = False
+
+
+class RollbackBreach(BaseModel):
+    gate: Literal["quality", "performance", "security", "cost"]
+    metric_code: str
+    consecutive_failures: int = Field(ge=1)
+
+
+class RollbackExecuteRequest(BaseModel):
+    release_id: str
+    consecutive_threshold: int = Field(default=2, ge=1)
+    breaches: list[RollbackBreach] = Field(min_length=1)
+
+
 def success_envelope(data: Any, trace_id: str, message: str = "ok") -> dict[str, Any]:
     return {
         "success": True,

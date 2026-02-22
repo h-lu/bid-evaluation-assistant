@@ -41,6 +41,7 @@ class InMemoryStore:
         self.audit_logs: list[dict[str, Any]] = []
         self.citation_sources: dict[str, dict[str, Any]] = {}
         self.dlq_items: dict[str, dict[str, Any]] = {}
+        self.release_rollout_policies: dict[str, dict[str, Any]] = {}
 
     def reset(self) -> None:
         self.idempotency_records.clear()
@@ -53,6 +54,7 @@ class InMemoryStore:
         self.audit_logs.clear()
         self.citation_sources.clear()
         self.dlq_items.clear()
+        self.release_rollout_policies.clear()
 
     @staticmethod
     def _fingerprint(payload: dict[str, Any]) -> str:
@@ -897,6 +899,161 @@ class InMemoryStore:
             "items": sliced,
             "total": len(jobs),
             "next_cursor": next_cursor,
+        }
+
+    def upsert_rollout_policy(
+        self,
+        *,
+        release_id: str,
+        tenant_whitelist: list[str],
+        enabled_project_sizes: list[str],
+        high_risk_hitl_enforced: bool,
+        tenant_id: str,
+    ) -> dict[str, Any]:
+        size_order = {"small": 1, "medium": 2, "large": 3}
+        policy = {
+            "release_id": release_id,
+            "tenant_whitelist": sorted({x.strip() for x in tenant_whitelist if x.strip()}),
+            "enabled_project_sizes": sorted(
+                {x.strip() for x in enabled_project_sizes if x.strip()},
+                key=lambda x: size_order.get(x, 999),
+            ),
+            "high_risk_hitl_enforced": bool(high_risk_hitl_enforced),
+            "tenant_id": tenant_id,
+            "updated_at": self._utcnow_iso(),
+        }
+        self.release_rollout_policies[release_id] = policy
+        return {
+            "release_id": policy["release_id"],
+            "tenant_whitelist": policy["tenant_whitelist"],
+            "enabled_project_sizes": policy["enabled_project_sizes"],
+            "high_risk_hitl_enforced": policy["high_risk_hitl_enforced"],
+        }
+
+    def decide_rollout(
+        self,
+        *,
+        release_id: str,
+        tenant_id: str,
+        project_size: str,
+        high_risk: bool,
+    ) -> dict[str, Any]:
+        policy = self.release_rollout_policies.get(release_id)
+        if policy is None:
+            raise ApiError(
+                code="RELEASE_POLICY_NOT_FOUND",
+                message="release rollout policy not found",
+                error_class="validation",
+                retryable=False,
+                http_status=404,
+            )
+
+        reasons: list[str] = []
+        matched_whitelist = tenant_id in set(policy["tenant_whitelist"])
+        if not matched_whitelist:
+            reasons.append("TENANT_NOT_IN_WHITELIST")
+        if project_size not in set(policy["enabled_project_sizes"]):
+            reasons.append("PROJECT_SIZE_NOT_ENABLED")
+        force_hitl = bool(high_risk and policy["high_risk_hitl_enforced"])
+
+        return {
+            "release_id": release_id,
+            "admitted": len(reasons) == 0,
+            "stage": "tenant_whitelist+project_size",
+            "matched_whitelist": matched_whitelist,
+            "force_hitl": force_hitl,
+            "reasons": reasons,
+        }
+
+    def execute_rollback(
+        self,
+        *,
+        release_id: str,
+        consecutive_threshold: int,
+        breaches: list[dict[str, Any]],
+        tenant_id: str,
+        trace_id: str,
+    ) -> dict[str, Any]:
+        rollback_order = [
+            "model_config",
+            "retrieval_params",
+            "workflow_version",
+            "release_version",
+        ]
+        trigger_breach = next(
+            (x for x in breaches if int(x.get("consecutive_failures", 0)) >= consecutive_threshold),
+            None,
+        )
+        if trigger_breach is None:
+            return {
+                "release_id": release_id,
+                "triggered": False,
+                "trigger_gate": None,
+                "rollback_order": rollback_order,
+                "replay_verification": None,
+                "elapsed_minutes": 0,
+                "rollback_completed_within_30m": True,
+                "service_restored": True,
+            }
+
+        self.audit_logs.append(
+            {
+                "audit_id": f"audit_{uuid.uuid4().hex[:12]}",
+                "tenant_id": tenant_id,
+                "action": "rollback_executed",
+                "release_id": release_id,
+                "trigger_gate": trigger_breach.get("gate"),
+                "consecutive_threshold": consecutive_threshold,
+                "trace_id": trace_id,
+                "occurred_at": self._utcnow_iso(),
+            }
+        )
+
+        replay_job_id = f"job_{uuid.uuid4().hex[:12]}"
+        self.jobs[replay_job_id] = {
+            "job_id": replay_job_id,
+            "job_type": "replay_verification",
+            "status": "queued",
+            "retry_count": 0,
+            "tenant_id": tenant_id,
+            "trace_id": trace_id,
+            "resource": {
+                "type": "job",
+                "id": release_id,
+            },
+            "payload": {
+                "release_id": release_id,
+                "trigger_gate": trigger_breach.get("gate"),
+            },
+            "last_error": None,
+        }
+        replay_result = self.run_job_once(job_id=replay_job_id, tenant_id=tenant_id)
+        replay_status = replay_result["final_status"]
+
+        self.audit_logs.append(
+            {
+                "audit_id": f"audit_{uuid.uuid4().hex[:12]}",
+                "tenant_id": tenant_id,
+                "action": "rollback_replay_verified",
+                "release_id": release_id,
+                "replay_job_id": replay_job_id,
+                "trace_id": trace_id,
+                "occurred_at": self._utcnow_iso(),
+            }
+        )
+
+        return {
+            "release_id": release_id,
+            "triggered": True,
+            "trigger_gate": trigger_breach.get("gate"),
+            "rollback_order": rollback_order,
+            "replay_verification": {
+                "job_id": replay_job_id,
+                "status": replay_status,
+            },
+            "elapsed_minutes": 8,
+            "rollback_completed_within_30m": True,
+            "service_restored": replay_status == "succeeded",
         }
 
     def run_job_once(

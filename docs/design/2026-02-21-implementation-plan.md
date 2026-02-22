@@ -246,6 +246,10 @@ B-2 输出物：
 
 验收：30 分钟内完成回滚并恢复服务。
 
+Gate E 输出物：
+
+1. `docs/design/2026-02-22-gate-e-rollout-and-rollback-checklist.md`
+
 ## 9. Gate F：运行优化
 
 ### F-1 数据回流

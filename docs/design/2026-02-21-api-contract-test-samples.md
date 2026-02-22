@@ -35,6 +35,9 @@
 19. `POST /api/v1/internal/performance-gates/evaluate`
 20. `POST /api/v1/internal/security-gates/evaluate`
 21. `POST /api/v1/internal/cost-gates/evaluate`
+22. `POST /api/v1/internal/release/rollout/plan`
+23. `POST /api/v1/internal/release/rollout/decision`
+24. `POST /api/v1/internal/release/rollback/execute`
 
 ## 3. 执行约定
 
@@ -110,6 +113,13 @@
 | `CT-059` | `POST /internal/cost-gates/evaluate` | 成本门禁通过 | `task_cost_p95 <= baseline*1.2` 且降级与预算告警通过 | `200` | `passed=true` 且 `failed_checks=[]` |
 | `CT-060` | `POST /internal/cost-gates/evaluate` | 成本门禁阻断 | 成本超阈值或降级/预算告警失败 | `200` | `passed=false` 且返回对应失败码 |
 | `CT-061` | `POST /internal/cost-gates/evaluate` | 内部接口鉴权 | 缺失 `x-internal-debug=true` | `403` | `error.code=AUTH_FORBIDDEN` |
+| `CT-064` | `POST /internal/release/rollout/plan` | 灰度策略建档 | 提交租户白名单、规模放量层级与高风险 HITL 开关 | `200` | 返回 `release_id/tenant_whitelist/project_sizes/high_risk_hitl_enforced` |
+| `CT-065` | `POST /internal/release/rollout/decision` | 灰度准入通过 | tenant 在白名单且项目规模在已放量层级 | `200` | `admitted=true` 且 `reasons=[]` |
+| `CT-066` | `POST /internal/release/rollout/decision` | 灰度准入阻断 | tenant 不在白名单或规模未放量 | `200` | `admitted=false` 且 `reasons` 含阻断码 |
+| `CT-067` | `POST /internal/release/rollout/decision` | 高风险强制 HITL | `high_risk=true` | `200` | `force_hitl=true` |
+| `CT-068` | `POST /internal/release/rollback/execute` | 回滚触发并回放 | 任一 breach 连续超阈值（默认 2 次） | `200` | 返回固定回滚顺序，且 `replay_verification.status=succeeded` |
+| `CT-069` | `POST /internal/release/rollback/execute` | 不触发回滚 | 所有 breach 未达连续阈值 | `200` | `triggered=false` 且 `replay_verification=null` |
+| `CT-070` | `POST /internal/release/(rollout|rollback)/*` | 内部接口鉴权 | 缺失 `x-internal-debug=true` | `403` | `error.code=AUTH_FORBIDDEN` |
 
 ## 5. 关键断言模板
 
@@ -157,6 +167,7 @@
 4. `resume_token` 与 citation schema：`CT-013/014/015`。
 5. B-2 状态机运维动作（cancel/DLQ）：`CT-011/012/017/018/019/020/022`。
 6. 多租户隔离：`CT-024/025/026/032`。
+7. Gate E 灰度与回滚：`CT-064/065/066/067/068/069/070`。
 
 ## 8. 后续自动化建议
 

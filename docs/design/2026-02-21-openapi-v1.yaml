@@ -757,6 +757,117 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /internal/release/rollout/plan:
+    post:
+      operationId: internalPlanReleaseRollout
+      summary: Save Gate E tenant-whitelist and project-size rollout policy
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RolloutPlanRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RolloutPlanResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /internal/release/rollout/decision:
+    post:
+      operationId: internalDecideReleaseRollout
+      summary: Evaluate Gate E rollout admission for tenant and project size
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RolloutDecisionRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RolloutDecisionResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /internal/release/rollback/execute:
+    post:
+      operationId: internalExecuteReleaseRollback
+      summary: Execute Gate E rollback order and trigger replay verification
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RollbackExecuteRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RollbackExecuteResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
 components:
   securitySchemes:
     BearerAuth:
@@ -1318,6 +1429,198 @@ components:
           const: true
         data:
           $ref: '#/components/schemas/CostGateEvaluateData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    RolloutProjectSize:
+      type: string
+      enum: [small, medium, large]
+
+    RolloutPlanRequest:
+      type: object
+      required: [release_id, tenant_whitelist, enabled_project_sizes, high_risk_hitl_enforced]
+      properties:
+        release_id:
+          type: string
+        tenant_whitelist:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+        enabled_project_sizes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/RolloutProjectSize'
+        high_risk_hitl_enforced:
+          type: boolean
+
+    RolloutPlanData:
+      type: object
+      required: [release_id, tenant_whitelist, enabled_project_sizes, high_risk_hitl_enforced]
+      properties:
+        release_id:
+          type: string
+        tenant_whitelist:
+          type: array
+          items:
+            type: string
+        enabled_project_sizes:
+          type: array
+          items:
+            $ref: '#/components/schemas/RolloutProjectSize'
+        high_risk_hitl_enforced:
+          type: boolean
+
+    RolloutPlanResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/RolloutPlanData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    RolloutDecisionRequest:
+      type: object
+      required: [release_id, tenant_id, project_size, high_risk]
+      properties:
+        release_id:
+          type: string
+        tenant_id:
+          type: string
+        project_size:
+          $ref: '#/components/schemas/RolloutProjectSize'
+        high_risk:
+          type: boolean
+
+    RolloutDecisionData:
+      type: object
+      required: [release_id, admitted, stage, matched_whitelist, force_hitl, reasons]
+      properties:
+        release_id:
+          type: string
+        admitted:
+          type: boolean
+        stage:
+          type: string
+          enum: ['tenant_whitelist+project_size']
+        matched_whitelist:
+          type: boolean
+        force_hitl:
+          type: boolean
+        reasons:
+          type: array
+          items:
+            type: string
+
+    RolloutDecisionResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/RolloutDecisionData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    RollbackGateBreach:
+      type: object
+      required: [gate, metric_code, consecutive_failures]
+      properties:
+        gate:
+          type: string
+          enum: [quality, performance, security, cost]
+        metric_code:
+          type: string
+        consecutive_failures:
+          type: integer
+          minimum: 1
+
+    RollbackExecuteRequest:
+      type: object
+      required: [release_id, breaches]
+      properties:
+        release_id:
+          type: string
+        consecutive_threshold:
+          type: integer
+          minimum: 1
+          default: 2
+        breaches:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/RollbackGateBreach'
+
+    RollbackReplayVerification:
+      type: object
+      required: [job_id, status]
+      properties:
+        job_id:
+          type: string
+        status:
+          type: string
+          enum: [queued, running, succeeded, failed]
+
+    RollbackExecuteData:
+      type: object
+      required:
+        [
+          release_id,
+          triggered,
+          trigger_gate,
+          rollback_order,
+          replay_verification,
+          elapsed_minutes,
+          rollback_completed_within_30m,
+          service_restored,
+        ]
+      properties:
+        release_id:
+          type: string
+        triggered:
+          type: boolean
+        trigger_gate:
+          oneOf:
+            - type: 'null'
+            - type: string
+              enum: [quality, performance, security, cost]
+        rollback_order:
+          type: array
+          minItems: 4
+          maxItems: 4
+          items:
+            type: string
+            enum: [model_config, retrieval_params, workflow_version, release_version]
+        replay_verification:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/RollbackReplayVerification'
+        elapsed_minutes:
+          type: integer
+          minimum: 0
+        rollback_completed_within_30m:
+          type: boolean
+        service_restored:
+          type: boolean
+
+    RollbackExecuteResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/RollbackExecuteData'
         meta:
           $ref: '#/components/schemas/Meta'
 
@@ -1939,7 +2242,7 @@ components:
           type: string
         job_type:
           type: string
-          enum: [upload, parse, evaluation, resume, requeue]
+          enum: [upload, parse, evaluation, resume, requeue, replay_verification]
         status:
           type: string
           enum:

@@ -19,6 +19,9 @@ from app.schemas import (
     InternalTransitionRequest,
     PerformanceGateEvaluateRequest,
     QualityGateEvaluateRequest,
+    RollbackExecuteRequest,
+    RolloutDecisionRequest,
+    RolloutPlanRequest,
     RetrievalQueryRequest,
     ResumeRequest,
     SecurityGateEvaluateRequest,
@@ -745,6 +748,74 @@ def create_app() -> FastAPI:
         data = evaluate_cost_gate(
             dataset_id=payload.dataset_id,
             metrics=payload.metrics.model_dump(mode="json"),
+        )
+        return success_envelope(data, _trace_id_from_request(request))
+
+    @app.post("/api/v1/internal/release/rollout/plan")
+    def internal_plan_release_rollout(
+        payload: RolloutPlanRequest,
+        request: Request,
+        x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
+    ):
+        if x_internal_debug != "true":
+            raise ApiError(
+                code="AUTH_FORBIDDEN",
+                message="internal endpoint forbidden",
+                error_class="security_sensitive",
+                retryable=False,
+                http_status=403,
+            )
+        data = store.upsert_rollout_policy(
+            release_id=payload.release_id,
+            tenant_whitelist=list(payload.tenant_whitelist),
+            enabled_project_sizes=list(payload.enabled_project_sizes),
+            high_risk_hitl_enforced=payload.high_risk_hitl_enforced,
+            tenant_id=_tenant_id_from_request(request),
+        )
+        return success_envelope(data, _trace_id_from_request(request))
+
+    @app.post("/api/v1/internal/release/rollout/decision")
+    def internal_decide_release_rollout(
+        payload: RolloutDecisionRequest,
+        request: Request,
+        x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
+    ):
+        if x_internal_debug != "true":
+            raise ApiError(
+                code="AUTH_FORBIDDEN",
+                message="internal endpoint forbidden",
+                error_class="security_sensitive",
+                retryable=False,
+                http_status=403,
+            )
+        data = store.decide_rollout(
+            release_id=payload.release_id,
+            tenant_id=payload.tenant_id,
+            project_size=payload.project_size,
+            high_risk=payload.high_risk,
+        )
+        return success_envelope(data, _trace_id_from_request(request))
+
+    @app.post("/api/v1/internal/release/rollback/execute")
+    def internal_execute_release_rollback(
+        payload: RollbackExecuteRequest,
+        request: Request,
+        x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
+    ):
+        if x_internal_debug != "true":
+            raise ApiError(
+                code="AUTH_FORBIDDEN",
+                message="internal endpoint forbidden",
+                error_class="security_sensitive",
+                retryable=False,
+                http_status=403,
+            )
+        data = store.execute_rollback(
+            release_id=payload.release_id,
+            consecutive_threshold=payload.consecutive_threshold,
+            breaches=[x.model_dump(mode="json") for x in payload.breaches],
+            tenant_id=_tenant_id_from_request(request),
+            trace_id=_trace_id_from_request(request),
         )
         return success_envelope(data, _trace_id_from_request(request))
 

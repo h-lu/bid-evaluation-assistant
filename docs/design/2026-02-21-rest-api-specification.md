@@ -128,6 +128,21 @@
 5. 成本门禁输入成本 P95、模型降级可用性与预算告警覆盖率。
 6. 当质量门禁不达标时，触发 `RAGChecker` 诊断流程标记。
 
+### 4.10 Internal Release（Gate E 内部发布控制）
+
+1. `POST /internal/release/rollout/plan`
+2. `POST /internal/release/rollout/decision`
+3. `POST /internal/release/rollback/execute`
+
+说明：
+
+1. 仅灰度/回滚流水线使用，必须携带 `x-internal-debug: true`。
+2. 灰度放量顺序固定为“租户白名单 -> 项目规模分层（small/medium/large）”。
+3. `high_risk=true` 时强制 `force_hitl=true`，不可绕过。
+4. 回滚触发条件为“任一门禁连续超阈值（默认阈值 2 次）”。
+5. 回滚执行顺序固定为：`model_config -> retrieval_params -> workflow_version -> release_version`。
+6. 回滚执行后必须触发一次 `replay verification`。
+
 ## 5. 字段级契约（关键接口示例）
 
 ### 5.1 `POST /documents/upload`
@@ -618,6 +633,97 @@
   }
 }
 ```
+
+### 5.15 `POST /internal/release/rollout/decision`
+
+请求体：
+
+```json
+{
+  "release_id": "rel_20260222_01",
+  "tenant_id": "tenant_a",
+  "project_size": "small",
+  "high_risk": true
+}
+```
+
+响应 `200`：
+
+```json
+{
+  "success": true,
+  "data": {
+    "release_id": "rel_20260222_01",
+    "admitted": true,
+    "stage": "tenant_whitelist+project_size",
+    "matched_whitelist": true,
+    "force_hitl": true,
+    "reasons": []
+  },
+  "meta": {
+    "trace_id": "trace_xxx"
+  }
+}
+```
+
+规则说明：
+
+1. 若租户不在白名单，`admitted=false` 且 `reasons` 含 `TENANT_NOT_IN_WHITELIST`。
+2. 若项目规模未放量，`admitted=false` 且 `reasons` 含 `PROJECT_SIZE_NOT_ENABLED`。
+3. 若 `high_risk=true`，无条件返回 `force_hitl=true`。
+
+### 5.16 `POST /internal/release/rollback/execute`
+
+请求体：
+
+```json
+{
+  "release_id": "rel_20260222_01",
+  "consecutive_threshold": 2,
+  "breaches": [
+    {
+      "gate": "quality",
+      "metric_code": "DEEPEVAL_HALLUCINATION_RATE_HIGH",
+      "consecutive_failures": 2
+    }
+  ]
+}
+```
+
+响应 `200`：
+
+```json
+{
+  "success": true,
+  "data": {
+    "release_id": "rel_20260222_01",
+    "triggered": true,
+    "trigger_gate": "quality",
+    "rollback_order": [
+      "model_config",
+      "retrieval_params",
+      "workflow_version",
+      "release_version"
+    ],
+    "replay_verification": {
+      "job_id": "job_xxx",
+      "status": "succeeded"
+    },
+    "elapsed_minutes": 8,
+    "rollback_completed_within_30m": true,
+    "service_restored": true
+  },
+  "meta": {
+    "trace_id": "trace_xxx"
+  }
+}
+```
+
+规则说明：
+
+1. 当且仅当存在 `consecutive_failures >= consecutive_threshold` 的 breach 时触发回滚。
+2. 回滚完成后必须创建并执行一次回放验证任务。
+3. `rollback_completed_within_30m=false` 视为 Gate E 验收失败。
 
 ### 5.11 `GET /evaluations/{evaluation_id}/audit-logs`
 
