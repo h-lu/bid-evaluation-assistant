@@ -99,3 +99,12 @@
 1. `docs/design/2026-02-21-data-model-and-storage-spec.md`
 2. `docs/design/2026-02-21-job-system-and-retry-spec.md`
 3. `docs/design/2026-02-21-error-handling-and-dlq-spec.md`
+
+## 10. 当前实现增量（r1）
+
+1. 新增 Store 后端工厂：`BEA_STORE_BACKEND=memory|sqlite`。
+2. 新增本地持久化后端：`SqliteBackedStore`（用于开发与回归阶段持久化验证）。
+3. 新增 outbox 事件能力：`append/list/mark_published`，并接入关键 `job.created` 事件写入。
+4. 新增回归测试：
+   - `tests/test_store_persistence_backend.py`
+   - `tests/test_outbox_events.py`
