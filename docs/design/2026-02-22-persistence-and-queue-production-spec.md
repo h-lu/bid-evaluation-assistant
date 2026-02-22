@@ -1,127 +1,170 @@
 # 存储与队列生产化规范
 
-> 版本：v2026.02.22-r1  
-> 状态：Draft  
+> 版本：v2026.02.22-r2  
+> 状态：Active  
 > 对齐：`docs/plans/2026-02-22-production-capability-plan.md`
 
-## 1. 目标
+## 1. 文档目标
 
-1. 将 `app/store.py` 的 InMemory 关键路径替换为真实持久化与队列实现。
-2. 保持既有 API 契约、错误码、状态机不变。
-3. 提供可回滚的数据迁移与运行切换策略。
+1. 将当前 `memory/sqlite` 兼容实现升级为 `PostgreSQL + Redis` 生产实现。
+2. 保持既有 API 契约、错误码、状态机语义不变。
+3. 给实现与验收提供可直接执行的任务分解与证据格式。
 
-## 2. 范围
+## 2. 范围与非目标
 
-### 2.1 本阶段纳入
+### 2.1 纳入范围
 
-1. PostgreSQL：jobs/checkpoints/dlq/audit/report/document/chunk 真值落库。
-2. Redis：队列、幂等键、分布式锁、短时缓存。
-3. outbox：领域事件可靠投递。
+1. 仓储真值迁移：`jobs/workflow_checkpoints/dlq_items/audit_logs/evaluation_reports/documents/document_chunks`。
+2. 幂等与 outbox：请求幂等键、事件可靠投递、消费去重。
+3. Redis 队列：enqueue/dequeue/ack/nack/retry/DLQ。
+4. DB RLS 注入：`app.current_tenant` 会话级注入与强校验。
 
-### 2.2 本阶段不纳入
+### 2.2 非目标
 
-1. 跨服务分布式事务。
-2. 多数据库主从拓扑自动切换。
+1. 跨地域多活。
+2. 跨服务分布式事务。
+3. 自动分片与在线扩容编排。
 
-## 3. 模块与目录改造
+## 3. 当前基线（已完成）
 
-1. 新增 `app/repositories/`：按领域拆分仓储接口与实现。
-2. 新增 `app/db/`：连接管理、事务模板、RLS tenant 注入。
-3. 新增 `app/queue/`：Redis 队列适配与消费确认。
-4. 保留 `app/store.py` 作为兼容门面，逐步迁移调用方。
+1. `SqliteBackedStore` + `SqliteQueueBackend` 已提供本地持久化回归能力。
+2. outbox/queue 内部联调接口已存在并有回归测试。
+3. queue `ack/nack` 已有租户归属校验。
 
-## 4. 关键设计
+## 4. 目标架构
 
-### 4.1 Repository 抽象
+```text
+FastAPI -> Repository Facade -> PostgreSQL (truth)
+                         -> Outbox Table -> Relay Worker -> Redis Queue
+Worker -> Redis Queue -> Domain Executor -> PostgreSQL + Audit
+```
 
-每个聚合提供：
+约束：
 
-1. `create/get/list/update`
-2. 幂等 `run_idempotent`
-3. 审计 `append_audit`
+1. API 不直接操作 Redis 与 SQL 细节，统一经 repository/queue abstraction。
+2. 业务事务与 outbox 写入同事务提交。
+3. 任一重试失败不得破坏状态机时序（`dlq_pending -> dlq_recorded -> failed`）。
 
-要求：
+## 5. 实施任务（执行顺序）
 
-1. 所有仓储方法必须显式接收 `tenant_id`。
-2. 所有写事务必须返回可审计 `trace_id`。
+### 5.1 P1-S1：Repository 真实现
 
-### 4.2 事务与一致性
+输入：现有 `app/store.py` 行为与测试基线。  
+产出：`app/repositories/` 按领域拆分的 PostgreSQL 实现。  
+验收：现有 API 测试在 `BEA_STORE_BACKEND=postgres` 下通过。
 
-1. 单请求内使用单事务提交业务状态与 outbox。
-2. outbox 消费失败仅重试投递，不回滚业务主事务。
-3. `dlq_pending -> dlq_recorded -> failed` 必须在同一事务窗口内保证顺序可见。
+最小交付：
 
-### 4.3 队列语义
+1. `JobsRepository`、`WorkflowRepository`、`DlqRepository`、`AuditRepository`。
+2. 所有写接口显式接收 `tenant_id` 与 `trace_id`。
+3. 与当前 `InMemoryStore` 输出字段保持一致。
 
-1. 入队消息最小字段：`job_id, tenant_id, trace_id, job_type, attempt`。
-2. 消费成功后 ack；失败按重试策略回投。
-3. 超重试进入 DLQ 并写审计。
+### 5.2 P1-S2：事务与 RLS
 
-## 5. 数据迁移策略
+输入：S1 仓储实现。  
+产出：`app/db/` 事务模板、tenant 注入中间层。  
+验收：无 tenant 上下文请求全部失败；跨租户访问被 DB 阻断。
 
-## 5.1 迁移顺序
+最小交付：
 
-1. 建表与索引。
-2. 下发 RLS 策略。
-3. 先双写（InMemory + DB）验证。
-4. 切读到 DB。
-5. 关闭 InMemory 写路径。
+1. 会话变量：`SET app.current_tenant = :tenant_id`。
+2. 核心表 RLS policy 全覆盖。
+3. 事务工具：`run_in_tx(tenant_id, fn)`。
 
-### 5.2 回滚策略
+### 5.3 P1-S3：Redis 队列生产化
 
-1. 保留上个稳定 schema 标签。
-2. 任一校验失败立即切回 InMemory 读路径并冻结写流量。
-3. 回滚脚本需与迁移脚本同 PR 交付。
+输入：现有 queue 抽象。  
+产出：`RedisQueueBackend`。  
+验收：重试、ack/nack、并发消费、tenant 前缀隔离回归通过。
 
-## 6. 配置项
+最小交付：
+
+1. key 命名：`bea:{env}:{tenant}:{queue}`。
+2. 消息字段：`message_id,event_id,job_id,tenant_id,trace_id,job_type,attempt`。
+3. 超阈值失败进入 DLQ 并写审计。
+
+### 5.4 P1-S4：Outbox Relay 可靠投递
+
+输入：S1/S3。  
+产出：relay worker 与幂等消费键。  
+验收：重复 relay 不重复投递业务副作用。
+
+最小交付：
+
+1. outbox 状态：`pending/published/failed`。
+2. 幂等键：`event_id + consumer_name`。
+3. 死信事件可重放并可审计。
+
+### 5.5 P1-S5：灰度切换与回退
+
+输入：S1-S4。  
+产出：可切换配置、回退脚本、演练记录。  
+验收：30 分钟内完成 `postgres+redis -> sqlite` 回退。
+
+最小交付：
+
+1. 开关：`BEA_STORE_BACKEND=sqlite|postgres`、`BEA_QUEUE_BACKEND=sqlite|redis`。
+2. 双写观察窗口与一致性比对脚本。
+3. 回退 Runbook（命令级）。
+
+## 6. 数据与契约约束
+
+1. 外部 REST/OpenAPI 不新增破坏性字段。
+2. `job_id/thread_id/resume_token/error.code` 语义不可变。
+3. 新增仅允许内部字段，不允许修改现有字段含义。
+
+## 7. 配置清单
 
 1. `POSTGRES_DSN`
-2. `REDIS_DSN`
-3. `QUEUE_NAME_JOB`
-4. `IDEMPOTENCY_TTL_HOURS`
-5. `OUTBOX_POLL_INTERVAL_MS`
-6. `BEA_STORE_BACKEND`
-7. `BEA_STORE_SQLITE_PATH`
-8. `BEA_QUEUE_BACKEND`
-9. `BEA_QUEUE_SQLITE_PATH`
+2. `POSTGRES_POOL_MIN`
+3. `POSTGRES_POOL_MAX`
+4. `REDIS_DSN`
+5. `REDIS_QUEUE_VISIBILITY_TIMEOUT_S`
+6. `IDEMPOTENCY_TTL_HOURS`
+7. `OUTBOX_POLL_INTERVAL_MS`
+8. `BEA_STORE_BACKEND`
+9. `BEA_QUEUE_BACKEND`
 
-## 7. 测试要求
+## 8. 测试与验证命令
 
-1. Repository 单元测试：CRUD、幂等冲突、租户隔离。
-2. 队列集成测试：重试、DLQ、顺序。
-3. 迁移测试：升级/回滚脚本可执行。
-4. 回放测试：Gate C-D 关键流程在真存储下通过。
+1. 单测：repository CRUD/tenant scope/idempotency。
+2. 集成：queue retry/ack/nack/DLQ/outbox relay。
+3. 回放：Gate C-D 核心链路在 postgres+redis 下跑通。
 
-## 8. 验收标准
+建议命令：
 
-1. 关键状态不再依赖进程内内存。
-2. 重启进程后 `jobs/checkpoints` 可恢复。
-3. 租户越权在仓储层与 DB RLS 双重阻断。
+```bash
+pytest -q tests/test_store_persistence_backend.py
+pytest -q tests/test_queue_backend.py tests/test_internal_outbox_queue_api.py
+pytest -q
+```
 
-## 9. 关联文档
+## 9. 验收证据模板
 
-1. `docs/design/2026-02-21-data-model-and-storage-spec.md`
-2. `docs/design/2026-02-21-job-system-and-retry-spec.md`
-3. `docs/design/2026-02-21-error-handling-and-dlq-spec.md`
+每次提交必须附：
 
-## 10. 当前实现增量（r3）
+1. 变更摘要（接口/数据模型/配置）。
+2. 测试输出（命令 + 通过截图或日志片段）。
+3. 一致性比对结果（双写窗口）。
+4. 回退演练结果（开始时间、结束时间、结果）。
 
-1. 新增 Store 后端工厂：`BEA_STORE_BACKEND=memory|sqlite`。
-2. 新增本地持久化后端：`SqliteBackedStore`（用于开发与回归阶段持久化验证）。
-3. 新增 outbox 事件能力：`append/list/mark_published`，并接入关键 `job.created` 事件写入。
-4. 新增队列抽象：`InMemoryQueueBackend`，包含 tenant 前缀、ack/nack、重试回投语义。
-5. 新增持久化队列后端：`SqliteQueueBackend`，支持跨进程重启后的 pending 消息恢复。
-6. 新增 outbox relay 内部接口：`POST /api/v1/internal/outbox/relay`。
-7. 新增内部调试接口：
-   - `GET /api/v1/internal/outbox/events`
-   - `POST /api/v1/internal/outbox/events/{event_id}/publish`
-   - `POST /api/v1/internal/queue/{queue_name}/enqueue`
-   - `POST /api/v1/internal/queue/{queue_name}/dequeue`
-   - `POST /api/v1/internal/queue/{queue_name}/ack`
-   - `POST /api/v1/internal/queue/{queue_name}/nack`
-8. 新增回归测试：
-   - `tests/test_store_persistence_backend.py`
-   - `tests/test_outbox_events.py`
-   - `tests/test_queue_backend.py`
-   - `tests/test_internal_outbox_queue_api.py`
-9. 强化队列安全：`ack/nack` 增加 tenant 归属校验，跨租户返回 `TENANT_SCOPE_VIOLATION`。
+## 10. 退出条件（P1 完成定义）
+
+1. 主链路关键状态完全不依赖进程内内存。
+2. 重启后 `jobs/checkpoints/outbox` 可恢复。
+3. 跨租户访问在 API + DB + queue 三层都被阻断。
+4. 全量回归在 `postgres+redis` 模式通过。
+
+## 11. 风险与回退
+
+1. 风险：SQL 性能退化导致 job 超时。
+2. 风险：queue 可见性超时配置不当造成重复消费。
+3. 回退：切回 `sqlite` 后端，冻结高风险写操作，仅保留读与必要恢复动作。
+
+## 12. 实施检查清单
+
+1. [ ] repository 真实现可用。
+2. [ ] RLS 生效并有越权回归。
+3. [ ] Redis queue 路径通过并发回归。
+4. [ ] outbox relay 幂等验证通过。
+5. [ ] 回退脚本与演练记录完成。

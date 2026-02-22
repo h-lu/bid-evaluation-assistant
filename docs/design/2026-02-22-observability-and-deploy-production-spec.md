@@ -1,98 +1,162 @@
 # 观测与部署生产化规范
 
-> 版本：v2026.02.22-r3  
-> 状态：Draft  
+> 版本：v2026.02.22-r4  
+> 状态：Active  
 > 对齐：`docs/plans/2026-02-22-production-capability-plan.md`
 
-## 1. 目标
+## 1. 文档目标
 
-1. 建立可观测、可告警、可回滚、可复盘的生产运行体系。
-2. 将 Gate D/E/F 门禁与部署流水线联动。
-3. 保证事故时可快速止损与恢复。
+1. 建立可观测、可告警、可灰度、可回滚、可复盘的发布体系。
+2. 将 Gate D/E/F 门禁与部署流水线联动成可执行流程。
+3. 定义发布准入证据与回退动作，避免“凭感觉上线”。
 
-## 2. 观测基线
+## 2. 范围与非目标
 
-### 2.1 Metrics
+### 2.1 纳入范围
 
-1. API：QPS、错误率、P95、P99。
-2. Worker：队列深度、处理时延、重试率、DLQ 增量。
-3. 质量：faithfulness、hallucination_rate、citation 回跳率。
-4. 成本：任务成本分位、降级触发率。
+1. Metrics/Logs/Traces 统一语义。
+2. 告警分级（P0/P1/P2）与 runbook 联动。
+3. staging replay、canary、rollback 机制。
+4. P6 准入接口与发布决策流程。
 
-### 2.2 Logs
+### 2.2 非目标
 
-统一字段：
+1. 全栈 AIOps 自动调参。
+2. 多云统一发布平台。
 
-1. `timestamp`
-2. `trace_id`
-3. `request_id`
-4. `tenant_id`
-5. `job_id`
-6. `node_name`
-7. `error_code`
+## 3. 当前基线（已完成）
 
-### 2.3 Traces
+1. `GET /api/v1/internal/ops/metrics/summary` 已提供租户级指标摘要。
+2. `POST /api/v1/internal/release/replay/e2e` 已可执行最小回放。
+3. `POST /api/v1/internal/release/readiness/evaluate` 已可执行准入评估。
 
-1. 主链路跨 API -> Queue -> Worker -> DB 完整串联。
-2. HITL interrupt/resume 两段 trace 必须可关联。
-
-## 3. 告警与升级
-
-1. P0：越权风险、主链路不可用。
-2. P1：DLQ 激增、幻觉率超阈值。
-3. P2：性能或成本异常。
-4. 每个告警必须绑定 runbook 链接与责任人。
-
-## 4. 部署流水线
+## 4. 目标发布流水线
 
 ```text
 build
  -> unit/integration
  -> contract regression
  -> staging replay
- -> gate checks (quality/perf/security/cost)
+ -> Gate D checks
+ -> Gate E rollout decision
  -> canary
  -> full release
+ -> Gate F feedback/tuning
 ```
 
-## 5. 灰度与回滚联动
+发布原则：
 
-1. 灰度准入基于租户白名单与项目规模。
-2. 任一门禁连续超阈值触发回滚流程。
-3. 回滚后强制执行一次 replay verification。
+1. 无证据不发布。
+2. 触发阈值即回滚，不做人工拖延。
+3. 回滚后必须执行 replay 验证。
 
-## 6. 运行手册联动
+## 5. 实施任务（执行顺序）
 
-1. 变更前：`docs/ops/agent-change-management.md`
-2. 事故中：`docs/ops/agent-incident-runbook.md`
-3. 事故后：复盘报告与改进任务回写。
+### 5.1 P5-S1：指标语义统一
 
-## 7. 测试与演练要求
+输入：当前 metrics summary。  
+产出：API/Worker/Quality/Cost/SLO 指标字典与采集规范。  
+验收：同一指标在 dashboard/告警/报告中口径一致。
 
-1. 每次发布至少一次 staging 全链路回放。
-2. 每月一次回滚演练。
-3. 每月一次灾备恢复演练。
+### 5.2 P5-S2：日志与 Trace 串联
 
-## 8. 验收标准
+输入：S1。  
+产出：`trace_id/request_id/tenant_id/job_id/error_code` 全链路贯通。  
+验收：任一失败请求可从 API 追到 Worker 与 DB 事件。
 
-1. 可观测指标覆盖主链路与关键异常路径。
-2. 告警触发到止损动作链路可验证。
-3. 部署、灰度、回滚三套流程可重复执行。
+### 5.3 P5-S3：门禁与流水线联动
 
-## 9. 关联文档
+输入：S2。  
+产出：Gate D 四门禁自动判定与阻断步骤。  
+验收：任一门禁失败时流水线自动停止。
 
-1. `docs/design/2026-02-21-deployment-config.md`
-2. `docs/design/2026-02-21-testing-strategy.md`
-3. `docs/design/2026-02-21-agent-evals-observability.md`
-4. `docs/ops/agent-incident-runbook.md`
+### 5.4 P5-S4：灰度与回滚执行
 
-## 10. 当前实现增量（r3）
+输入：S3。  
+产出：Gate E rollout/rollback 自动化执行。  
+验收：连续超阈值触发回滚并在 30 分钟内恢复。
 
-1. 新增内部观测接口：`GET /api/v1/internal/ops/metrics/summary`。
-2. 指标按租户聚合输出 `api/worker/quality/cost/slo` 五类摘要。
-3. `worker` 维度新增 `queue_pending`（按 `queue_name` 查询）与 `dlq_open/outbox_pending`。
-4. 新增回归：`tests/test_observability_metrics_api.py`（鉴权、租户隔离、指标结构）。
-5. 新增 P6 回放接口：`POST /api/v1/internal/release/replay/e2e`，用于执行发布前最小真链路回放。
-6. 新增 P6 准入接口：`POST /api/v1/internal/release/readiness/evaluate`，用于汇总 Gate D/E/F 与回放结果。
-7. `SqliteBackedStore` 快照已纳入 `release_replay_runs/release_readiness_assessments`，支持重启后追溯。
-8. 新增回归：`tests/test_release_readiness_api.py`（鉴权、回放通过、准入阻断）。
+### 5.5 P5-S5：发布准入与回放
+
+输入：S4。  
+产出：P6 replay + readiness 作为发布前强制步骤。  
+验收：无 replay 证据或 readiness 不通过时禁止发布。
+
+### 5.6 P5-S6：运营优化闭环
+
+输入：S5。  
+产出：Gate F 数据回流与策略调优闭环。  
+验收：每次迭代产出新数据集版本与策略版本。
+
+## 6. 告警分级与响应
+
+1. P0：越权风险、主链路不可用，5 分钟内止损。
+2. P1：质量显著劣化、DLQ 激增，15 分钟内降级。
+3. P2：性能或成本异常，30 分钟内修正或回退。
+
+每条告警必须包含：
+
+1. runbook 链接。
+2. oncall 责任人。
+3. 最近变更版本。
+
+## 7. 契约与准入规则
+
+1. 发布准入要求：`quality/performance/security/cost/rollout/rollback/ops` 全部通过 + `replay_passed=true`。
+2. 任一项失败时 `admitted=false`，禁止发布。
+3. 回滚后必须再次执行 replay，成功才允许恢复流量。
+
+## 8. 配置清单
+
+1. `OTEL_EXPORTER_OTLP_ENDPOINT`
+2. `OBS_METRICS_NAMESPACE`
+3. `OBS_ALERT_WEBHOOK`
+4. `RELEASE_CANARY_RATIO`
+5. `RELEASE_CANARY_DURATION_MIN`
+6. `ROLLBACK_MAX_MINUTES`
+7. `P6_READINESS_REQUIRED`
+
+## 9. 测试与验证命令
+
+1. 指标接口结构与租户隔离回归。
+2. Gate D/E/F 内部接口回归。
+3. P6 replay/readiness 回归。
+4. 全量回归。
+
+建议命令：
+
+```bash
+pytest -q tests/test_observability_metrics_api.py
+pytest -q tests/test_gate_d_other_gates.py tests/test_gate_e_rollout_and_rollback.py tests/test_gate_f_ops_optimization.py
+pytest -q tests/test_release_readiness_api.py
+pytest -q
+```
+
+## 10. 验收证据模板
+
+1. 指标看板截图与告警触发记录。
+2. staging replay 报告。
+3. canary 期间关键指标对比（before/after）。
+4. 回滚演练记录（触发时间、完成时间、恢复状态）。
+5. readiness 准入报告（failed_checks 为空）。
+
+## 11. 退出条件（P5/P6 完成定义）
+
+1. 观测三件套（metrics/logs/traces）可用于故障定位。
+2. Gate D/E/F 与流水线自动联动。
+3. 可重复执行灰度与回滚。
+4. 发布前强制回放与准入评估生效。
+
+## 12. 风险与回退
+
+1. 风险：告警阈值配置不当导致误触发。
+2. 风险：canary 样本不足导致误判。
+3. 回退：降流量到稳定版本并冻结策略变更，待 replay 复核后再恢复。
+
+## 13. 实施检查清单
+
+1. [ ] 指标/日志/Trace 统一语义已落地。
+2. [ ] Gate D/E/F 自动阻断已联动。
+3. [ ] canary 与 rollback 演练通过。
+4. [ ] P6 准入规则在流水线中强制执行。
+5. [ ] 复盘模板与runbook链接完备。
