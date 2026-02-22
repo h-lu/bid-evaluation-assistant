@@ -41,10 +41,15 @@ def test_internal_ops_metrics_summary_returns_tenant_scoped_metrics(client):
     data = resp.json()["data"]
     assert data["tenant_id"] == "tenant_obs_a"
     assert "api" in data and "worker" in data and "quality" in data and "cost" in data
+    assert "parse_retrieval" in data
     assert data["api"]["total_jobs"] >= 2
     assert data["worker"]["dlq_open"] >= 1
     assert data["worker"]["queue_pending"] >= 0
     assert data["cost"]["dataset_version"].startswith("v")
+    assert data["parse_retrieval"]["parse_runs_total"] >= 1
+    assert "observability" in data
+    assert data["observability"]["metrics_namespace"]
+    assert "p6_readiness_required" in data["observability"]
 
 
 def test_internal_ops_metrics_summary_requires_internal_header(client):

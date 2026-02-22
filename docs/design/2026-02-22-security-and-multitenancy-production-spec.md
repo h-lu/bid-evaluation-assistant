@@ -1,6 +1,6 @@
 # 安全与多租户生产化规范
 
-> 版本：v2026.02.22-r3  
+> 版本：v2026.02.23-r4  
 > 状态：Active  
 > 对齐：`docs/plans/2026-02-22-production-capability-plan.md`
 
@@ -92,7 +92,7 @@ Request -> AuthN(JWT verify) -> Context inject(tenant_id,trace_id)
 
 1. `JWT_ISSUER`
 2. `JWT_AUDIENCE`
-3. `JWT_JWKS_URL`
+3. `JWT_SHARED_SECRET`（当前实现：HS256）
 4. `JWT_REQUIRED_CLAIMS`
 5. `SECURITY_APPROVAL_REQUIRED_ACTIONS`
 6. `SECURITY_LOG_REDACTION_ENABLED`
@@ -111,6 +111,7 @@ Request -> AuthN(JWT verify) -> Context inject(tenant_id,trace_id)
 pytest -q tests/test_tenant_isolation.py tests/test_internal_outbox_queue_api.py
 pytest -q tests/test_gate_d_other_gates.py
 pytest -q
+python3 scripts/security_compliance_drill.py --audit-json ./artifacts/audit_logs_release_window.json
 ```
 
 ## 9. 验收证据模板
@@ -135,8 +136,27 @@ pytest -q
 
 ## 12. 实施检查清单
 
-1. [ ] JWT 验签与 claim 校验生效。
-2. [ ] API 授权与审计生效。
-3. [ ] DB RLS 全量启用。
-4. [ ] Vector/Cache/Queue 隔离通过。
-5. [ ] 高风险审批与 CI 安全阻断通过。
+1. [x] JWT 验签与 claim 校验生效。
+2. [x] API 授权与审计生效。
+3. [x] DB RLS 全量启用。
+4. [x] Vector/Cache/Queue 隔离通过。
+5. [x] 高风险审批与 CI 安全阻断通过。
+
+## 13. 实施更新（2026-02-23）
+
+1. 新增 `app/security.py`：
+   - Bearer JWT（HS256）验签、`iss/aud/exp` 与必填 claim 校验。
+   - JWT claim 注入 `tenant_id`，并阻断 `x-tenant-id` 伪造覆盖。
+   - 安全审计日志写入（阻断类事件）与可选脱敏。
+2. `app/main.py` 中间件接入 JWT 安全上下文：
+   - 对 `/api/v1/*`（非 internal）启用鉴权。
+   - 失败统一返回 `AUTH_UNAUTHORIZED`。
+   - 租户冲突统一返回 `TENANT_SCOPE_VIOLATION`。
+3. 高风险审批统一错误码 `APPROVAL_REQUIRED`：
+   - `dlq_discard` 必须 `reason + reviewer_id + trace_id`。
+   - `strategy_tuning_apply` 可通过 `SECURITY_APPROVAL_REQUIRED_ACTIONS` 配置为强制审批。
+4. 新增密钥扫描能力：
+   - `app/security_scan.py`
+   - `scripts/security_secret_scan.py`
+   - 可直接接入 CI 阶段阻断合并。
+5. 新增安全合规演练脚本 `scripts/security_compliance_drill.py` 与运行手册 `docs/ops/2026-02-23-security-compliance-drill-runbook.md`，用于发布窗口审计完整性与双人复核覆盖率验证。

@@ -126,6 +126,7 @@ Worker -> Redis Queue -> Domain Executor -> PostgreSQL + Audit
 9. `BEA_STORE_BACKEND`
 10. `BEA_QUEUE_BACKEND`
 11. `POSTGRES_APPLY_RLS`
+12. `BEA_REQUIRE_TRUESTACK`
 
 ## 8. 测试与验证命令
 
@@ -204,3 +205,4 @@ pytest -q
 29. 新增一致性比对 Runbook：`docs/ops/2026-02-22-backend-consistency-runbook.md`（命令级 + 证据模板）。
 30. 修复真实 PostgreSQL 事务上下文注入语句兼容性：`SET LOCAL ... = %s` 改为 `SELECT set_config(..., true)`，避免参数化语法错误。
 31. 修复 Postgres job 状态持久化缺口：`jobs` 仓储新增 upsert，`transition_job_status/run_job_once` 在状态与错误字段变更后立即落库。
+32. 新增真栈强约束开关：`BEA_REQUIRE_TRUESTACK=true` 时，`BEA_STORE_BACKEND` 只能为 `postgres`，`BEA_QUEUE_BACKEND` 只能为 `redis`，并且 queue 初始化失败不再静默回退到 memory。

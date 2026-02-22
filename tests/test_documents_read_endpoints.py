@@ -48,7 +48,10 @@ def test_get_document_chunks_returns_items_after_parse_success(client):
     assert data["total"] >= 1
     item = data["items"][0]
     assert item["chunk_id"].startswith("ck_")
+    assert item["chunk_hash"]
     assert item["document_id"] == document_id
+    assert item["page"] >= 1
+    assert len(item["bbox"]) == 4
     assert item["pages"]
     assert item["positions"]
     assert item["chunk_type"] == "text"

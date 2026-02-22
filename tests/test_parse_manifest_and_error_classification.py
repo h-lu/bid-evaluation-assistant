@@ -76,7 +76,7 @@ def test_parse_failure_is_classified_and_written_to_manifest_and_job(client):
 
 
 def test_parse_success_updates_manifest_status(client):
-    _, job_id, _ = _upload_and_create_parse_job(client)
+    document_id, job_id, _ = _upload_and_create_parse_job(client)
 
     run = client.post(
         f"/api/v1/internal/jobs/{job_id}/run",
@@ -93,6 +93,14 @@ def test_parse_success_updates_manifest_status(client):
     manifest = manifest_resp.json()["data"]
     assert manifest["status"] == "succeeded"
     assert manifest["error_code"] is None
+
+    chunks_resp = client.get(f"/api/v1/documents/{document_id}/chunks")
+    assert chunks_resp.status_code == 200
+    chunks = chunks_resp.json()["data"]["items"]
+    assert chunks
+    assert chunks[0]["chunk_hash"]
+    assert chunks[0]["page"] >= 1
+    assert len(chunks[0]["bbox"]) == 4
 
 
 def test_internal_parse_manifest_requires_internal_header(client):

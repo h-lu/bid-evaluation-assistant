@@ -1,6 +1,6 @@
 # 解析与检索生产化规范
 
-> 版本：v2026.02.22-r6  
+> 版本：v2026.02.22-r8  
 > 状态：Active  
 > 对齐：`docs/plans/2026-02-22-production-capability-plan.md`
 
@@ -154,8 +154,26 @@ pytest -q
 
 ## 12. 实施检查清单
 
-1. [ ] 真实 adapter 已接入并可回归。
-2. [ ] manifest/chunk 字段全量对齐。
-3. [ ] LightRAG 查询隔离已验证。
-4. [ ] rewrite/rerank 降级策略已验证。
-5. [ ] 回放证据与指标报表齐全。
+1. [x] 真实 adapter 已接入并可回归。
+2. [x] manifest/chunk 字段全量对齐。
+3. [x] LightRAG 查询隔离已验证。
+4. [x] rewrite/rerank 降级策略已验证。
+5. [x] 回放证据与指标报表齐全。
+
+## 13. 本轮实现更新（P2 完整）
+
+1. `app/parser_adapters.py` 新增 `HttpParserAdapter`，支持 `MINERU/DOCLING/OCR` endpoint + timeout 配置；未配置 endpoint 时保持 stub 行为。
+2. parser 返回兼容 `chunks/content_list/full_md(full.md)` 三类载荷，统一映射为 chunk 契约字段。
+3. `ParserAdapterRegistry.parse_with_route` 支持解析失败自动回退到 fallback parser，不再因首选 parser 异常直接中断。
+4. 新增回归：`tests/test_parser_adapters.py::test_registry_uses_http_parser_payload_when_endpoint_configured`。
+5. 新增回归：`tests/test_parser_adapters.py::test_registry_fallbacks_when_selected_http_parser_fails`。
+6. `app/store.py` 新增 chunk 标准化与去重：`chunk_hash = sha256(document_id+page+bbox+heading_path+text)`，并补齐 `page/bbox/chunk_id`。
+7. `app/repositories/documents.py` 与 `document_chunks` 表新增 `chunk_hash` 持久化字段；读取结果补齐 `page/bbox`。
+8. 解析成功路径新增 LightRAG 索引写入钩子（`LIGHTRAG_DSN` 可选）；索引失败不阻断主链路并记录指标。
+9. 检索查询新增 LightRAG 查询路径（`LIGHTRAG_DSN` 可选）+ 二次 tenant/project/supplier/doc_scope 过滤，保证隔离。
+10. 改写约束保持新增 `constraint_diff` 真实计算；rerank 异常时降级返回 `degraded=true` 与 `degrade_reason`。
+11. `summarize_ops_metrics` 新增 `parse_retrieval` 观测字段：解析次数、fallback 次数、索引调用/失败、查询次数、降级次数。
+12. 新增回归：`tests/test_retrieval_query.py::test_retrieval_query_degrades_when_rerank_raises`。
+13. 新增回归：`tests/test_retrieval_query.py::test_retrieval_query_uses_lightrag_index_prefix_and_filters_metadata`。
+14. 新增回归：`tests/test_parse_manifest_and_error_classification.py::test_parse_success_updates_manifest_status`（补充 chunk_hash/page/bbox 断言）。
+15. 新增观测回归：`tests/test_observability_metrics_api.py` 覆盖 `parse_retrieval` 指标字段。

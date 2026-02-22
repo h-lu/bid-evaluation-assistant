@@ -111,7 +111,7 @@ def test_dlq_discard_requires_approval(client):
         headers={"Idempotency-Key": "idem_dlq_discard_1"},
     )
     assert bad.status_code == 400
-    assert bad.json()["error"]["code"] == "DLQ_DISCARD_REQUIRES_APPROVAL"
+    assert bad.json()["error"]["code"] == "APPROVAL_REQUIRED"
 
     ok = client.post(
         f"/api/v1/dlq/items/{item_id}/discard",

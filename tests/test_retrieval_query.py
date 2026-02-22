@@ -225,3 +225,86 @@ def test_retrieval_query_exposes_rewrite_and_constraint_fields(client):
     assert data["rewrite_reason"] == "normalize_whitespace_and_constraints"
     assert data["constraints_preserved"] is True
     assert data["constraint_diff"] == []
+
+
+def test_retrieval_query_degrades_when_rerank_raises(client, monkeypatch):
+    _seed_retrieval_sources()
+    monkeypatch.setenv("BEA_FORCE_RERANK_ERROR", "true")
+    resp = client.post(
+        "/api/v1/retrieval/query",
+        headers={"x-tenant-id": "tenant_a"},
+        json={
+            "project_id": "prj_a",
+            "supplier_id": "sup_a",
+            "query": "delivery",
+            "query_type": "fact",
+            "enable_rerank": True,
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["degraded"] is True
+    assert data["degrade_reason"] == "rerank_failed"
+    assert data["items"][0]["score_rerank"] is None
+
+
+def test_retrieval_query_uses_lightrag_index_prefix_and_filters_metadata(client, monkeypatch):
+    _seed_retrieval_sources()
+    monkeypatch.setenv("LIGHTRAG_DSN", "http://lightrag.local")
+    monkeypatch.setenv("LIGHTRAG_INDEX_PREFIX", "lightragx")
+
+    def fake_post_json(*, endpoint: str, payload: dict[str, object], timeout_s: float) -> object:
+        assert endpoint.endswith("/query")
+        assert payload["index_name"] == "lightragx:tenant_a:prj_a"
+        assert timeout_s > 0
+        return {
+            "items": [
+                {
+                    "chunk_id": "ck_retr_a1",
+                    "score_raw": 0.88,
+                    "reason": "external hit",
+                    "metadata": {
+                        "tenant_id": "tenant_a",
+                        "project_id": "prj_a",
+                        "supplier_id": "sup_a",
+                        "document_id": "doc_a1",
+                        "doc_type": "bid",
+                        "page": 3,
+                        "bbox": [10, 20, 120, 160],
+                    },
+                },
+                {
+                    "chunk_id": "ck_retr_b1",
+                    "score_raw": 0.99,
+                    "reason": "cross tenant must be dropped",
+                    "metadata": {
+                        "tenant_id": "tenant_b",
+                        "project_id": "prj_a",
+                        "supplier_id": "sup_b",
+                        "document_id": "doc_b1",
+                        "doc_type": "bid",
+                        "page": 1,
+                        "bbox": [5, 10, 80, 90],
+                    },
+                },
+            ]
+        }
+
+    monkeypatch.setattr(store, "_post_json", fake_post_json)
+
+    resp = client.post(
+        "/api/v1/retrieval/query",
+        headers={"x-tenant-id": "tenant_a"},
+        json={
+            "project_id": "prj_a",
+            "supplier_id": "sup_a",
+            "query": "delivery",
+            "query_type": "fact",
+            "doc_scope": ["bid"],
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["index_name"] == "lightragx:tenant_a:prj_a"
+    assert data["total"] == 1
+    assert data["items"][0]["chunk_id"] == "ck_retr_a1"

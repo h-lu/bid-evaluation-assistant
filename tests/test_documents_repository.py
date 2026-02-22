@@ -22,6 +22,7 @@ def _document() -> dict:
 def _chunk() -> dict:
     return {
         "chunk_id": "ck_repo_1",
+        "chunk_hash": "hash_repo_1",
         "document_id": "doc_repo_1",
         "pages": [1],
         "positions": [{"page": 1, "bbox": [0, 0, 1, 1], "start": 0, "end": 10}],
@@ -124,6 +125,7 @@ def test_postgres_documents_repository_upsert_get_replace_and_list():
             (
                 "ck_repo_1",
                 "doc_repo_1",
+                "hash_repo_1",
                 [1],
                 [{"page": 1, "bbox": [0, 0, 1, 1], "start": 0, "end": 10}],
                 "Sec",
@@ -138,3 +140,4 @@ def test_postgres_documents_repository_upsert_get_replace_and_list():
     listed = repo.list_chunks(tenant_id="tenant_a", document_id="doc_repo_1")
     assert len(listed) == 1
     assert listed[0]["chunk_id"] == "ck_repo_1"
+    assert listed[0]["chunk_hash"] == "hash_repo_1"

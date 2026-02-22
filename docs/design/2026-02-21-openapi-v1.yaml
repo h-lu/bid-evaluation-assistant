@@ -1319,6 +1319,43 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /internal/release/pipeline/execute:
+    post:
+      operationId: internalExecuteReleasePipeline
+      summary: Execute release pipeline admission with readiness and canary config
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReleasePipelineRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReleasePipelineResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /internal/ops/metrics/summary:
     get:
       operationId: internalGetOpsMetricsSummary
@@ -2590,6 +2627,93 @@ components:
         meta:
           $ref: '#/components/schemas/Meta'
 
+    ReleasePipelineRequest:
+      type: object
+      required: [release_id, replay_passed, gate_results]
+      properties:
+        release_id:
+          type: string
+        replay_passed:
+          type: boolean
+        gate_results:
+          type: object
+          additionalProperties:
+            type: boolean
+
+    ReleasePipelineCanaryConfig:
+      type: object
+      required: [ratio, duration_min]
+      properties:
+        ratio:
+          type: number
+          minimum: 0
+          maximum: 1
+        duration_min:
+          type: integer
+          minimum: 1
+
+    ReleasePipelineRollbackConfig:
+      type: object
+      required: [max_minutes]
+      properties:
+        max_minutes:
+          type: integer
+          minimum: 1
+
+    ReleasePipelineData:
+      type: object
+      required:
+        [
+          pipeline_id,
+          release_id,
+          tenant_id,
+          stage,
+          admitted,
+          failed_checks,
+          readiness_assessment_id,
+          canary,
+          rollback,
+          readiness_required,
+        ]
+      properties:
+        pipeline_id:
+          type: string
+        release_id:
+          type: string
+        tenant_id:
+          type: string
+        stage:
+          type: string
+          enum: [release_ready, release_blocked]
+        admitted:
+          type: boolean
+        failed_checks:
+          type: array
+          items:
+            type: string
+        readiness_assessment_id:
+          type: string
+        canary:
+          $ref: '#/components/schemas/ReleasePipelineCanaryConfig'
+        rollback:
+          $ref: '#/components/schemas/ReleasePipelineRollbackConfig'
+        readiness_required:
+          type: boolean
+        readiness:
+          $ref: '#/components/schemas/ReleaseReadinessData'
+
+    ReleasePipelineResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/ReleasePipelineData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
     OpsMetricsApiSummary:
       type: object
       required: [total_jobs, succeeded_jobs, failed_jobs, error_rate]
@@ -2610,7 +2734,19 @@ components:
 
     OpsMetricsWorkerSummary:
       type: object
-      required: [retrying_jobs, dlq_open, outbox_pending, queue_name, queue_pending]
+      required:
+        [
+          retrying_jobs,
+          dlq_open,
+          outbox_pending,
+          max_retries,
+          retry_backoff_base_ms,
+          retry_backoff_max_ms,
+          resume_token_ttl_hours,
+          checkpoint_backend,
+          queue_name,
+          queue_pending,
+        ]
       properties:
         retrying_jobs:
           type: integer
@@ -2621,6 +2757,20 @@ components:
         outbox_pending:
           type: integer
           minimum: 0
+        max_retries:
+          type: integer
+          minimum: 0
+        retry_backoff_base_ms:
+          type: integer
+          minimum: 0
+        retry_backoff_max_ms:
+          type: integer
+          minimum: 0
+        resume_token_ttl_hours:
+          type: integer
+          minimum: 1
+        checkpoint_backend:
+          type: string
         queue_name:
           type: string
         queue_pending:
@@ -2657,9 +2807,41 @@ components:
           minimum: 0
           maximum: 1
 
+    OpsMetricsObservabilitySummary:
+      type: object
+      required:
+        [
+          metrics_namespace,
+          otel_exporter_configured,
+          alert_webhook_configured,
+          p6_readiness_required,
+          release_canary_ratio,
+          release_canary_duration_min,
+          rollback_max_minutes,
+        ]
+      properties:
+        metrics_namespace:
+          type: string
+        otel_exporter_configured:
+          type: boolean
+        alert_webhook_configured:
+          type: boolean
+        p6_readiness_required:
+          type: boolean
+        release_canary_ratio:
+          type: number
+          minimum: 0
+          maximum: 1
+        release_canary_duration_min:
+          type: integer
+          minimum: 1
+        rollback_max_minutes:
+          type: integer
+          minimum: 1
+
     OpsMetricsSummaryData:
       type: object
-      required: [tenant_id, api, worker, quality, cost, slo]
+      required: [tenant_id, api, worker, quality, cost, slo, observability]
       properties:
         tenant_id:
           type: string
@@ -2673,6 +2855,8 @@ components:
           $ref: '#/components/schemas/OpsMetricsCostSummary'
         slo:
           $ref: '#/components/schemas/OpsMetricsSloSummary'
+        observability:
+          $ref: '#/components/schemas/OpsMetricsObservabilitySummary'
 
     OpsMetricsSummaryResponse:
       type: object
@@ -3325,6 +3509,7 @@ components:
           selected_mode,
           index_name,
           degraded,
+          degrade_reason,
           items,
           total,
         ]
@@ -3351,6 +3536,10 @@ components:
           type: string
         degraded:
           type: boolean
+        degrade_reason:
+          oneOf:
+            - type: 'null'
+            - type: string
         items:
           type: array
           items:
@@ -3393,7 +3582,7 @@ components:
 
     RetrievalPreviewData:
       type: object
-      required: [query, selected_mode, index_name, items, total]
+      required: [query, selected_mode, index_name, degraded, items, total]
       properties:
         query:
           type: string
@@ -3402,6 +3591,8 @@ components:
           enum: [local, global, hybrid, mix]
         index_name:
           type: string
+        degraded:
+          type: boolean
         items:
           type: array
           items:

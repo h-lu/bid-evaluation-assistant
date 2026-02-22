@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import uuid
+from collections.abc import Mapping
 
 from fastapi import Body, FastAPI, File, Form, Header, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
@@ -32,12 +34,24 @@ from app.schemas import (
     success_envelope,
 )
 from app.security_gates import evaluate_security_gate
+from app.security import JwtSecurityConfig, parse_and_validate_bearer_token, redact_sensitive
 from app.store import store
+from app.runtime_profile import true_stack_required
 
-try:
-    queue_backend = create_queue_from_env()
-except RuntimeError:
-    queue_backend = InMemoryQueueBackend()
+
+def _create_queue_backend_for_runtime(
+    environ: Mapping[str, str] | None = None,
+) -> InMemoryQueueBackend | object:
+    env = os.environ if environ is None else environ
+    try:
+        return create_queue_from_env(env)
+    except RuntimeError:
+        if true_stack_required(env):
+            raise
+        return InMemoryQueueBackend()
+
+
+queue_backend = _create_queue_backend_for_runtime()
 
 
 def _trace_id_from_request(request: Request) -> str:
@@ -52,6 +66,13 @@ def _tenant_id_from_request(request: Request) -> str:
     if tenant_id:
         return tenant_id
     return "tenant_default"
+
+
+def _request_id_from_request(request: Request) -> str:
+    request_id = getattr(request.state, "request_id", None)
+    if request_id:
+        return request_id
+    return f"req_{uuid.uuid4().hex[:12]}"
 
 
 def _error_response(
@@ -85,15 +106,114 @@ def _job_type_from_event_type(event_type: str) -> str:
 
 def create_app() -> FastAPI:
     app = FastAPI(title="Bid Evaluation Assistant API", version="0.1.0")
+    security_cfg = JwtSecurityConfig.from_env()
+
+    def _append_security_audit_log(
+        *,
+        request: Request,
+        action: str,
+        code: str,
+        detail: str,
+    ) -> None:
+        headers_obj = dict(request.headers.items())
+        headers_payload = redact_sensitive(headers_obj) if security_cfg.log_redaction_enabled else headers_obj
+        try:
+            store._append_audit_log(  # type: ignore[attr-defined]
+                log={
+                    "audit_id": f"audit_{uuid.uuid4().hex[:12]}",
+                    "tenant_id": _tenant_id_from_request(request),
+                    "action": action,
+                    "error_code": code,
+                    "detail": detail,
+                    "trace_id": _trace_id_from_request(request),
+                    "headers": headers_payload,
+                    "occurred_at": store._utcnow_iso(),  # type: ignore[attr-defined]
+                }
+            )
+        except Exception:
+            # Security audit failures must not break API responses.
+            return
+
+    def _require_approval(
+        *,
+        action: str,
+        request: Request,
+        reviewer_id: str,
+        reason: str,
+    ) -> None:
+        if action not in security_cfg.approval_required_actions:
+            return
+        if not reviewer_id.strip() or not reason.strip() or not _trace_id_from_request(request).strip():
+            raise ApiError(
+                code="APPROVAL_REQUIRED",
+                message=f"approval required for action: {action}",
+                error_class="business_rule",
+                retryable=False,
+                http_status=400,
+            )
 
     @app.middleware("http")
     async def add_trace_id(request: Request, call_next):
         request.state.trace_id = request.headers.get("x-trace-id", uuid.uuid4().hex)
-        request.state.tenant_id = request.headers.get("x-tenant-id", "tenant_default")
-        return await call_next(request)
+        request.state.request_id = request.headers.get("x-request-id", f"req_{uuid.uuid4().hex[:12]}")
+        request.state.auth_subject = "anonymous"
+        try:
+            path = request.url.path
+            header_tenant_explicit = request.headers.get("x-tenant-id")
+            if security_cfg.enabled and path.startswith("/api/v1/") and not path.startswith("/api/v1/internal/"):
+                auth_ctx = parse_and_validate_bearer_token(
+                    authorization=request.headers.get("Authorization"),
+                    cfg=security_cfg,
+                )
+                request.state.auth_subject = auth_ctx.subject
+                request.state.tenant_id = auth_ctx.tenant_id
+                if header_tenant_explicit and header_tenant_explicit != auth_ctx.tenant_id:
+                    raise ApiError(
+                        code="TENANT_SCOPE_VIOLATION",
+                        message="tenant mismatch",
+                        error_class="security_sensitive",
+                        retryable=False,
+                        http_status=403,
+                    )
+            else:
+                request.state.tenant_id = header_tenant_explicit or "tenant_default"
+            response = await call_next(request)
+            response.headers["x-trace-id"] = _trace_id_from_request(request)
+            response.headers["x-request-id"] = _request_id_from_request(request)
+            return response
+        except ApiError as exc:
+            _append_security_audit_log(
+                request=request,
+                action="security_blocked",
+                code=exc.code,
+                detail=exc.message,
+            )
+            response = _error_response(
+                request,
+                code=exc.code,
+                message=exc.message,
+                error_class=exc.error_class,
+                retryable=exc.retryable,
+                status_code=exc.http_status,
+            )
+            response.headers["x-trace-id"] = _trace_id_from_request(request)
+            response.headers["x-request-id"] = _request_id_from_request(request)
+            return response
 
     @app.exception_handler(ApiError)
     async def handle_api_error(request: Request, exc: ApiError):
+        if exc.code in {
+            "AUTH_UNAUTHORIZED",
+            "AUTH_FORBIDDEN",
+            "TENANT_SCOPE_VIOLATION",
+            "APPROVAL_REQUIRED",
+        }:
+            _append_security_audit_log(
+                request=request,
+                action="security_blocked",
+                code=exc.code,
+                detail=exc.message,
+            )
         return _error_response(
             request,
             code=exc.code,
@@ -590,6 +710,12 @@ def create_app() -> FastAPI:
                 retryable=False,
                 http_status=400,
             )
+        _require_approval(
+            action="dlq_discard",
+            request=request,
+            reviewer_id=payload.reviewer_id,
+            reason=payload.reason,
+        )
         req_payload = payload.model_dump(mode="json")
         data = store.run_idempotent(
             endpoint=f"POST:/api/v1/dlq/items/{item_id}/discard",
@@ -601,6 +727,7 @@ def create_app() -> FastAPI:
                 reason=payload.reason,
                 reviewer_id=payload.reviewer_id,
                 tenant_id=_tenant_id_from_request(request),
+                trace_id=_trace_id_from_request(request),
             ),
         )
         return success_envelope(data, _trace_id_from_request(request))
@@ -946,6 +1073,41 @@ def create_app() -> FastAPI:
         )
         return success_envelope(data, _trace_id_from_request(request))
 
+    @app.post("/api/v1/internal/release/pipeline/execute")
+    def internal_execute_release_pipeline(
+        request: Request,
+        payload: dict[str, object] = Body(default_factory=dict),
+        x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
+    ):
+        if x_internal_debug != "true":
+            raise ApiError(
+                code="AUTH_FORBIDDEN",
+                message="internal endpoint forbidden",
+                error_class="security_sensitive",
+                retryable=False,
+                http_status=403,
+            )
+        release_id = str(payload.get("release_id") or "").strip()
+        if not release_id:
+            raise ApiError(
+                code="REQ_VALIDATION_FAILED",
+                message="release_id is required",
+                error_class="validation",
+                retryable=False,
+                http_status=400,
+            )
+        replay_passed = bool(payload.get("replay_passed", False))
+        gate_results_obj = payload.get("gate_results", {})
+        gate_results = gate_results_obj if isinstance(gate_results_obj, dict) else {}
+        data = store.execute_release_pipeline(
+            release_id=release_id,
+            tenant_id=_tenant_id_from_request(request),
+            trace_id=_trace_id_from_request(request),
+            replay_passed=replay_passed,
+            gate_results=gate_results,
+        )
+        return success_envelope(data, _trace_id_from_request(request))
+
     @app.get("/api/v1/internal/ops/metrics/summary")
     def internal_get_ops_metrics_summary(
         request: Request,
@@ -998,6 +1160,8 @@ def create_app() -> FastAPI:
         payload: StrategyTuningApplyRequest,
         request: Request,
         x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
+        x_reviewer_id: str | None = Header(default=None, alias="x-reviewer-id"),
+        x_approval_reason: str | None = Header(default=None, alias="x-approval-reason"),
     ):
         if x_internal_debug != "true":
             raise ApiError(
@@ -1007,6 +1171,12 @@ def create_app() -> FastAPI:
                 retryable=False,
                 http_status=403,
             )
+        _require_approval(
+            action="strategy_tuning_apply",
+            request=request,
+            reviewer_id=x_reviewer_id or "",
+            reason=x_approval_reason or "",
+        )
         data = store.apply_strategy_tuning(
             release_id=payload.release_id,
             selector=payload.selector.model_dump(mode="json"),
@@ -1323,7 +1493,13 @@ def create_app() -> FastAPI:
             )
             final_status = str(result.get("final_status"))
             if final_status == "retrying":
-                queue_backend.nack(tenant_id=tenant_id, message_id=msg.message_id, requeue=True)
+                retry_after_ms = int(result.get("retry_after_ms", 0) or 0)
+                queue_backend.nack(
+                    tenant_id=tenant_id,
+                    message_id=msg.message_id,
+                    requeue=True,
+                    delay_ms=max(0, retry_after_ms),
+                )
                 requeued += 1
                 retrying += 1
                 continue
