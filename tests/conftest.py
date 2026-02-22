@@ -8,13 +8,15 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.main import create_app
+from app.main import create_app, queue_backend
 from app.store import store
 
 
 @pytest.fixture(autouse=True)
 def reset_store():
     store.reset()
+    if hasattr(queue_backend, "reset"):
+        queue_backend.reset()
     yield
 
 

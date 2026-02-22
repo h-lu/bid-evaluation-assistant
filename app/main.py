@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import uuid
 
-from fastapi import FastAPI, File, Form, Header, Query, Request, UploadFile
+from fastapi import Body, FastAPI, File, Form, Header, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -11,6 +11,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.cost_gates import evaluate_cost_gate
 from app.errors import ApiError
 from app.performance_gates import evaluate_performance_gate
+from app.queue_backend import InMemoryQueueBackend, create_queue_from_env
 from app.quality_gates import evaluate_quality_gate
 from app.schemas import (
     CostGateEvaluateRequest,
@@ -32,6 +33,11 @@ from app.schemas import (
 )
 from app.security_gates import evaluate_security_gate
 from app.store import store
+
+try:
+    queue_backend = create_queue_from_env()
+except RuntimeError:
+    queue_backend = InMemoryQueueBackend()
 
 
 def _trace_id_from_request(request: Request) -> str:
@@ -867,6 +873,108 @@ def create_app() -> FastAPI:
             tenant_id=_tenant_id_from_request(request),
             trace_id=_trace_id_from_request(request),
         )
+        return success_envelope(data, _trace_id_from_request(request))
+
+    @app.get("/api/v1/internal/outbox/events")
+    def internal_list_outbox_events(
+        request: Request,
+        status: str | None = Query(default=None),
+        limit: int = Query(default=100, ge=1, le=1000),
+        x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
+    ):
+        if x_internal_debug != "true":
+            raise ApiError(
+                code="AUTH_FORBIDDEN",
+                message="internal endpoint forbidden",
+                error_class="security_sensitive",
+                retryable=False,
+                http_status=403,
+            )
+        tenant_id = _tenant_id_from_request(request)
+        items = store.list_outbox_events(tenant_id=tenant_id, status=status, limit=limit)
+        return success_envelope(
+            {"items": items, "total": len(items)},
+            _trace_id_from_request(request),
+        )
+
+    @app.post("/api/v1/internal/outbox/events/{event_id}/publish")
+    def internal_publish_outbox_event(
+        event_id: str,
+        request: Request,
+        x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
+    ):
+        if x_internal_debug != "true":
+            raise ApiError(
+                code="AUTH_FORBIDDEN",
+                message="internal endpoint forbidden",
+                error_class="security_sensitive",
+                retryable=False,
+                http_status=403,
+            )
+        tenant_id = _tenant_id_from_request(request)
+        event = store.mark_outbox_event_published(tenant_id=tenant_id, event_id=event_id)
+        return success_envelope(event, _trace_id_from_request(request))
+
+    @app.post("/api/v1/internal/queue/{queue_name}/enqueue")
+    def internal_enqueue_queue_message(
+        queue_name: str,
+        request: Request,
+        payload: dict[str, object] = Body(default_factory=dict),
+        x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
+    ):
+        if x_internal_debug != "true":
+            raise ApiError(
+                code="AUTH_FORBIDDEN",
+                message="internal endpoint forbidden",
+                error_class="security_sensitive",
+                retryable=False,
+                http_status=403,
+            )
+        tenant_id = _tenant_id_from_request(request)
+        msg = queue_backend.enqueue(
+            tenant_id=tenant_id,
+            queue_name=queue_name,
+            payload={**payload},
+        )
+        return success_envelope(
+            {
+                "message_id": msg.message_id,
+                "tenant_id": msg.tenant_id,
+                "queue_name": msg.queue_name,
+                "attempt": msg.attempt,
+                "payload": msg.payload,
+            },
+            _trace_id_from_request(request),
+        )
+
+    @app.post("/api/v1/internal/queue/{queue_name}/dequeue")
+    def internal_dequeue_queue_message(
+        queue_name: str,
+        request: Request,
+        x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
+    ):
+        if x_internal_debug != "true":
+            raise ApiError(
+                code="AUTH_FORBIDDEN",
+                message="internal endpoint forbidden",
+                error_class="security_sensitive",
+                retryable=False,
+                http_status=403,
+            )
+        tenant_id = _tenant_id_from_request(request)
+        msg = queue_backend.dequeue(tenant_id=tenant_id, queue_name=queue_name)
+        if msg is None:
+            data: dict[str, object] = {"message": None}
+        else:
+            data = {
+                "message": {
+                    "message_id": msg.message_id,
+                    "tenant_id": msg.tenant_id,
+                    "queue_name": msg.queue_name,
+                    "attempt": msg.attempt,
+                    "payload": msg.payload,
+                }
+            }
         return success_envelope(data, _trace_id_from_request(request))
 
     return app
