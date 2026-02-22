@@ -243,6 +243,7 @@ Gate A 设计冻结
  -> Gate D 四门禁通过
  -> Gate E 灰度发布
  -> Gate F 运行优化
+ -> Production Capability Stage（生产能力填充）
 ```
 
 ### 8.2 每个 Gate 的最小证据
@@ -266,6 +267,12 @@ Gate A 设计冻结
 9. `docs/design/2026-02-21-frontend-interaction-spec.md`
 10. `docs/design/2026-02-21-testing-strategy.md`
 11. `docs/design/2026-02-21-deployment-config.md`
+12. `docs/plans/2026-02-22-production-capability-plan.md`
+13. `docs/design/2026-02-22-persistence-and-queue-production-spec.md`
+14. `docs/design/2026-02-22-parser-and-retrieval-production-spec.md`
+15. `docs/design/2026-02-22-workflow-and-worker-production-spec.md`
+16. `docs/design/2026-02-22-security-and-multitenancy-production-spec.md`
+17. `docs/design/2026-02-22-observability-and-deploy-production-spec.md`
 
 ## 10. 一手来源（核验日期：2026-02-21）
 
