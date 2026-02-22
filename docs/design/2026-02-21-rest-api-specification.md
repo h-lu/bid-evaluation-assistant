@@ -530,6 +530,7 @@
     "selected_mode": "global",
     "index_name": "lightrag:tenant_a:prj_xxx",
     "degraded": false,
+    "degrade_reason": null,
     "items": [
       {
         "chunk_id": "ck_xxx",
@@ -560,6 +561,7 @@
 1. `REQ_VALIDATION_FAILED`
 2. `TENANT_SCOPE_VIOLATION`
 3. rerank 降级时 `data.degraded=true`，并回退到原召回分排序
+4. rerank 降级原因通过 `data.degrade_reason` 返回（例如 `rerank_failed`/`rerank_disabled`）
 
 ### 5.11 `POST /retrieval/preview`
 
@@ -574,6 +576,7 @@
     "query": "投标文件中与交付周期相关的承诺",
     "selected_mode": "global",
     "index_name": "lightrag:tenant_a:prj_xxx",
+    "degraded": false,
     "items": [
       {
         "chunk_id": "ck_xxx",

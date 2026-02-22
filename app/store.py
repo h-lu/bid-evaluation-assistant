@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -11,6 +12,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib import request
+from urllib.error import URLError
 
 from app.errors import ApiError
 from app.parser_adapters import (
@@ -86,6 +89,16 @@ class InMemoryStore:
                 "allowed_tools": ["retrieval", "evaluation", "dlq"],
             },
         }
+        self.parser_retrieval_metrics: dict[str, int] = {
+            "parse_runs_total": 0,
+            "parse_fallback_used_total": 0,
+            "parse_index_write_total": 0,
+            "parse_index_fail_total": 0,
+            "retrieval_queries_total": 0,
+            "retrieval_lightrag_calls_total": 0,
+            "retrieval_lightrag_fail_total": 0,
+            "rerank_degraded_total": 0,
+        }
         self._bind_repositories()
 
     def _bind_repositories(self) -> None:
@@ -98,6 +111,7 @@ class InMemoryStore:
         self.workflow_repository = InMemoryWorkflowCheckpointsRepository(self.workflow_checkpoints)
         self._parser_registry = build_default_parser_registry(
             disabled_parsers=disabled_parsers_from_env(),
+            env=os.environ,
         )
 
     def reset(self) -> None:
@@ -128,6 +142,16 @@ class InMemoryStore:
                 "require_double_approval_actions": ["dlq_discard"],
                 "allowed_tools": ["retrieval", "evaluation", "dlq"],
             },
+        }
+        self.parser_retrieval_metrics = {
+            "parse_runs_total": 0,
+            "parse_fallback_used_total": 0,
+            "parse_index_write_total": 0,
+            "parse_index_fail_total": 0,
+            "retrieval_queries_total": 0,
+            "retrieval_lightrag_calls_total": 0,
+            "retrieval_lightrag_fail_total": 0,
+            "rerank_degraded_total": 0,
         }
 
     @staticmethod
@@ -166,10 +190,11 @@ class InMemoryStore:
         document_id: str,
         chunks: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
+        deduped = self._dedupe_chunks(document_id=document_id, chunks=chunks)
         return self.documents_repository.replace_chunks(
             tenant_id=tenant_id,
             document_id=document_id,
-            chunks=chunks,
+            chunks=deduped,
         )
 
     def _persist_parse_manifest(self, *, manifest: dict[str, Any]) -> dict[str, Any]:
@@ -250,12 +275,237 @@ class InMemoryStore:
             parts.append("exclude:" + ",".join(exclude_terms))
         if parts:
             rewritten = f"{normalized} [{' | '.join(parts)}]"
+        diff: list[str] = []
+        lower_rewritten = rewritten.lower()
+        for term in include_terms:
+            if term not in lower_rewritten:
+                diff.append(f"missing_include:{term}")
+        for term in exclude_terms:
+            if term not in lower_rewritten:
+                diff.append(f"missing_exclude:{term}")
         return {
             "rewritten_query": rewritten,
             "rewrite_reason": "normalize_whitespace_and_constraints",
-            "constraints_preserved": True,
-            "constraint_diff": [],
+            "constraints_preserved": len(diff) == 0,
+            "constraint_diff": diff,
         }
+
+    @staticmethod
+    def _extract_page_and_bbox(chunk: dict[str, Any]) -> tuple[int, list[float]]:
+        positions = chunk.get("positions", [])
+        if isinstance(positions, list) and positions:
+            first = positions[0] if isinstance(positions[0], dict) else {}
+            page = int(first.get("page") or 1)
+            bbox = first.get("bbox")
+            if isinstance(bbox, list) and len(bbox) == 4:
+                try:
+                    return page, [float(x) for x in bbox]
+                except (TypeError, ValueError):
+                    return page, [0.0, 0.0, 1.0, 1.0]
+        page = int(chunk.get("page") or 1)
+        bbox = chunk.get("bbox")
+        if isinstance(bbox, list) and len(bbox) == 4:
+            try:
+                return page, [float(x) for x in bbox]
+            except (TypeError, ValueError):
+                return page, [0.0, 0.0, 1.0, 1.0]
+        return page, [0.0, 0.0, 1.0, 1.0]
+
+    @classmethod
+    def _ensure_chunk_shape(cls, *, document_id: str, chunk: dict[str, Any]) -> dict[str, Any]:
+        item = dict(chunk)
+        page, bbox = cls._extract_page_and_bbox(item)
+        text = str(item.get("text") or "")
+        heading_path = item.get("heading_path")
+        if not isinstance(heading_path, list):
+            heading_path = []
+        hash_key = json.dumps(
+            {
+                "document_id": document_id,
+                "page": page,
+                "bbox": bbox,
+                "heading_path": heading_path,
+                "text": text,
+            },
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        chunk_hash = hashlib.sha256(hash_key.encode("utf-8")).hexdigest()
+        item["document_id"] = document_id
+        item["page"] = page
+        item["bbox"] = bbox
+        item["chunk_hash"] = chunk_hash
+        if not item.get("chunk_id"):
+            item["chunk_id"] = f"ck_{chunk_hash[:12]}"
+        if "positions" not in item or not isinstance(item.get("positions"), list) or not item["positions"]:
+            item["positions"] = [{"page": page, "bbox": bbox, "start": 0, "end": max(1, len(text))}]
+        if "pages" not in item or not isinstance(item.get("pages"), list) or not item["pages"]:
+            item["pages"] = [page]
+        if "heading_path" not in item or not isinstance(item.get("heading_path"), list):
+            item["heading_path"] = []
+        item.setdefault("chunk_type", "text")
+        item.setdefault("parser", "mineru")
+        item.setdefault("parser_version", "v0")
+        item.setdefault("section", "")
+        item.setdefault("text", text)
+        return item
+
+    def _dedupe_chunks(
+        self,
+        *,
+        document_id: str,
+        chunks: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        seen: set[str] = set()
+        out: list[dict[str, Any]] = []
+        for chunk in chunks:
+            normalized = self._ensure_chunk_shape(document_id=document_id, chunk=chunk)
+            key = str(normalized.get("chunk_hash", ""))
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(normalized)
+        return out
+
+    @staticmethod
+    def _lightrag_index_prefix() -> str:
+        return os.environ.get("LIGHTRAG_INDEX_PREFIX", "lightrag").strip() or "lightrag"
+
+    def _retrieval_index_name(self, *, tenant_id: str, project_id: str) -> str:
+        prefix = self._lightrag_index_prefix()
+        return f"{prefix}:{tenant_id}:{project_id}"
+
+    @staticmethod
+    def _post_json(
+        *,
+        endpoint: str,
+        payload: dict[str, Any],
+        timeout_s: float,
+    ) -> object:
+        body = json.dumps(payload, ensure_ascii=True, sort_keys=True).encode("utf-8")
+        req = request.Request(
+            endpoint,
+            data=body,
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with request.urlopen(req, timeout=timeout_s) as resp:
+            raw = resp.read().decode("utf-8")
+        return json.loads(raw)
+
+    def _maybe_index_chunks_to_lightrag(
+        self,
+        *,
+        tenant_id: str,
+        project_id: str,
+        document_id: str,
+        doc_type: str,
+        chunks: list[dict[str, Any]],
+    ) -> None:
+        dsn = os.environ.get("LIGHTRAG_DSN", "").strip()
+        if not dsn:
+            return
+        endpoint = dsn.rstrip("/") + "/index"
+        payload = {
+            "index_name": self._retrieval_index_name(tenant_id=tenant_id, project_id=project_id),
+            "tenant_id": tenant_id,
+            "project_id": project_id,
+            "document_id": document_id,
+            "doc_type": doc_type,
+            "chunks": chunks,
+        }
+        timeout_s = float(os.environ.get("RERANK_TIMEOUT_MS", "2000")) / 1000.0 + 3.0
+        self.parser_retrieval_metrics["parse_index_write_total"] += 1
+        try:
+            self._post_json(endpoint=endpoint, payload=payload, timeout_s=timeout_s)
+        except (TimeoutError, URLError, ValueError, OSError):
+            self.parser_retrieval_metrics["parse_index_fail_total"] += 1
+
+    def _query_lightrag(
+        self,
+        *,
+        tenant_id: str,
+        project_id: str,
+        supplier_id: str,
+        query: str,
+        selected_mode: str,
+        top_k: int,
+        doc_scope: list[str],
+    ) -> list[dict[str, Any]] | None:
+        dsn = os.environ.get("LIGHTRAG_DSN", "").strip()
+        if not dsn:
+            return None
+        endpoint = dsn.rstrip("/") + "/query"
+        payload = {
+            "index_name": self._retrieval_index_name(tenant_id=tenant_id, project_id=project_id),
+            "query": query,
+            "mode": selected_mode,
+            "top_k": top_k,
+            "filters": {
+                "tenant_id": tenant_id,
+                "project_id": project_id,
+                "supplier_id": supplier_id,
+                "doc_scope": list(doc_scope),
+            },
+        }
+        timeout_s = float(os.environ.get("RERANK_TIMEOUT_MS", "2000")) / 1000.0 + 3.0
+        self.parser_retrieval_metrics["retrieval_lightrag_calls_total"] += 1
+        try:
+            result = self._post_json(endpoint=endpoint, payload=payload, timeout_s=timeout_s)
+        except (TimeoutError, URLError, ValueError, OSError):
+            self.parser_retrieval_metrics["retrieval_lightrag_fail_total"] += 1
+            return None
+        if not isinstance(result, dict):
+            self.parser_retrieval_metrics["retrieval_lightrag_fail_total"] += 1
+            return None
+        rows = result.get("items")
+        if not isinstance(rows, list):
+            return []
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            metadata = row.get("metadata", {})
+            if not isinstance(metadata, dict):
+                metadata = {}
+            if metadata.get("tenant_id") != tenant_id:
+                continue
+            if metadata.get("project_id") != project_id:
+                continue
+            if metadata.get("supplier_id") != supplier_id:
+                continue
+            doc_type = metadata.get("doc_type")
+            if doc_scope and doc_type not in set(doc_scope):
+                continue
+            out.append(
+                {
+                    "chunk_id": row.get("chunk_id"),
+                    "score_raw": float(row.get("score_raw", 0.5)),
+                    "reason": str(row.get("reason", "matched retrieval intent")),
+                    "metadata": {
+                        "tenant_id": metadata.get("tenant_id"),
+                        "project_id": metadata.get("project_id"),
+                        "supplier_id": metadata.get("supplier_id"),
+                        "document_id": metadata.get("document_id"),
+                        "doc_type": metadata.get("doc_type"),
+                        "page": int(metadata.get("page", 1)),
+                        "bbox": metadata.get("bbox", [0, 0, 1, 1]),
+                    },
+                }
+            )
+        return out
+
+    @staticmethod
+    def _rerank_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if os.environ.get("BEA_FORCE_RERANK_ERROR", "").strip().lower() in {"1", "true", "yes", "on"}:
+            raise RuntimeError("forced rerank error")
+        ranked: list[dict[str, Any]] = []
+        for item in items:
+            copied = dict(item)
+            copied["score_rerank"] = min(1.0, float(copied.get("score_raw", 0.5)) + 0.05)
+            ranked.append(copied)
+        return sorted(ranked, key=lambda x: float(x.get("score_rerank", 0.0)), reverse=True)
 
     def run_idempotent(
         self,
@@ -894,10 +1144,6 @@ class InMemoryStore:
         }
         return mapping.get(query_type, "hybrid")
 
-    @staticmethod
-    def _retrieval_index_name(*, tenant_id: str, project_id: str) -> str:
-        return f"lightrag:{tenant_id}:{project_id}"
-
     def retrieval_query(
         self,
         *,
@@ -913,14 +1159,43 @@ class InMemoryStore:
         must_include_terms: list[str] | None = None,
         must_exclude_terms: list[str] | None = None,
     ) -> dict[str, Any]:
+        self.parser_retrieval_metrics["retrieval_queries_total"] += 1
         selected_mode = self._select_retrieval_mode(query_type=query_type, high_risk=high_risk)
         index_name = self._retrieval_index_name(tenant_id=tenant_id, project_id=project_id)
-        candidates = [x for x in self.citation_sources.values() if x.get("tenant_id") == tenant_id]
-        candidates = [x for x in candidates if x.get("project_id") == project_id]
-        candidates = [x for x in candidates if x.get("supplier_id") == supplier_id]
-        if doc_scope:
-            scope = set(doc_scope)
-            candidates = [x for x in candidates if x.get("doc_type") in scope]
+        candidates = self._query_lightrag(
+            tenant_id=tenant_id,
+            project_id=project_id,
+            supplier_id=supplier_id,
+            query=query,
+            selected_mode=selected_mode,
+            top_k=top_k,
+            doc_scope=doc_scope,
+        )
+        if candidates is None:
+            local_candidates = [x for x in self.citation_sources.values() if x.get("tenant_id") == tenant_id]
+            local_candidates = [x for x in local_candidates if x.get("project_id") == project_id]
+            local_candidates = [x for x in local_candidates if x.get("supplier_id") == supplier_id]
+            if doc_scope:
+                scope = set(doc_scope)
+                local_candidates = [x for x in local_candidates if x.get("doc_type") in scope]
+            candidates = []
+            for source in local_candidates:
+                candidates.append(
+                    {
+                        "chunk_id": source.get("chunk_id"),
+                        "score_raw": float(source.get("score_raw", 0.5)),
+                        "reason": f"matched {query_type} intent",
+                        "metadata": {
+                            "tenant_id": source.get("tenant_id"),
+                            "project_id": source.get("project_id"),
+                            "supplier_id": source.get("supplier_id"),
+                            "document_id": source.get("document_id"),
+                            "doc_type": source.get("doc_type"),
+                            "page": int(source.get("page", 1)),
+                            "bbox": source.get("bbox", [0, 0, 1, 1]),
+                        },
+                    }
+                )
         include_terms = [x.lower() for x in (must_include_terms or []) if x.strip()]
         exclude_terms = [x.lower() for x in (must_exclude_terms or []) if x.strip()]
         rewrite = self._normalize_and_rewrite_query(
@@ -932,40 +1207,41 @@ class InMemoryStore:
             candidates = [
                 x
                 for x in candidates
-                if all(term in str(x.get("text", "")).lower() for term in include_terms)
+                if all(
+                    term in str(self.citation_sources.get(str(x.get("chunk_id", "")), {}).get("text", "")).lower()
+                    for term in include_terms
+                )
             ]
         if exclude_terms:
             candidates = [
                 x
                 for x in candidates
-                if all(term not in str(x.get("text", "")).lower() for term in exclude_terms)
+                if all(
+                    term not in str(self.citation_sources.get(str(x.get("chunk_id", "")), {}).get("text", "")).lower()
+                    for term in exclude_terms
+                )
             ]
 
-        items = []
-        for source in candidates:
-            score_raw = float(source.get("score_raw", 0.5))
-            score_rerank = None if not enable_rerank else min(1.0, score_raw + 0.05)
-            items.append(
-                {
-                    "chunk_id": source.get("chunk_id"),
-                    "score_raw": score_raw,
-                    "score_rerank": score_rerank,
-                    "reason": f"matched {query_type} intent",
-                    "metadata": {
-                        "tenant_id": source.get("tenant_id"),
-                        "project_id": source.get("project_id"),
-                        "supplier_id": source.get("supplier_id"),
-                        "document_id": source.get("document_id"),
-                        "doc_type": source.get("doc_type"),
-                        "page": int(source.get("page", 1)),
-                        "bbox": source.get("bbox", [0, 0, 1, 1]),
-                    },
-                }
-            )
+        items = [dict(x) for x in candidates]
+        degraded = False
+        degrade_reason = ""
         if enable_rerank:
-            items = sorted(items, key=lambda x: x["score_rerank"], reverse=True)
+            try:
+                items = self._rerank_items(items)
+            except Exception:
+                degraded = True
+                degrade_reason = "rerank_failed"
+                self.parser_retrieval_metrics["rerank_degraded_total"] += 1
+                for item in items:
+                    item["score_rerank"] = None
+                items = sorted(items, key=lambda x: float(x.get("score_raw", 0.0)), reverse=True)
         else:
-            items = sorted(items, key=lambda x: x["score_raw"], reverse=True)
+            degraded = True
+            degrade_reason = "rerank_disabled"
+            self.parser_retrieval_metrics["rerank_degraded_total"] += 1
+            for item in items:
+                item["score_rerank"] = None
+            items = sorted(items, key=lambda x: float(x.get("score_raw", 0.0)), reverse=True)
         items = items[:top_k]
         return {
             "query": query,
@@ -976,7 +1252,8 @@ class InMemoryStore:
             "query_type": query_type,
             "selected_mode": selected_mode,
             "index_name": index_name,
-            "degraded": not enable_rerank,
+            "degraded": degraded,
+            "degrade_reason": degrade_reason or None,
             "items": items,
             "total": len(items),
         }
@@ -1025,6 +1302,7 @@ class InMemoryStore:
             "query": query,
             "selected_mode": base["selected_mode"],
             "index_name": base["index_name"],
+            "degraded": base["degraded"],
             "items": preview_items,
             "total": len(preview_items),
         }
@@ -1275,6 +1553,7 @@ class InMemoryStore:
                 "dataset_version": self.dataset_version,
                 "strategy_version": f"stg_v{self.strategy_version_counter}",
             },
+            "parse_retrieval": dict(self.parser_retrieval_metrics),
             "slo": {
                 "success_rate": round(success_rate, 4),
             },
@@ -1776,6 +2055,7 @@ class InMemoryStore:
                 manifest["status"] = "running"
                 manifest["error_code"] = None
                 self._persist_parse_manifest(manifest=manifest)
+            self.parser_retrieval_metrics["parse_runs_total"] += 1
 
         if status != "running":
             raise ApiError(
@@ -1927,27 +2207,39 @@ class InMemoryStore:
                             document_id=document_id,
                             default_text="chunk generated by parse skeleton",
                         )
-                        chunk["chunk_id"] = f"ck_{uuid.uuid4().hex[:12]}"
-                        self._persist_document_chunks(
+                        normalized_chunk = self._ensure_chunk_shape(document_id=document_id, chunk=chunk)
+                        if normalized_chunk.get("parser") != route.selected_parser:
+                            self.parser_retrieval_metrics["parse_fallback_used_total"] += 1
+                        persisted_chunks = self._persist_document_chunks(
                             tenant_id=tenant_id,
                             document_id=document_id,
-                            chunks=[chunk],
+                            chunks=[normalized_chunk],
                         )
-                        self.register_citation_source(
-                            chunk_id=chunk["chunk_id"],
-                            source={
-                                "chunk_id": chunk["chunk_id"],
-                                "document_id": document_id,
-                                "tenant_id": tenant_id,
-                                "project_id": document.get("project_id"),
-                                "supplier_id": document.get("supplier_id"),
-                                "doc_type": document.get("doc_type"),
-                                "page": chunk["positions"][0]["page"],
-                                "bbox": chunk["positions"][0]["bbox"],
-                                "text": chunk["text"],
-                                "context": chunk["section"],
-                                "score_raw": 0.78,
-                            },
+                        for persisted in persisted_chunks:
+                            page, bbox = self._extract_page_and_bbox(persisted)
+                            self.register_citation_source(
+                                chunk_id=str(persisted["chunk_id"]),
+                                source={
+                                    "chunk_id": persisted["chunk_id"],
+                                    "document_id": document_id,
+                                    "tenant_id": tenant_id,
+                                    "project_id": document.get("project_id"),
+                                    "supplier_id": document.get("supplier_id"),
+                                    "doc_type": document.get("doc_type"),
+                                    "page": page,
+                                    "bbox": bbox,
+                                    "text": persisted.get("text", ""),
+                                    "context": persisted.get("section", ""),
+                                    "score_raw": 0.78,
+                                    "chunk_hash": persisted.get("chunk_hash"),
+                                },
+                            )
+                        self._maybe_index_chunks_to_lightrag(
+                            tenant_id=tenant_id,
+                            project_id=str(document.get("project_id") or ""),
+                            document_id=document_id,
+                            doc_type=str(document.get("doc_type") or ""),
+                            chunks=persisted_chunks,
                         )
         self.append_workflow_checkpoint(
             thread_id=thread_id,
@@ -2025,6 +2317,7 @@ class SqliteBackedStore(InMemoryStore):
             "dataset_version": self.dataset_version,
             "strategy_version_counter": self.strategy_version_counter,
             "strategy_config": self.strategy_config,
+            "parser_retrieval_metrics": self.parser_retrieval_metrics,
         }
 
     def _restore_state(self, payload: dict[str, Any]) -> None:
@@ -2110,6 +2403,13 @@ class SqliteBackedStore(InMemoryStore):
         strategy_config = payload.get("strategy_config")
         if isinstance(strategy_config, dict):
             self.strategy_config = strategy_config
+        metrics = payload.get("parser_retrieval_metrics")
+        if isinstance(metrics, dict):
+            merged = dict(self.parser_retrieval_metrics)
+            for key, value in metrics.items():
+                if key in merged and isinstance(value, int):
+                    merged[key] = value
+            self.parser_retrieval_metrics = merged
         self._bind_repositories()
 
     def _save_state(self) -> None:
@@ -2571,6 +2871,7 @@ class PostgresBackedStore(InMemoryStore):
                       chunk_id TEXT PRIMARY KEY,
                       tenant_id TEXT NOT NULL,
                       document_id TEXT NOT NULL,
+                      chunk_hash TEXT,
                       pages JSONB NOT NULL,
                       positions JSONB NOT NULL,
                       section TEXT,
@@ -2580,6 +2881,12 @@ class PostgresBackedStore(InMemoryStore):
                       parser_version TEXT,
                       text TEXT
                     )
+                    """
+                )
+                cur.execute(
+                    """
+                    ALTER TABLE document_chunks
+                    ADD COLUMN IF NOT EXISTS chunk_hash TEXT
                     """
                 )
                 cur.execute(
@@ -2850,6 +3157,7 @@ class PostgresBackedStore(InMemoryStore):
             "dataset_version": self.dataset_version,
             "strategy_version_counter": self.strategy_version_counter,
             "strategy_config": self.strategy_config,
+            "parser_retrieval_metrics": self.parser_retrieval_metrics,
         }
 
     def _restore_state(self, payload: dict[str, Any]) -> None:
@@ -2935,6 +3243,13 @@ class PostgresBackedStore(InMemoryStore):
         strategy_config = payload.get("strategy_config")
         if isinstance(strategy_config, dict):
             self.strategy_config = strategy_config
+        metrics = payload.get("parser_retrieval_metrics")
+        if isinstance(metrics, dict):
+            merged = dict(self.parser_retrieval_metrics)
+            for key, value in metrics.items():
+                if key in merged and isinstance(value, int):
+                    merged[key] = value
+            self.parser_retrieval_metrics = merged
         self._bind_repositories()
 
     def _save_state(self) -> None:

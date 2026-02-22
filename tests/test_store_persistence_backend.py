@@ -97,7 +97,7 @@ def test_store_factory_uses_postgres_backend_with_fake_driver(monkeypatch):
 
         def execute(self, query: str, params=None) -> None:
             normalized = " ".join(query.strip().split()).lower()
-            if normalized.startswith("create table if not exists"):
+            if normalized.startswith("create table if not exists") or normalized.startswith("alter table"):
                 return
             if normalized.startswith("set local app.current_tenant =") or normalized.startswith(
                 "select set_config('app.current_tenant',"
@@ -299,7 +299,7 @@ def test_postgres_store_uses_parse_manifest_repository_sql(monkeypatch):
         def execute(self, query: str, params=None) -> None:
             normalized = " ".join(query.strip().split()).lower()
             statements.append(normalized)
-            if normalized.startswith("create table if not exists"):
+            if normalized.startswith("create table if not exists") or normalized.startswith("alter table"):
                 return
             if normalized.startswith("set local app.current_tenant =") or normalized.startswith(
                 "select set_config('app.current_tenant',"
@@ -403,7 +403,7 @@ def test_postgres_store_run_job_once_persists_status_between_transitions(monkeyp
         def execute(self, query: str, params=None) -> None:
             normalized = " ".join(query.strip().split()).lower()
             statements.append(normalized)
-            if normalized.startswith("create table if not exists"):
+            if normalized.startswith("create table if not exists") or normalized.startswith("alter table"):
                 return
             if normalized.startswith("set local app.current_tenant =") or normalized.startswith(
                 "select set_config('app.current_tenant',"

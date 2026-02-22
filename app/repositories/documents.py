@@ -13,6 +13,19 @@ def _validate_identifier(name: str) -> str:
     return name
 
 
+def _with_page_bbox(chunk: dict[str, Any]) -> dict[str, Any]:
+    item = dict(chunk)
+    positions = item.get("positions")
+    if isinstance(positions, list) and positions and isinstance(positions[0], dict):
+        item.setdefault("page", int(positions[0].get("page") or 1))
+        bbox = positions[0].get("bbox")
+        if isinstance(bbox, list) and len(bbox) == 4:
+            item.setdefault("bbox", bbox)
+    item.setdefault("page", int(item.get("page") or 1))
+    item.setdefault("bbox", [0, 0, 1, 1])
+    return item
+
+
 class InMemoryDocumentsRepository:
     def __init__(
         self,
@@ -55,7 +68,7 @@ class InMemoryDocumentsRepository:
         row = self._documents.get(document_id)
         if row is None or row.get("tenant_id") != tenant_id:
             return []
-        return [dict(x) for x in self._document_chunks.get(document_id, [])]
+        return [_with_page_bbox(dict(x)) for x in self._document_chunks.get(document_id, [])]
 
 
 class PostgresDocumentsRepository:
@@ -146,8 +159,8 @@ class PostgresDocumentsRepository:
         delete_sql = f"DELETE FROM {self._chunks_table} WHERE tenant_id = %s AND document_id = %s"
         insert_sql = f"""
             INSERT INTO {self._chunks_table} (
-                chunk_id, tenant_id, document_id, pages, positions, section, heading_path, chunk_type, parser, parser_version, text
-            ) VALUES (%s, %s, %s, %s::jsonb, %s::jsonb, %s, %s::jsonb, %s, %s, %s, %s)
+                chunk_id, tenant_id, document_id, chunk_hash, pages, positions, section, heading_path, chunk_type, parser, parser_version, text
+            ) VALUES (%s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s::jsonb, %s, %s, %s, %s)
         """
 
         copied = [dict(x) for x in chunks]
@@ -162,6 +175,7 @@ class PostgresDocumentsRepository:
                             chunk.get("chunk_id"),
                             tenant_id,
                             document_id,
+                            chunk.get("chunk_hash", ""),
                             json.dumps(chunk.get("pages", []), ensure_ascii=True, sort_keys=True),
                             json.dumps(chunk.get("positions", []), ensure_ascii=True, sort_keys=True),
                             chunk.get("section", ""),
@@ -178,7 +192,7 @@ class PostgresDocumentsRepository:
 
     def list_chunks(self, *, tenant_id: str, document_id: str) -> list[dict[str, Any]]:
         sql = f"""
-            SELECT chunk_id, document_id, pages, positions, section, heading_path, chunk_type, parser, parser_version, text
+            SELECT chunk_id, document_id, chunk_hash, pages, positions, section, heading_path, chunk_type, parser, parser_version, text
             FROM {self._chunks_table}
             WHERE tenant_id = %s AND document_id = %s
             ORDER BY chunk_id ASC
@@ -191,18 +205,21 @@ class PostgresDocumentsRepository:
             items: list[dict[str, Any]] = []
             for row in rows:
                 items.append(
-                    {
-                        "chunk_id": row[0],
-                        "document_id": row[1],
-                        "pages": row[2] if isinstance(row[2], list) else [],
-                        "positions": row[3] if isinstance(row[3], list) else [],
-                        "section": row[4],
-                        "heading_path": row[5] if isinstance(row[5], list) else [],
-                        "chunk_type": row[6],
-                        "parser": row[7],
-                        "parser_version": row[8],
-                        "text": row[9],
-                    }
+                    _with_page_bbox(
+                        {
+                            "chunk_id": row[0],
+                            "document_id": row[1],
+                            "chunk_hash": row[2],
+                            "pages": row[3] if isinstance(row[3], list) else [],
+                            "positions": row[4] if isinstance(row[4], list) else [],
+                            "section": row[5],
+                            "heading_path": row[6] if isinstance(row[6], list) else [],
+                            "chunk_type": row[7],
+                            "parser": row[8],
+                            "parser_version": row[9],
+                            "text": row[10],
+                        }
+                    )
                 )
             return items
 
