@@ -833,6 +833,7 @@ components:
           supplier_id,
           total_score,
           confidence,
+          citation_coverage,
           risk_level,
           criteria_results,
           citations,
@@ -848,6 +849,10 @@ components:
         total_score:
           type: number
         confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        citation_coverage:
           type: number
           minimum: 0
           maximum: 1
@@ -1189,10 +1194,32 @@ components:
 
     RetrievalQueryData:
       type: object
-      required: [query, query_type, selected_mode, degraded, items, total]
+      required:
+        [
+          query,
+          rewritten_query,
+          rewrite_reason,
+          constraints_preserved,
+          constraint_diff,
+          query_type,
+          selected_mode,
+          degraded,
+          items,
+          total,
+        ]
       properties:
         query:
           type: string
+        rewritten_query:
+          type: string
+        rewrite_reason:
+          type: string
+        constraints_preserved:
+          type: boolean
+        constraint_diff:
+          type: array
+          items:
+            type: string
         query_type:
           type: string
           enum: [fact, relation, comparison, summary, risk]

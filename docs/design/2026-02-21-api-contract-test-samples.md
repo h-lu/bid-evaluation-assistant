@@ -81,7 +81,9 @@
 | `CT-034` | `POST /retrieval/preview` | 预览继承模式选择 | `query_type=summary` | `200` | `data.selected_mode=hybrid` |
 | `CT-035` | `POST /retrieval/query` | 约束词过滤 | `must_include_terms + must_exclude_terms` | `200` | 仅返回满足约束词的候选 |
 | `CT-036` | `POST /retrieval/query` | rerank 降级 | `enable_rerank=false` | `200` | `data.degraded=true` 且 `score_rerank=null` |
+| `CT-046` | `POST /retrieval/query` | 约束保持改写输出 | 任意合法 query | `200` | `rewritten_query/rewrite_reason/constraints_preserved/constraint_diff` 字段存在 |
 | `CT-037` | `GET /evaluations/{evaluation_id}/report` | 报告查询 | 合法 `evaluation_id` | `200` | 返回 `total_score/confidence/criteria_results/citations` |
+| `CT-047` | `GET /evaluations/{evaluation_id}/report` | 引用覆盖率字段 | 合法 `evaluation_id` | `200` | 返回 `citation_coverage` 且 `criteria_results[*].citations` 非空 |
 | `CT-040` | `GET /evaluations/{evaluation_id}/report` | HITL 中断负载 | `evaluation_scope.force_hitl=true` | `200` | `needs_human_review=true` 且 `interrupt.resume_token` 存在 |
 | `CT-041` | `GET /documents/{document_id}` | 文档详情查询 | 合法 `document_id` | `200` | 返回文档元数据与状态 |
 | `CT-042` | `GET /documents/{document_id}/chunks` | 解析分块查询 | parse 成功后查询 | `200` | 返回 `chunk_id/pages/positions/heading_path/chunk_type` |

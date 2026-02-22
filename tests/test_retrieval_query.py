@@ -72,6 +72,10 @@ def test_retrieval_query_selects_mode_for_relation_and_filters_scope(client):
     data = resp.json()["data"]
     assert data["selected_mode"] == "global"
     assert data["degraded"] is False
+    assert data["constraints_preserved"] is True
+    assert data["constraint_diff"] == []
+    assert data["rewrite_reason"]
+    assert data["rewritten_query"]
     assert data["total"] == 1
     assert data["items"][0]["chunk_id"] == "ck_retr_a1"
 
@@ -191,3 +195,25 @@ def test_retrieval_query_degrades_when_rerank_disabled(client):
     data = resp.json()["data"]
     assert data["degraded"] is True
     assert data["items"][0]["score_rerank"] is None
+
+
+def test_retrieval_query_exposes_rewrite_and_constraint_fields(client):
+    _seed_retrieval_sources()
+    resp = client.post(
+        "/api/v1/retrieval/query",
+        headers={"x-tenant-id": "tenant_a"},
+        json={
+            "project_id": "prj_a",
+            "supplier_id": "sup_a",
+            "query": "  delivery   obligations ",
+            "query_type": "relation",
+            "must_include_terms": ["delivery"],
+            "must_exclude_terms": ["warranty"],
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["rewritten_query"]
+    assert data["rewrite_reason"] == "normalize_whitespace_and_constraints"
+    assert data["constraints_preserved"] is True
+    assert data["constraint_diff"] == []

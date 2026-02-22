@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -130,6 +131,24 @@ class InMemoryStore:
             },
         )
 
+    @staticmethod
+    def _normalize_and_rewrite_query(query: str, include_terms: list[str], exclude_terms: list[str]) -> dict[str, Any]:
+        normalized = re.sub(r"\s+", " ", query).strip()
+        rewritten = normalized
+        parts: list[str] = []
+        if include_terms:
+            parts.append("include:" + ",".join(include_terms))
+        if exclude_terms:
+            parts.append("exclude:" + ",".join(exclude_terms))
+        if parts:
+            rewritten = f"{normalized} [{' | '.join(parts)}]"
+        return {
+            "rewritten_query": rewritten,
+            "rewrite_reason": "normalize_whitespace_and_constraints",
+            "constraints_preserved": True,
+            "constraint_diff": [],
+        }
+
     def run_idempotent(
         self,
         *,
@@ -202,6 +221,7 @@ class InMemoryStore:
             "supplier_id": payload.get("supplier_id", ""),
             "total_score": 88.5,
             "confidence": confidence,
+            "citation_coverage": 1.0,
             "risk_level": "medium",
             "criteria_results": [
                 {
@@ -370,6 +390,7 @@ class InMemoryStore:
             "supplier_id": report["supplier_id"],
             "total_score": report["total_score"],
             "confidence": report["confidence"],
+            "citation_coverage": report.get("citation_coverage", 0.0),
             "risk_level": report["risk_level"],
             "criteria_results": report["criteria_results"],
             "citations": report["citations"],
@@ -563,6 +584,11 @@ class InMemoryStore:
             candidates = [x for x in candidates if x.get("doc_type") in scope]
         include_terms = [x.lower() for x in (must_include_terms or []) if x.strip()]
         exclude_terms = [x.lower() for x in (must_exclude_terms or []) if x.strip()]
+        rewrite = self._normalize_and_rewrite_query(
+            query=query,
+            include_terms=include_terms,
+            exclude_terms=exclude_terms,
+        )
         if include_terms:
             candidates = [
                 x
@@ -602,6 +628,10 @@ class InMemoryStore:
         items = items[:top_k]
         return {
             "query": query,
+            "rewritten_query": rewrite["rewritten_query"],
+            "rewrite_reason": rewrite["rewrite_reason"],
+            "constraints_preserved": rewrite["constraints_preserved"],
+            "constraint_diff": rewrite["constraint_diff"],
             "query_type": query_type,
             "selected_mode": selected_mode,
             "degraded": not enable_rerank,

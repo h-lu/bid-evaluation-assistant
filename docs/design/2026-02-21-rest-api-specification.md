@@ -310,6 +310,10 @@
   "success": true,
   "data": {
     "query": "投标文件中与交付周期相关的承诺",
+    "rewritten_query": "投标文件 与 交付周期 相关承诺",
+    "rewrite_reason": "normalize_whitespace_and_terms",
+    "constraints_preserved": true,
+    "constraint_diff": [],
     "query_type": "relation",
     "selected_mode": "global",
     "degraded": false,
@@ -383,6 +387,7 @@
     "supplier_id": "sup_xxx",
     "total_score": 88.5,
     "confidence": 0.78,
+    "citation_coverage": 1.0,
     "risk_level": "medium",
     "criteria_results": [
       {
