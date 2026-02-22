@@ -104,7 +104,7 @@
 2. `docs/design/2026-02-21-job-system-and-retry-spec.md`
 3. `docs/design/2026-02-21-error-handling-and-dlq-spec.md`
 
-## 10. 当前实现增量（r2）
+## 10. 当前实现增量（r3）
 
 1. 新增 Store 后端工厂：`BEA_STORE_BACKEND=memory|sqlite`。
 2. 新增本地持久化后端：`SqliteBackedStore`（用于开发与回归阶段持久化验证）。
@@ -124,3 +124,4 @@
    - `tests/test_outbox_events.py`
    - `tests/test_queue_backend.py`
    - `tests/test_internal_outbox_queue_api.py`
+9. 强化队列安全：`ack/nack` 增加 tenant 归属校验，跨租户返回 `TENANT_SCOPE_VIOLATION`。

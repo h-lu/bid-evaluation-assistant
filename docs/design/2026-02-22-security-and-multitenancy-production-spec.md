@@ -1,6 +1,6 @@
 # 安全与多租户生产化规范
 
-> 版本：v2026.02.22-r1  
+> 版本：v2026.02.22-r2  
 > 状态：Draft  
 > 对齐：`docs/plans/2026-02-22-production-capability-plan.md`
 
@@ -74,3 +74,9 @@
 2. `docs/design/2026-02-21-data-model-and-storage-spec.md`
 3. `docs/ops/agent-change-management.md`
 4. `docs/ops/agent-incident-runbook.md`
+
+## 9. 当前实现增量（r2）
+
+1. 队列内部接口 `ack/nack` 已增加 inflight 消息 tenant 归属校验。
+2. 跨租户 `ack/nack` 统一返回 `403 + TENANT_SCOPE_VIOLATION`。
+3. 新增回归：`tests/test_internal_outbox_queue_api.py::test_internal_queue_ack_nack_blocks_cross_tenant`。

@@ -186,3 +186,37 @@ def test_internal_queue_ack_and_nack_flow(client):
     )
     assert empty.status_code == 200
     assert empty.json()["data"]["message"] is None
+
+
+def test_internal_queue_ack_nack_blocks_cross_tenant(client):
+    enqueue = client.post(
+        "/api/v1/internal/queue/jobs/enqueue",
+        headers={"x-internal-debug": "true", "x-tenant-id": "tenant_a"},
+        json={"job_id": "job_cross_tenant"},
+    )
+    assert enqueue.status_code == 200
+
+    first = client.post(
+        "/api/v1/internal/queue/jobs/dequeue",
+        headers={"x-internal-debug": "true", "x-tenant-id": "tenant_a"},
+    )
+    assert first.status_code == 200
+    message = first.json()["data"]["message"]
+    assert message is not None
+    message_id = message["message_id"]
+
+    cross_ack = client.post(
+        "/api/v1/internal/queue/jobs/ack",
+        headers={"x-internal-debug": "true", "x-tenant-id": "tenant_b"},
+        json={"message_id": message_id},
+    )
+    assert cross_ack.status_code == 403
+    assert cross_ack.json()["error"]["code"] == "TENANT_SCOPE_VIOLATION"
+
+    cross_nack = client.post(
+        "/api/v1/internal/queue/jobs/nack",
+        headers={"x-internal-debug": "true", "x-tenant-id": "tenant_b"},
+        json={"message_id": message_id, "requeue": True},
+    )
+    assert cross_nack.status_code == 403
+    assert cross_nack.json()["error"]["code"] == "TENANT_SCOPE_VIOLATION"

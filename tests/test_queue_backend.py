@@ -26,7 +26,7 @@ def test_queue_nack_requeues_with_attempt_increment():
     assert msg is not None
     assert msg.message_id == enqueued.message_id
 
-    nack = q.nack(message_id=msg.message_id, requeue=True)
+    nack = q.nack(tenant_id="tenant_a", message_id=msg.message_id, requeue=True)
     assert nack is not None
     assert nack.attempt == 1
     assert q.pending_count(tenant_id="tenant_a", queue_name="jobs") == 1
@@ -84,7 +84,7 @@ def test_sqlite_queue_nack_requeue_and_ack_lifecycle(tmp_path: Path):
     assert got is not None
     assert got.message_id == sent.message_id
 
-    nacked = queue.nack(message_id=got.message_id, requeue=True)
+    nacked = queue.nack(tenant_id="tenant_a", message_id=got.message_id, requeue=True)
     assert nacked is not None
     assert nacked.attempt == 1
 
@@ -92,7 +92,7 @@ def test_sqlite_queue_nack_requeue_and_ack_lifecycle(tmp_path: Path):
     assert replay is not None
     assert replay.message_id == got.message_id
     assert replay.attempt == 1
-    queue.ack(message_id=replay.message_id)
+    queue.ack(tenant_id="tenant_a", message_id=replay.message_id)
 
     queue_reloaded = create_queue_from_env(env)
     assert queue_reloaded.pending_count(tenant_id="tenant_a", queue_name="jobs") == 0
@@ -103,3 +103,24 @@ def test_queue_factory_supports_sqlite_backend(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("BEA_QUEUE_SQLITE_PATH", str(tmp_path / "queue_factory.sqlite3"))
     queue = create_queue_from_env()
     assert queue.__class__.__name__ == "SqliteQueueBackend"
+
+
+def test_queue_ack_and_nack_require_same_tenant():
+    q = InMemoryQueueBackend()
+    sent = q.enqueue(tenant_id="tenant_a", queue_name="jobs", payload={"job_id": "job_tenant"})
+    got = q.dequeue(tenant_id="tenant_a", queue_name="jobs")
+    assert got is not None
+
+    try:
+        q.ack(tenant_id="tenant_b", message_id=sent.message_id)
+    except RuntimeError as exc:
+        assert "tenant mismatch" in str(exc)
+    else:
+        raise AssertionError("expected RuntimeError for cross-tenant ack")
+
+    try:
+        q.nack(tenant_id="tenant_b", message_id=sent.message_id, requeue=True)
+    except RuntimeError as exc:
+        assert "tenant mismatch" in str(exc)
+    else:
+        raise AssertionError("expected RuntimeError for cross-tenant nack")

@@ -1086,7 +1086,17 @@ def create_app() -> FastAPI:
                 retryable=False,
                 http_status=400,
             )
-        queue_backend.ack(message_id=message_id)
+        tenant_id = _tenant_id_from_request(request)
+        try:
+            queue_backend.ack(tenant_id=tenant_id, message_id=message_id)
+        except RuntimeError:
+            raise ApiError(
+                code="TENANT_SCOPE_VIOLATION",
+                message="tenant mismatch",
+                error_class="security_sensitive",
+                retryable=False,
+                http_status=403,
+            ) from None
         data = {"queue_name": queue_name, "message_id": message_id, "acked": True}
         return success_envelope(data, _trace_id_from_request(request))
 
@@ -1115,7 +1125,17 @@ def create_app() -> FastAPI:
                 http_status=400,
             )
         requeue = bool(payload.get("requeue", True))
-        msg = queue_backend.nack(message_id=message_id, requeue=requeue)
+        tenant_id = _tenant_id_from_request(request)
+        try:
+            msg = queue_backend.nack(tenant_id=tenant_id, message_id=message_id, requeue=requeue)
+        except RuntimeError:
+            raise ApiError(
+                code="TENANT_SCOPE_VIOLATION",
+                message="tenant mismatch",
+                error_class="security_sensitive",
+                retryable=False,
+                http_status=403,
+            ) from None
         if msg is None:
             data: dict[str, object] = {"message": None}
         else:

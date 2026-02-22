@@ -942,6 +942,11 @@
 }
 ```
 
+约束：
+
+1. `ack/nack` 仅允许操作本租户 inflight 消息。
+2. 跨租户操作返回 `403 + TENANT_SCOPE_VIOLATION`。
+
 ### 5.21 `GET /internal/workflows/{thread_id}/checkpoints`
 
 请求参数：

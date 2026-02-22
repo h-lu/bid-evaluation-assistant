@@ -57,15 +57,23 @@ class InMemoryQueueBackend:
             self._inflight[msg.message_id] = msg
             return msg
 
-    def ack(self, *, message_id: str) -> None:
+    def ack(self, *, tenant_id: str, message_id: str) -> None:
         with self._lock:
+            msg = self._inflight.get(message_id)
+            if msg is None:
+                return
+            if msg.tenant_id != tenant_id:
+                raise RuntimeError("tenant mismatch for queue message")
             self._inflight.pop(message_id, None)
 
-    def nack(self, *, message_id: str, requeue: bool = True) -> QueueMessage | None:
+    def nack(self, *, tenant_id: str, message_id: str, requeue: bool = True) -> QueueMessage | None:
         with self._lock:
             msg = self._inflight.pop(message_id, None)
             if msg is None:
                 return None
+            if msg.tenant_id != tenant_id:
+                self._inflight[message_id] = msg
+                raise RuntimeError("tenant mismatch for queue message")
             msg.attempt += 1
             if requeue:
                 key = self.queue_key(tenant_id=msg.tenant_id, queue_name=msg.queue_name)
@@ -198,13 +206,27 @@ class SqliteQueueBackend:
                 conn.commit()
                 return self._row_to_message(row)
 
-    def ack(self, *, message_id: str) -> None:
+    def ack(self, *, tenant_id: str, message_id: str) -> None:
         with self._lock:
             with self._connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT tenant_id
+                    FROM queue_messages
+                    WHERE message_id = ? AND status = 'inflight'
+                    LIMIT 1
+                    """,
+                    (message_id,),
+                ).fetchone()
+                if row is None:
+                    conn.commit()
+                    return
+                if row["tenant_id"] != tenant_id:
+                    raise RuntimeError("tenant mismatch for queue message")
                 conn.execute("DELETE FROM queue_messages WHERE message_id = ?", (message_id,))
                 conn.commit()
 
-    def nack(self, *, message_id: str, requeue: bool = True) -> QueueMessage | None:
+    def nack(self, *, tenant_id: str, message_id: str, requeue: bool = True) -> QueueMessage | None:
         with self._lock:
             with self._connect() as conn:
                 conn.execute("BEGIN IMMEDIATE")
@@ -220,6 +242,9 @@ class SqliteQueueBackend:
                 if row is None:
                     conn.commit()
                     return None
+                if row["tenant_id"] != tenant_id:
+                    conn.commit()
+                    raise RuntimeError("tenant mismatch for queue message")
                 next_attempt = int(row["attempt"]) + 1
                 status = "pending" if requeue else "discarded"
                 conn.execute(
