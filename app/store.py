@@ -80,6 +80,13 @@ class InMemoryStore:
         self.workflow_checkpoint_backend = (
             os.environ.get("WORKFLOW_CHECKPOINT_BACKEND", "memory").strip().lower() or "memory"
         )
+        self.obs_metrics_namespace = os.environ.get("OBS_METRICS_NAMESPACE", "bea").strip() or "bea"
+        self.otel_exporter_otlp_endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "").strip()
+        self.obs_alert_webhook = os.environ.get("OBS_ALERT_WEBHOOK", "").strip()
+        self.release_canary_ratio = self._env_float("RELEASE_CANARY_RATIO", default=0.1, minimum=0.0, maximum=1.0)
+        self.release_canary_duration_min = self._env_int("RELEASE_CANARY_DURATION_MIN", default=30, minimum=1)
+        self.rollback_max_minutes = self._env_int("ROLLBACK_MAX_MINUTES", default=30, minimum=1)
+        self.p6_readiness_required = self._env_bool("P6_READINESS_REQUIRED", default=True)
         self.idempotency_records: dict[tuple[str, str], IdempotencyRecord] = {}
         self.jobs: dict[str, dict[str, Any]] = {}
         self.documents: dict[str, dict[str, Any]] = {}
@@ -130,6 +137,24 @@ class InMemoryStore:
         except ValueError:
             return default
         return max(minimum, value)
+
+    @staticmethod
+    def _env_float(name: str, *, default: float, minimum: float = 0.0, maximum: float = 1.0) -> float:
+        raw = os.environ.get(name, "").strip()
+        if not raw:
+            return default
+        try:
+            value = float(raw)
+        except ValueError:
+            return default
+        return max(minimum, min(maximum, value))
+
+    @staticmethod
+    def _env_bool(name: str, *, default: bool) -> bool:
+        raw = os.environ.get(name, "").strip().lower()
+        if not raw:
+            return default
+        return raw in {"1", "true", "yes", "on"}
 
     def _bind_repositories(self) -> None:
         self.jobs_repository = InMemoryJobsRepository(self.jobs)
@@ -1609,6 +1634,15 @@ class InMemoryStore:
             "slo": {
                 "success_rate": round(success_rate, 4),
             },
+            "observability": {
+                "metrics_namespace": self.obs_metrics_namespace,
+                "otel_exporter_configured": bool(self.otel_exporter_otlp_endpoint),
+                "alert_webhook_configured": bool(self.obs_alert_webhook),
+                "p6_readiness_required": bool(self.p6_readiness_required),
+                "release_canary_ratio": self.release_canary_ratio,
+                "release_canary_duration_min": self.release_canary_duration_min,
+                "rollback_max_minutes": self.rollback_max_minutes,
+            },
         }
 
     def run_release_replay_e2e(
@@ -1762,6 +1796,71 @@ class InMemoryStore:
                 "occurred_at": self._utcnow_iso(),
             }
         )
+        return data
+
+    def execute_release_pipeline(
+        self,
+        *,
+        release_id: str,
+        tenant_id: str,
+        trace_id: str,
+        replay_passed: bool,
+        gate_results: dict[str, Any],
+    ) -> dict[str, Any]:
+        pipeline_id = f"pl_{uuid.uuid4().hex[:12]}"
+        if self.p6_readiness_required:
+            readiness = self.evaluate_release_readiness(
+                release_id=release_id,
+                tenant_id=tenant_id,
+                trace_id=trace_id,
+                replay_passed=replay_passed,
+                gate_results=gate_results,
+            )
+            admitted = bool(readiness.get("admitted", False))
+            failed_checks = list(readiness.get("failed_checks", []))
+            assessment_id = str(readiness.get("assessment_id", ""))
+        else:
+            admitted = True
+            failed_checks = []
+            assessment_id = ""
+            readiness = None
+
+        stage = "release_blocked"
+        if admitted:
+            stage = "release_ready"
+        data = {
+            "pipeline_id": pipeline_id,
+            "release_id": release_id,
+            "tenant_id": tenant_id,
+            "stage": stage,
+            "admitted": admitted,
+            "failed_checks": failed_checks,
+            "readiness_assessment_id": assessment_id,
+            "canary": {
+                "ratio": self.release_canary_ratio,
+                "duration_min": self.release_canary_duration_min,
+            },
+            "rollback": {
+                "max_minutes": self.rollback_max_minutes,
+            },
+            "readiness_required": bool(self.p6_readiness_required),
+        }
+        self._append_audit_log(
+            log={
+                "audit_id": f"audit_{uuid.uuid4().hex[:12]}",
+                "tenant_id": tenant_id,
+                "action": "release_pipeline_executed",
+                "release_id": release_id,
+                "pipeline_id": pipeline_id,
+                "stage": stage,
+                "admitted": admitted,
+                "failed_checks": failed_checks,
+                "trace_id": trace_id,
+                "occurred_at": self._utcnow_iso(),
+            }
+        )
+        if readiness is not None:
+            data["readiness"] = readiness
         return data
 
     def upsert_rollout_policy(
@@ -2533,6 +2632,25 @@ class SqliteBackedStore(InMemoryStore):
         self._save_state()
         return data
 
+    def execute_release_pipeline(
+        self,
+        *,
+        release_id: str,
+        tenant_id: str,
+        trace_id: str,
+        replay_passed: bool,
+        gate_results: dict[str, Any],
+    ) -> dict[str, Any]:
+        data = super().execute_release_pipeline(
+            release_id=release_id,
+            tenant_id=tenant_id,
+            trace_id=trace_id,
+            replay_passed=replay_passed,
+            gate_results=gate_results,
+        )
+        self._save_state()
+        return data
+
     def create_evaluation_job(self, payload: dict[str, Any]) -> dict[str, Any]:
         data = super().create_evaluation_job(payload)
         self._save_state()
@@ -2759,6 +2877,25 @@ class SqliteBackedStore(InMemoryStore):
         gate_results: dict[str, Any],
     ) -> dict[str, Any]:
         data = super().evaluate_release_readiness(
+            release_id=release_id,
+            tenant_id=tenant_id,
+            trace_id=trace_id,
+            replay_passed=replay_passed,
+            gate_results=gate_results,
+        )
+        self._save_state()
+        return data
+
+    def execute_release_pipeline(
+        self,
+        *,
+        release_id: str,
+        tenant_id: str,
+        trace_id: str,
+        replay_passed: bool,
+        gate_results: dict[str, Any],
+    ) -> dict[str, Any]:
+        data = super().execute_release_pipeline(
             release_id=release_id,
             tenant_id=tenant_id,
             trace_id=trace_id,

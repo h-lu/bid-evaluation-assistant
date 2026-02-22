@@ -11,6 +11,7 @@
 3. 写接口：强制 `Idempotency-Key`
 4. 长任务：返回 `202 Accepted + job_id`
 5. 所有响应：包含 `trace_id`
+6. 所有响应头：包含 `x-trace-id` 与 `x-request-id`
 
 ## 2. 统一响应模型
 
@@ -135,6 +136,7 @@
 3. `POST /internal/release/rollback/execute`
 4. `POST /internal/release/replay/e2e`
 5. `POST /internal/release/readiness/evaluate`
+6. `POST /internal/release/pipeline/execute`
 
 说明：
 
@@ -146,6 +148,7 @@
 6. 回滚执行后必须触发一次 `replay verification`。
 7. `replay/e2e` 会执行上传、解析、评估与（可选）自动恢复，产出 `passed`。
 8. `readiness/evaluate` 汇总 Gate D/E/F 与 replay 结果，给出发布准入结论。
+9. `pipeline/execute` 将 readiness 与 canary/rollback 配置收口为单次发布决策输出。
 
 ### 4.11 Internal Ops（Gate F 运行优化）
 
@@ -882,6 +885,60 @@
 1. 仅内部发布准入流水线使用，必须携带 `x-internal-debug: true`。
 2. 任一门禁为 `false` 或 `replay_passed=false`，都必须阻断发布（`admitted=false`）。
 3. `failed_checks` 必须给出可审计的失败原因列表。
+
+### 5.16C `POST /internal/release/pipeline/execute`
+
+请求体：
+
+```json
+{
+  "release_id": "rel_20260222_01",
+  "replay_passed": true,
+  "gate_results": {
+    "quality": true,
+    "performance": true,
+    "security": true,
+    "cost": true,
+    "rollout": true,
+    "rollback": true,
+    "ops": true
+  }
+}
+```
+
+响应 `200`：
+
+```json
+{
+  "success": true,
+  "data": {
+    "pipeline_id": "pl_xxx",
+    "release_id": "rel_20260222_01",
+    "tenant_id": "tenant_a",
+    "stage": "release_ready",
+    "admitted": true,
+    "failed_checks": [],
+    "readiness_assessment_id": "ra_xxx",
+    "canary": {
+      "ratio": 0.1,
+      "duration_min": 30
+    },
+    "rollback": {
+      "max_minutes": 30
+    },
+    "readiness_required": true
+  },
+  "meta": {
+    "trace_id": "trace_xxx"
+  }
+}
+```
+
+规则说明：
+
+1. 仅内部发布流水线使用，必须携带 `x-internal-debug: true`。
+2. 当 `readiness_required=true` 时，会先执行 readiness 判定；不通过则 `stage=release_blocked`。
+3. 输出中的 canary/rollback 字段来自运行时配置，用于后续自动化步骤执行。
 
 ### 5.17 `POST /internal/ops/data-feedback/run`
 

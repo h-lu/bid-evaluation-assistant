@@ -55,6 +55,13 @@ def _tenant_id_from_request(request: Request) -> str:
     return "tenant_default"
 
 
+def _request_id_from_request(request: Request) -> str:
+    request_id = getattr(request.state, "request_id", None)
+    if request_id:
+        return request_id
+    return f"req_{uuid.uuid4().hex[:12]}"
+
+
 def _error_response(
     request: Request,
     *,
@@ -135,6 +142,7 @@ def create_app() -> FastAPI:
     @app.middleware("http")
     async def add_trace_id(request: Request, call_next):
         request.state.trace_id = request.headers.get("x-trace-id", uuid.uuid4().hex)
+        request.state.request_id = request.headers.get("x-request-id", f"req_{uuid.uuid4().hex[:12]}")
         request.state.auth_subject = "anonymous"
         try:
             path = request.url.path
@@ -156,7 +164,10 @@ def create_app() -> FastAPI:
                     )
             else:
                 request.state.tenant_id = header_tenant_explicit or "tenant_default"
-            return await call_next(request)
+            response = await call_next(request)
+            response.headers["x-trace-id"] = _trace_id_from_request(request)
+            response.headers["x-request-id"] = _request_id_from_request(request)
+            return response
         except ApiError as exc:
             _append_security_audit_log(
                 request=request,
@@ -164,7 +175,7 @@ def create_app() -> FastAPI:
                 code=exc.code,
                 detail=exc.message,
             )
-            return _error_response(
+            response = _error_response(
                 request,
                 code=exc.code,
                 message=exc.message,
@@ -172,6 +183,9 @@ def create_app() -> FastAPI:
                 retryable=exc.retryable,
                 status_code=exc.http_status,
             )
+            response.headers["x-trace-id"] = _trace_id_from_request(request)
+            response.headers["x-request-id"] = _request_id_from_request(request)
+            return response
 
     @app.exception_handler(ApiError)
     async def handle_api_error(request: Request, exc: ApiError):
@@ -1038,6 +1052,41 @@ def create_app() -> FastAPI:
         gate_results_obj = payload.get("gate_results", {})
         gate_results = gate_results_obj if isinstance(gate_results_obj, dict) else {}
         data = store.evaluate_release_readiness(
+            release_id=release_id,
+            tenant_id=_tenant_id_from_request(request),
+            trace_id=_trace_id_from_request(request),
+            replay_passed=replay_passed,
+            gate_results=gate_results,
+        )
+        return success_envelope(data, _trace_id_from_request(request))
+
+    @app.post("/api/v1/internal/release/pipeline/execute")
+    def internal_execute_release_pipeline(
+        request: Request,
+        payload: dict[str, object] = Body(default_factory=dict),
+        x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
+    ):
+        if x_internal_debug != "true":
+            raise ApiError(
+                code="AUTH_FORBIDDEN",
+                message="internal endpoint forbidden",
+                error_class="security_sensitive",
+                retryable=False,
+                http_status=403,
+            )
+        release_id = str(payload.get("release_id") or "").strip()
+        if not release_id:
+            raise ApiError(
+                code="REQ_VALIDATION_FAILED",
+                message="release_id is required",
+                error_class="validation",
+                retryable=False,
+                http_status=400,
+            )
+        replay_passed = bool(payload.get("replay_passed", False))
+        gate_results_obj = payload.get("gate_results", {})
+        gate_results = gate_results_obj if isinstance(gate_results_obj, dict) else {}
+        data = store.execute_release_pipeline(
             release_id=release_id,
             tenant_id=_tenant_id_from_request(request),
             trace_id=_trace_id_from_request(request),

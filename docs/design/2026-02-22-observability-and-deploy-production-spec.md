@@ -1,6 +1,6 @@
 # 观测与部署生产化规范
 
-> 版本：v2026.02.22-r4  
+> 版本：v2026.02.23-r5  
 > 状态：Active  
 > 对齐：`docs/plans/2026-02-22-production-capability-plan.md`
 
@@ -155,8 +155,19 @@ pytest -q
 
 ## 13. 实施检查清单
 
-1. [ ] 指标/日志/Trace 统一语义已落地。
-2. [ ] Gate D/E/F 自动阻断已联动。
-3. [ ] canary 与 rollback 演练通过。
-4. [ ] P6 准入规则在流水线中强制执行。
-5. [ ] 复盘模板与runbook链接完备。
+1. [x] 指标/日志/Trace 统一语义已落地。
+2. [x] Gate D/E/F 自动阻断已联动。
+3. [x] canary 与 rollback 演练通过。
+4. [x] P6 准入规则在流水线中强制执行。
+5. [x] 复盘模板与runbook链接完备。
+
+## 14. 实施更新（2026-02-23）
+
+1. 新增发布流水线执行接口：`POST /api/v1/internal/release/pipeline/execute`，统一输出 `stage/admitted/failed_checks`。
+2. 新增 pipeline 配置收口字段：
+   - `RELEASE_CANARY_RATIO`
+   - `RELEASE_CANARY_DURATION_MIN`
+   - `ROLLBACK_MAX_MINUTES`
+   - `P6_READINESS_REQUIRED`
+3. `ops/metrics/summary` 新增 `observability` 视图，包含 namespace、OTEL/alert 配置状态与发布关键参数。
+4. 请求链路响应头统一返回 `x-trace-id` 与 `x-request-id`，便于 API/Worker/审计跨层对齐排障。

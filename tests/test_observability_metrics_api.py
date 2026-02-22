@@ -47,6 +47,9 @@ def test_internal_ops_metrics_summary_returns_tenant_scoped_metrics(client):
     assert data["worker"]["queue_pending"] >= 0
     assert data["cost"]["dataset_version"].startswith("v")
     assert data["parse_retrieval"]["parse_runs_total"] >= 1
+    assert "observability" in data
+    assert data["observability"]["metrics_namespace"]
+    assert "p6_readiness_required" in data["observability"]
 
 
 def test_internal_ops_metrics_summary_requires_internal_header(client):
