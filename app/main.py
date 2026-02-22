@@ -261,6 +261,47 @@ def create_app() -> FastAPI:
             content=success_envelope(data, _trace_id_from_request(request)),
         )
 
+    @app.get("/api/v1/documents/{document_id}")
+    def get_document(document_id: str, request: Request):
+        document = store.get_document_for_tenant(
+            document_id=document_id,
+            tenant_id=_tenant_id_from_request(request),
+        )
+        if document is None:
+            raise ApiError(
+                code="DOC_NOT_FOUND",
+                message="document not found",
+                error_class="validation",
+                retryable=False,
+                http_status=404,
+            )
+        return success_envelope(
+            {
+                "document_id": document["document_id"],
+                "project_id": document["project_id"],
+                "supplier_id": document["supplier_id"],
+                "doc_type": document["doc_type"],
+                "filename": document["filename"],
+                "status": document["status"],
+            },
+            _trace_id_from_request(request),
+        )
+
+    @app.get("/api/v1/documents/{document_id}/chunks")
+    def get_document_chunks(document_id: str, request: Request):
+        chunks = store.list_document_chunks_for_tenant(
+            document_id=document_id,
+            tenant_id=_tenant_id_from_request(request),
+        )
+        return success_envelope(
+            {
+                "document_id": document_id,
+                "items": chunks,
+                "total": len(chunks),
+            },
+            _trace_id_from_request(request),
+        )
+
     @app.get("/api/v1/jobs")
     def list_jobs(
         request: Request,

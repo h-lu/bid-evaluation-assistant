@@ -176,3 +176,5 @@ uvicorn app.main:app --reload
 15. `POST /api/v1/retrieval/query`
 16. `POST /api/v1/retrieval/preview`
 17. `GET /api/v1/evaluations/{evaluation_id}/report`
+18. `GET /api/v1/documents/{document_id}`
+19. `GET /api/v1/documents/{document_id}/chunks`

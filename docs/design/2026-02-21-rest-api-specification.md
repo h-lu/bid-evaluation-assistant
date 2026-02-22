@@ -406,6 +406,65 @@
 }
 ```
 
+### 5.9 `GET /documents/{document_id}`
+
+响应 `200`：
+
+```json
+{
+  "success": true,
+  "data": {
+    "document_id": "doc_xxx",
+    "project_id": "prj_xxx",
+    "supplier_id": "sup_xxx",
+    "doc_type": "bid",
+    "filename": "bid.pdf",
+    "status": "indexed"
+  },
+  "meta": {
+    "trace_id": "trace_xxx"
+  }
+}
+```
+
+### 5.10 `GET /documents/{document_id}/chunks`
+
+响应 `200`：
+
+```json
+{
+  "success": true,
+  "data": {
+    "document_id": "doc_xxx",
+    "items": [
+      {
+        "chunk_id": "ck_xxx",
+        "document_id": "doc_xxx",
+        "pages": [1],
+        "positions": [
+          {
+            "page": 1,
+            "bbox": [100, 120, 520, 380],
+            "start": 0,
+            "end": 128
+          }
+        ],
+        "section": "投标响应",
+        "heading_path": ["第一章", "响应说明"],
+        "chunk_type": "text",
+        "parser": "mineru",
+        "parser_version": "v0",
+        "text": "原文片段..."
+      }
+    ],
+    "total": 1
+  },
+  "meta": {
+    "trace_id": "trace_xxx"
+  }
+}
+```
+
 当命中 HITL 条件（例如 `force_hitl=true`）时，`data.interrupt` 返回：
 
 ```json

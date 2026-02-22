@@ -28,6 +28,8 @@
 12. `POST /api/v1/retrieval/query`
 13. `POST /api/v1/retrieval/preview`
 14. `GET /api/v1/evaluations/{evaluation_id}/report`
+15. `GET /api/v1/documents/{document_id}`
+16. `GET /api/v1/documents/{document_id}/chunks`
 
 ## 3. 执行约定
 
@@ -80,6 +82,9 @@
 | `CT-036` | `POST /retrieval/query` | rerank 降级 | `enable_rerank=false` | `200` | `data.degraded=true` 且 `score_rerank=null` |
 | `CT-037` | `GET /evaluations/{evaluation_id}/report` | 报告查询 | 合法 `evaluation_id` | `200` | 返回 `total_score/confidence/criteria_results/citations` |
 | `CT-040` | `GET /evaluations/{evaluation_id}/report` | HITL 中断负载 | `evaluation_scope.force_hitl=true` | `200` | `needs_human_review=true` 且 `interrupt.resume_token` 存在 |
+| `CT-041` | `GET /documents/{document_id}` | 文档详情查询 | 合法 `document_id` | `200` | 返回文档元数据与状态 |
+| `CT-042` | `GET /documents/{document_id}/chunks` | 解析分块查询 | parse 成功后查询 | `200` | 返回 `chunk_id/pages/positions/heading_path/chunk_type` |
+| `CT-043` | `GET /documents/{document_id}/chunks` | 跨租户阻断 | 文档归属租户不一致 | `403` | `error.code=TENANT_SCOPE_VIOLATION` |
 
 ## 5. 关键断言模板
 

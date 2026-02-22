@@ -267,6 +267,62 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /documents/{document_id}:
+    get:
+      operationId: getDocument
+      summary: Get document metadata and status
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DocumentId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentResponse'
+        '403':
+          description: Tenant scope violation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Document not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /documents/{document_id}/chunks:
+    get:
+      operationId: listDocumentChunks
+      summary: List parsed chunks for a document
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/DocumentId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentChunkListResponse'
+        '403':
+          description: Tenant scope violation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Document not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /evaluations/{evaluation_id}/resume:
     post:
       operationId: resumeEvaluation
@@ -820,6 +876,116 @@ components:
           const: true
         data:
           $ref: '#/components/schemas/ParseAcceptedData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    DocumentData:
+      type: object
+      required: [document_id, project_id, supplier_id, doc_type, filename, status]
+      properties:
+        document_id:
+          type: string
+        project_id:
+          type: string
+        supplier_id:
+          type: string
+        doc_type:
+          type: string
+          enum: [tender, bid, attachment]
+        filename:
+          type: string
+        status:
+          type: string
+
+    DocumentResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/DocumentData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    ChunkPosition:
+      type: object
+      required: [page, bbox, start, end]
+      properties:
+        page:
+          type: integer
+          minimum: 1
+        bbox:
+          type: array
+          minItems: 4
+          maxItems: 4
+          items:
+            type: number
+        start:
+          type: integer
+          minimum: 0
+        end:
+          type: integer
+          minimum: 0
+
+    DocumentChunk:
+      type: object
+      required:
+        [chunk_id, document_id, pages, positions, section, heading_path, chunk_type, parser, parser_version, text]
+      properties:
+        chunk_id:
+          type: string
+        document_id:
+          type: string
+        pages:
+          type: array
+          items:
+            type: integer
+            minimum: 1
+        positions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChunkPosition'
+        section:
+          type: string
+        heading_path:
+          type: array
+          items:
+            type: string
+        chunk_type:
+          type: string
+          enum: [text, table, image, formula, list]
+        parser:
+          type: string
+        parser_version:
+          type: string
+        text:
+          type: string
+
+    DocumentChunkListData:
+      type: object
+      required: [document_id, items, total]
+      properties:
+        document_id:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DocumentChunk'
+        total:
+          type: integer
+          minimum: 0
+
+    DocumentChunkListResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/DocumentChunkListData'
         meta:
           $ref: '#/components/schemas/Meta'
 
