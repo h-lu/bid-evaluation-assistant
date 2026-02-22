@@ -168,6 +168,34 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /evaluations/{evaluation_id}/audit-logs:
+    get:
+      operationId: listEvaluationAuditLogs
+      summary: List audit logs for an evaluation
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/EvaluationId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EvaluationAuditLogListResponse'
+        '404':
+          description: Evaluation not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Tenant scope violation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /retrieval/query:
     post:
       operationId: retrievalQuery
@@ -852,6 +880,52 @@ components:
           const: true
         data:
           $ref: '#/components/schemas/EvaluationReportData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    EvaluationAuditLog:
+      type: object
+      required: [audit_id, action, reviewer_id, decision, comment, trace_id, occurred_at]
+      properties:
+        audit_id:
+          type: string
+        action:
+          type: string
+          enum: [resume_submitted]
+        reviewer_id:
+          type: string
+        decision:
+          type: string
+        comment:
+          type: string
+        trace_id:
+          type: string
+        occurred_at:
+          type: string
+
+    EvaluationAuditLogListData:
+      type: object
+      required: [evaluation_id, items, total]
+      properties:
+        evaluation_id:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/EvaluationAuditLog'
+        total:
+          type: integer
+          minimum: 0
+
+    EvaluationAuditLogListResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/EvaluationAuditLogListData'
         meta:
           $ref: '#/components/schemas/Meta'
 

@@ -466,6 +466,33 @@ def create_app() -> FastAPI:
             )
         return success_envelope(report, _trace_id_from_request(request))
 
+    @app.get("/api/v1/evaluations/{evaluation_id}/audit-logs")
+    def list_evaluation_audit_logs(evaluation_id: str, request: Request):
+        report = store.get_evaluation_report_for_tenant(
+            evaluation_id=evaluation_id,
+            tenant_id=_tenant_id_from_request(request),
+        )
+        if report is None:
+            raise ApiError(
+                code="EVALUATION_REPORT_NOT_FOUND",
+                message="evaluation report not found",
+                error_class="validation",
+                retryable=False,
+                http_status=404,
+            )
+        items = store.list_audit_logs_for_evaluation(
+            evaluation_id=evaluation_id,
+            tenant_id=_tenant_id_from_request(request),
+        )
+        return success_envelope(
+            {
+                "evaluation_id": evaluation_id,
+                "items": items,
+                "total": len(items),
+            },
+            _trace_id_from_request(request),
+        )
+
     @app.get("/api/v1/citations/{chunk_id}/source")
     def get_citation_source(chunk_id: str, request: Request):
         source = store.get_citation_source(

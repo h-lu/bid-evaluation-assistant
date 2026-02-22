@@ -465,6 +465,34 @@
 }
 ```
 
+### 5.11 `GET /evaluations/{evaluation_id}/audit-logs`
+
+响应 `200`：
+
+```json
+{
+  "success": true,
+  "data": {
+    "evaluation_id": "ev_xxx",
+    "items": [
+      {
+        "audit_id": "audit_xxx",
+        "action": "resume_submitted",
+        "reviewer_id": "u_xxx",
+        "decision": "approve",
+        "comment": "证据充分，允许继续",
+        "trace_id": "trace_xxx",
+        "occurred_at": "2026-02-21T09:30:00Z"
+      }
+    ],
+    "total": 1
+  },
+  "meta": {
+    "trace_id": "trace_xxx"
+  }
+}
+```
+
 当命中 HITL 条件（例如 `force_hitl=true`）时，`data.interrupt` 返回：
 
 ```json

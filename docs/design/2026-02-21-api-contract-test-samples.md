@@ -30,6 +30,7 @@
 14. `GET /api/v1/evaluations/{evaluation_id}/report`
 15. `GET /api/v1/documents/{document_id}`
 16. `GET /api/v1/documents/{document_id}/chunks`
+17. `GET /api/v1/evaluations/{evaluation_id}/audit-logs`
 
 ## 3. 执行约定
 
@@ -85,6 +86,8 @@
 | `CT-041` | `GET /documents/{document_id}` | 文档详情查询 | 合法 `document_id` | `200` | 返回文档元数据与状态 |
 | `CT-042` | `GET /documents/{document_id}/chunks` | 解析分块查询 | parse 成功后查询 | `200` | 返回 `chunk_id/pages/positions/heading_path/chunk_type` |
 | `CT-043` | `GET /documents/{document_id}/chunks` | 跨租户阻断 | 文档归属租户不一致 | `403` | `error.code=TENANT_SCOPE_VIOLATION` |
+| `CT-044` | `GET /evaluations/{evaluation_id}/audit-logs` | 恢复审计查询 | 完成一次 resume 后查询 | `200` | 返回 `resume_submitted` 日志 |
+| `CT-045` | `GET /evaluations/{evaluation_id}/audit-logs` | 跨租户阻断 | evaluation 租户不一致 | `403` | `error.code=TENANT_SCOPE_VIOLATION` |
 
 ## 5. 关键断言模板
 

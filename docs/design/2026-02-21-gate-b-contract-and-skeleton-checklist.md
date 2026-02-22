@@ -63,11 +63,12 @@
 说明：以下为 `codex/gate-c-api-skeleton` 分支的最小可运行证据。
 
 1. 运行命令：`pytest -v`
-2. 测试结果：`68 passed`
+2. 测试结果：`71 passed`
 3. 覆盖范围：
    - B-1：统一响应包络、幂等、`202 + job_id`、`resume_token`、citation source、DLQ 运维接口、retrieval query/preview 契约、evaluation report 契约
    - B-1：HITL 恢复输入校验（`editor.reviewer_id`）、`resume_token` 单次有效与 `interrupt` 负载返回
    - B-1：HITL 恢复动作写入审计日志（`resume_submitted`）
+   - B-1：evaluation 审计日志查询契约（`GET /evaluations/{evaluation_id}/audit-logs`）
    - B-2：任务初始状态、`jobs/{job_id}` 状态查询契约、状态机流转、`cancel` 语义、内部回放接口
    - B-2：transient 错误重试回放（第 1~3 次 `retrying`，第 4 次进入 DLQ 终态）
    - B-4：`documents/{document_id}/parse` 异步受理契约、parse manifest 最小字段、解析失败错误码分类
@@ -95,6 +96,7 @@
    - `tests/test_evaluation_report.py`
    - `tests/test_documents_read_endpoints.py`
    - `tests/test_gate_c_end_to_end.py`
+   - `tests/test_evaluation_audit_logs.py`
 
 更新结论：
 
