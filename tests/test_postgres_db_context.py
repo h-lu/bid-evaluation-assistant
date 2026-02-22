@@ -62,6 +62,6 @@ def test_postgres_tx_runner_sets_tenant_and_commits(monkeypatch):
 
     assert result == {"ok": True}
     assert fake_driver.dsn_calls == ["postgresql://user:pass@localhost:5432/bea"]
-    assert statements[0][0] == "SET LOCAL app.current_tenant = %s"
+    assert statements[0][0] == "SELECT set_config('app.current_tenant', %s, true)"
     assert statements[0][1] == ("tenant_a",)
     assert fake_driver.connection.committed is True

@@ -20,10 +20,21 @@ from app.parser_adapters import (
     select_parse_route,
 )
 from app.db.postgres import PostgresTxRunner
+from app.db.rls import PostgresRlsManager
+from app.repositories.audit_logs import InMemoryAuditLogsRepository
+from app.repositories.audit_logs import PostgresAuditLogsRepository
+from app.repositories.dlq_items import InMemoryDlqItemsRepository
+from app.repositories.dlq_items import PostgresDlqItemsRepository
 from app.repositories.documents import InMemoryDocumentsRepository
 from app.repositories.documents import PostgresDocumentsRepository
+from app.repositories.evaluation_reports import InMemoryEvaluationReportsRepository
+from app.repositories.evaluation_reports import PostgresEvaluationReportsRepository
 from app.repositories.jobs import InMemoryJobsRepository
 from app.repositories.jobs import PostgresJobsRepository
+from app.repositories.parse_manifests import InMemoryParseManifestsRepository
+from app.repositories.parse_manifests import PostgresParseManifestsRepository
+from app.repositories.workflow_checkpoints import InMemoryWorkflowCheckpointsRepository
+from app.repositories.workflow_checkpoints import PostgresWorkflowCheckpointsRepository
 
 
 @dataclass
@@ -51,12 +62,12 @@ class InMemoryStore:
         self.jobs: dict[str, dict[str, Any]] = {}
         self.documents: dict[str, dict[str, Any]] = {}
         self.document_chunks: dict[str, list[dict[str, Any]]] = {}
-        self._bind_repositories()
         self.evaluation_reports: dict[str, dict[str, Any]] = {}
         self.parse_manifests: dict[str, dict[str, Any]] = {}
         self.resume_tokens: dict[str, dict[str, Any]] = {}
         self.audit_logs: list[dict[str, Any]] = []
         self.domain_events_outbox: dict[str, dict[str, Any]] = {}
+        self.outbox_delivery_records: dict[str, dict[str, Any]] = {}
         self.workflow_checkpoints: dict[str, list[dict[str, Any]]] = {}
         self.citation_sources: dict[str, dict[str, Any]] = {}
         self.dlq_items: dict[str, dict[str, Any]] = {}
@@ -75,10 +86,16 @@ class InMemoryStore:
                 "allowed_tools": ["retrieval", "evaluation", "dlq"],
             },
         }
+        self._bind_repositories()
 
     def _bind_repositories(self) -> None:
         self.jobs_repository = InMemoryJobsRepository(self.jobs)
         self.documents_repository = InMemoryDocumentsRepository(self.documents, self.document_chunks)
+        self.parse_manifests_repository = InMemoryParseManifestsRepository(self.parse_manifests)
+        self.evaluation_reports_repository = InMemoryEvaluationReportsRepository(self.evaluation_reports)
+        self.audit_repository = InMemoryAuditLogsRepository(self.audit_logs)
+        self.dlq_repository = InMemoryDlqItemsRepository(self.dlq_items)
+        self.workflow_repository = InMemoryWorkflowCheckpointsRepository(self.workflow_checkpoints)
         self._parser_registry = build_default_parser_registry(
             disabled_parsers=disabled_parsers_from_env(),
         )
@@ -93,6 +110,7 @@ class InMemoryStore:
         self.resume_tokens.clear()
         self.audit_logs.clear()
         self.domain_events_outbox.clear()
+        self.outbox_delivery_records.clear()
         self.workflow_checkpoints.clear()
         self.citation_sources.clear()
         self.dlq_items.clear()
@@ -153,6 +171,21 @@ class InMemoryStore:
             document_id=document_id,
             chunks=chunks,
         )
+
+    def _persist_parse_manifest(self, *, manifest: dict[str, Any]) -> dict[str, Any]:
+        return self.parse_manifests_repository.upsert(manifest=manifest)
+
+    def _persist_evaluation_report(self, *, report: dict[str, Any]) -> dict[str, Any]:
+        return self.evaluation_reports_repository.upsert(report=report)
+
+    def _append_audit_log(self, *, log: dict[str, Any]) -> dict[str, Any]:
+        return self.audit_repository.append(log=log)
+
+    def _persist_dlq_item(self, *, item: dict[str, Any]) -> dict[str, Any]:
+        return self.dlq_repository.upsert(item=item)
+
+    def _persist_workflow_checkpoint(self, *, checkpoint: dict[str, Any]) -> dict[str, Any]:
+        return self.workflow_repository.append(checkpoint=checkpoint)
 
     @staticmethod
     def _select_parser(*, filename: str, doc_type: str | None) -> ParseRoute:
@@ -298,7 +331,8 @@ class InMemoryStore:
             "last_error": None,
             }
         )
-        self.evaluation_reports[evaluation_id] = {
+        self._persist_evaluation_report(
+            report={
             "evaluation_id": evaluation_id,
             "supplier_id": payload.get("supplier_id", ""),
             "total_score": 88.5 if hard_constraint_pass else 0.0,
@@ -326,7 +360,8 @@ class InMemoryStore:
             "tenant_id": tenant_id,
             "thread_id": thread_id,
             "interrupt": interrupt_payload,
-        }
+            }
+        )
         self.append_outbox_event(
             tenant_id=tenant_id,
             event_type="job.created",
@@ -411,7 +446,8 @@ class InMemoryStore:
             filename=document.get("filename", ""),
             doc_type=document.get("doc_type"),
         )
-        self.parse_manifests[job_id] = {
+        self._persist_parse_manifest(
+            manifest={
             "run_id": f"prun_{uuid.uuid4().hex[:12]}",
             "job_id": job_id,
             "document_id": document_id,
@@ -430,7 +466,8 @@ class InMemoryStore:
             "ended_at": None,
             "status": "queued",
             "error_code": None,
-        }
+            }
+        )
         document["status"] = "parse_queued"
         self._persist_document(document=document)
         self.append_outbox_event(
@@ -481,10 +518,9 @@ class InMemoryStore:
         return job
 
     def get_parse_manifest_for_tenant(self, *, job_id: str, tenant_id: str) -> dict[str, Any] | None:
-        manifest = self.parse_manifests.get(job_id)
+        manifest = self.parse_manifests_repository.get(tenant_id=tenant_id, job_id=job_id)
         if manifest is None:
             return None
-        self._assert_tenant_scope(manifest.get("tenant_id", "tenant_default"), tenant_id)
         return manifest
 
     def get_evaluation_report_for_tenant(
@@ -493,7 +529,15 @@ class InMemoryStore:
         evaluation_id: str,
         tenant_id: str,
     ) -> dict[str, Any] | None:
-        report = self.evaluation_reports.get(evaluation_id)
+        report = None
+        get_any = getattr(self.evaluation_reports_repository, "get_any", None)
+        if callable(get_any):
+            report = get_any(evaluation_id=evaluation_id)
+        if report is None:
+            report = self.evaluation_reports_repository.get(
+                tenant_id=tenant_id,
+                evaluation_id=evaluation_id,
+            )
         if report is None:
             return None
         self._assert_tenant_scope(report.get("tenant_id", "tenant_default"), tenant_id)
@@ -545,7 +589,7 @@ class InMemoryStore:
         if new_status == "retrying":
             job["retry_count"] = int(job.get("retry_count", 0)) + 1
         job["status"] = new_status
-        return job
+        return self._persist_job(job=job)
 
     def register_resume_token(
         self,
@@ -612,7 +656,10 @@ class InMemoryStore:
     def create_resume_job(self, *, evaluation_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         job_id = f"job_{uuid.uuid4().hex[:12]}"
         tenant_id = payload.get("tenant_id", "tenant_default")
-        report = self.evaluation_reports.get(evaluation_id)
+        report = self.evaluation_reports_repository.get(
+            evaluation_id=evaluation_id,
+            tenant_id=tenant_id,
+        )
         thread_id = str(report.get("thread_id", "")) if isinstance(report, dict) else ""
         if not thread_id:
             thread_id = self._new_thread_id("resume")
@@ -634,11 +681,11 @@ class InMemoryStore:
             }
         )
         if report is not None:
-            self._assert_tenant_scope(report.get("tenant_id", "tenant_default"), tenant_id)
             report["needs_human_review"] = False
             report["interrupt"] = None
-        self.audit_logs.append(
-            {
+            self._persist_evaluation_report(report=report)
+        self._append_audit_log(
+            log={
                 "audit_id": f"audit_{uuid.uuid4().hex[:12]}",
                 "tenant_id": tenant_id,
                 "evaluation_id": evaluation_id,
@@ -674,11 +721,10 @@ class InMemoryStore:
         evaluation_id: str,
         tenant_id: str,
     ) -> list[dict[str, Any]]:
-        return [
-            x
-            for x in self.audit_logs
-            if x.get("tenant_id") == tenant_id and x.get("evaluation_id") == evaluation_id
-        ]
+        return self.audit_repository.list_for_evaluation(
+            tenant_id=tenant_id,
+            evaluation_id=evaluation_id,
+        )
 
     def append_workflow_checkpoint(
         self,
@@ -690,20 +736,19 @@ class InMemoryStore:
         status: str,
         payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        items = self.workflow_checkpoints.setdefault(thread_id, [])
+        existing = self.workflow_checkpoints.get(thread_id, [])
         checkpoint = {
             "checkpoint_id": f"cp_{uuid.uuid4().hex[:12]}",
             "thread_id": thread_id,
             "job_id": job_id,
-            "seq": len(items) + 1,
+            "seq": len(existing) + 1,
             "node": node,
             "status": status,
             "payload": payload or {},
             "tenant_id": tenant_id,
             "created_at": self._utcnow_iso(),
         }
-        items.append(checkpoint)
-        return checkpoint
+        return self._persist_workflow_checkpoint(checkpoint=checkpoint)
 
     def list_workflow_checkpoints(
         self,
@@ -712,10 +757,11 @@ class InMemoryStore:
         tenant_id: str,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
-        items = self.workflow_checkpoints.get(thread_id, [])
-        scoped = [x for x in items if x.get("tenant_id") == tenant_id]
-        scoped = sorted(scoped, key=lambda x: int(x.get("seq", 0)))
-        return scoped[: max(1, min(limit, 1000))]
+        return self.workflow_repository.list(
+            thread_id=thread_id,
+            tenant_id=tenant_id,
+            limit=limit,
+        )
 
     def append_outbox_event(
         self,
@@ -768,6 +814,61 @@ class InMemoryStore:
         event["status"] = "published"
         event["published_at"] = self._utcnow_iso()
         return event
+
+    @staticmethod
+    def _outbox_delivery_key(*, tenant_id: str, event_id: str, consumer_name: str) -> str:
+        return f"{tenant_id}:{event_id}:{consumer_name}"
+
+    def get_outbox_delivery(
+        self,
+        *,
+        tenant_id: str,
+        event_id: str,
+        consumer_name: str,
+    ) -> dict[str, Any] | None:
+        key = self._outbox_delivery_key(
+            tenant_id=tenant_id,
+            event_id=event_id,
+            consumer_name=consumer_name,
+        )
+        return self.outbox_delivery_records.get(key)
+
+    def mark_outbox_delivered(
+        self,
+        *,
+        tenant_id: str,
+        event_id: str,
+        consumer_name: str,
+        message_id: str,
+    ) -> dict[str, Any]:
+        event = self.domain_events_outbox.get(event_id)
+        if event is None:
+            raise ApiError(
+                code="OUTBOX_EVENT_NOT_FOUND",
+                message="outbox event not found",
+                error_class="validation",
+                retryable=False,
+                http_status=404,
+            )
+        self._assert_tenant_scope(event.get("tenant_id", "tenant_default"), tenant_id)
+        key = self._outbox_delivery_key(
+            tenant_id=tenant_id,
+            event_id=event_id,
+            consumer_name=consumer_name,
+        )
+        existing = self.outbox_delivery_records.get(key)
+        if existing is not None:
+            return existing
+        record = {
+            "delivery_id": f"odl_{uuid.uuid4().hex[:12]}",
+            "tenant_id": tenant_id,
+            "event_id": event_id,
+            "consumer_name": consumer_name,
+            "message_id": message_id,
+            "created_at": self._utcnow_iso(),
+        }
+        self.outbox_delivery_records[key] = record
+        return record
 
     def register_citation_source(self, *, chunk_id: str, source: dict[str, Any]) -> None:
         self.citation_sources[chunk_id] = source
@@ -945,18 +1046,15 @@ class InMemoryStore:
             "error_code": error_code,
             "status": "open",
         }
-        self.dlq_items[dlq_id] = item
-        return item
+        return self._persist_dlq_item(item=item)
 
     def list_dlq_items(self, *, tenant_id: str) -> list[dict[str, Any]]:
-        filtered = [x for x in self.dlq_items.values() if x.get("tenant_id") == tenant_id]
-        return sorted(filtered, key=lambda x: x["dlq_id"])
+        return self.dlq_repository.list(tenant_id=tenant_id)
 
     def get_dlq_item(self, dlq_id: str, *, tenant_id: str) -> dict[str, Any] | None:
-        item = self.dlq_items.get(dlq_id)
+        item = self.dlq_repository.get(tenant_id=tenant_id, dlq_id=dlq_id)
         if item is None:
             return None
-        self._assert_tenant_scope(item.get("tenant_id", "tenant_default"), tenant_id)
         return item
 
     def requeue_dlq_item(self, *, dlq_id: str, trace_id: str | None, tenant_id: str) -> dict[str, Any]:
@@ -997,8 +1095,9 @@ class InMemoryStore:
             }
         )
         item["status"] = "requeued"
-        self.audit_logs.append(
-            {
+        self._persist_dlq_item(item=item)
+        self._append_audit_log(
+            log={
                 "audit_id": f"audit_{uuid.uuid4().hex[:12]}",
                 "tenant_id": tenant_id,
                 "action": "dlq_requeue_submitted",
@@ -1044,8 +1143,9 @@ class InMemoryStore:
         item["status"] = "discarded"
         item["discard_reason"] = reason
         item["reviewer_id"] = reviewer_id
-        self.audit_logs.append(
-            {
+        self._persist_dlq_item(item=item)
+        self._append_audit_log(
+            log={
                 "audit_id": f"audit_{uuid.uuid4().hex[:12]}",
                 "tenant_id": tenant_id,
                 "action": "dlq_discard_submitted",
@@ -1224,7 +1324,10 @@ class InMemoryStore:
         evaluation_job_id = eval_created["job_id"]
         resume_job_id: str | None = None
 
-        report = self.evaluation_reports.get(evaluation_id)
+        report = self.get_evaluation_report_for_tenant(
+            evaluation_id=evaluation_id,
+            tenant_id=tenant_id,
+        )
         if force_hitl and isinstance(report, dict):
             interrupt = report.get("interrupt")
             token = interrupt.get("resume_token") if isinstance(interrupt, dict) else None
@@ -1247,7 +1350,10 @@ class InMemoryStore:
                     resume_job_id = resumed["job_id"]
                     self.run_job_once(job_id=resume_job_id, tenant_id=tenant_id)
 
-        final_report = self.evaluation_reports.get(evaluation_id, {})
+        final_report = self.get_evaluation_report_for_tenant(
+            evaluation_id=evaluation_id,
+            tenant_id=tenant_id,
+        ) or {}
         needs_human_review = bool(final_report.get("needs_human_review", False))
         passed = parse_status == "succeeded" and (not force_hitl or not needs_human_review)
 
@@ -1265,8 +1371,8 @@ class InMemoryStore:
             "passed": passed,
         }
         self.release_replay_runs[replay_run_id] = {**data, "trace_id": trace_id, "created_at": self._utcnow_iso()}
-        self.audit_logs.append(
-            {
+        self._append_audit_log(
+            log={
                 "audit_id": f"audit_{uuid.uuid4().hex[:12]}",
                 "tenant_id": tenant_id,
                 "action": "release_replay_e2e_executed",
@@ -1312,8 +1418,8 @@ class InMemoryStore:
             "trace_id": trace_id,
             "created_at": self._utcnow_iso(),
         }
-        self.audit_logs.append(
-            {
+        self._append_audit_log(
+            log={
                 "audit_id": f"audit_{uuid.uuid4().hex[:12]}",
                 "tenant_id": tenant_id,
                 "action": "release_readiness_evaluated",
@@ -1422,8 +1528,8 @@ class InMemoryStore:
                 "service_restored": True,
             }
 
-        self.audit_logs.append(
-            {
+        self._append_audit_log(
+            log={
                 "audit_id": f"audit_{uuid.uuid4().hex[:12]}",
                 "tenant_id": tenant_id,
                 "action": "rollback_executed",
@@ -1459,8 +1565,8 @@ class InMemoryStore:
         replay_result = self.run_job_once(job_id=replay_job_id, tenant_id=tenant_id)
         replay_status = replay_result["final_status"]
 
-        self.audit_logs.append(
-            {
+        self._append_audit_log(
+            log={
                 "audit_id": f"audit_{uuid.uuid4().hex[:12]}",
                 "tenant_id": tenant_id,
                 "action": "rollback_replay_verified",
@@ -1558,8 +1664,8 @@ class InMemoryStore:
         before = self.dataset_version
         after = self._bump_dataset_version(before, version_bump)
         self.dataset_version = after
-        self.audit_logs.append(
-            {
+        self._append_audit_log(
+            log={
                 "audit_id": f"audit_{uuid.uuid4().hex[:12]}",
                 "tenant_id": tenant_id,
                 "action": "data_feedback_run",
@@ -1604,8 +1710,8 @@ class InMemoryStore:
         }
         self.strategy_version_counter += 1
         strategy_version = f"stg_v{self.strategy_version_counter}"
-        self.audit_logs.append(
-            {
+        self._append_audit_log(
+            log={
                 "audit_id": f"audit_{uuid.uuid4().hex[:12]}",
                 "tenant_id": tenant_id,
                 "action": "strategy_tuning_applied",
@@ -1644,6 +1750,7 @@ class InMemoryStore:
         thread_id = str(job.get("thread_id") or self._new_thread_id("job"))
         if not job.get("thread_id"):
             job["thread_id"] = thread_id
+            self._persist_job(job=job)
 
         status = job["status"]
         if status in {"queued", "retrying", "needs_manual_decision"}:
@@ -1668,6 +1775,7 @@ class InMemoryStore:
                     manifest["started_at"] = self._utcnow_iso()
                 manifest["status"] = "running"
                 manifest["error_code"] = None
+                self._persist_parse_manifest(manifest=manifest)
 
         if status != "running":
             raise ApiError(
@@ -1695,11 +1803,13 @@ class InMemoryStore:
                     "retryable": True,
                     "class": "transient",
                 }
+                self._persist_job(job=retried_job)
                 if job.get("job_type") == "parse":
                     manifest = self.get_parse_manifest_for_tenant(job_id=job_id, tenant_id=tenant_id)
                     if manifest is not None:
                         manifest["status"] = "retrying"
                         manifest["error_code"] = error_code
+                        self._persist_parse_manifest(manifest=manifest)
                 self.append_workflow_checkpoint(
                     thread_id=thread_id,
                     job_id=job_id,
@@ -1752,12 +1862,14 @@ class InMemoryStore:
                 "retryable": error["retryable"],
                 "class": error["class"],
             }
+            self._persist_job(job=failed_job)
             if job.get("job_type") == "parse":
                 manifest = self.get_parse_manifest_for_tenant(job_id=job_id, tenant_id=tenant_id)
                 if manifest is not None:
                     manifest["status"] = "failed"
                     manifest["error_code"] = error_code
                     manifest["ended_at"] = self._utcnow_iso()
+                    self._persist_parse_manifest(manifest=manifest)
                 document_id = job.get("resource", {}).get("id")
                 if isinstance(document_id, str):
                     document = self.get_document_for_tenant(document_id=document_id, tenant_id=tenant_id)
@@ -1790,6 +1902,7 @@ class InMemoryStore:
                 manifest["status"] = "succeeded"
                 manifest["error_code"] = None
                 manifest["ended_at"] = self._utcnow_iso()
+                self._persist_parse_manifest(manifest=manifest)
             document_id = job.get("resource", {}).get("id")
             if isinstance(document_id, str):
                 document = self.get_document_for_tenant(document_id=document_id, tenant_id=tenant_id)
@@ -1900,6 +2013,7 @@ class SqliteBackedStore(InMemoryStore):
             "resume_tokens": self.resume_tokens,
             "audit_logs": self.audit_logs,
             "domain_events_outbox": self.domain_events_outbox,
+            "outbox_delivery_records": self.outbox_delivery_records,
             "workflow_checkpoints": self.workflow_checkpoints,
             "citation_sources": self.citation_sources,
             "dlq_items": self.dlq_items,
@@ -1946,6 +2060,11 @@ class SqliteBackedStore(InMemoryStore):
         self.domain_events_outbox = (
             payload.get("domain_events_outbox", {})
             if isinstance(payload.get("domain_events_outbox"), dict)
+            else {}
+        )
+        self.outbox_delivery_records = (
+            payload.get("outbox_delivery_records", {})
+            if isinstance(payload.get("outbox_delivery_records"), dict)
             else {}
         )
         self.workflow_checkpoints = (
@@ -2131,6 +2250,23 @@ class SqliteBackedStore(InMemoryStore):
 
     def mark_outbox_event_published(self, *, tenant_id: str, event_id: str) -> dict[str, Any]:
         data = super().mark_outbox_event_published(tenant_id=tenant_id, event_id=event_id)
+        self._save_state()
+        return data
+
+    def mark_outbox_delivered(
+        self,
+        *,
+        tenant_id: str,
+        event_id: str,
+        consumer_name: str,
+        message_id: str,
+    ) -> dict[str, Any]:
+        data = super().mark_outbox_delivered(
+            tenant_id=tenant_id,
+            event_id=event_id,
+            consumer_name=consumer_name,
+            message_id=message_id,
+        )
         self._save_state()
         return data
 
@@ -2339,7 +2475,13 @@ def _import_psycopg() -> Any:
 class PostgresBackedStore(InMemoryStore):
     """Persistent store backend for P1 that snapshots state to PostgreSQL."""
 
-    def __init__(self, *, dsn: str, table_name: str = "bea_store_state") -> None:
+    def __init__(
+        self,
+        *,
+        dsn: str,
+        table_name: str = "bea_store_state",
+        apply_rls: bool = False,
+    ) -> None:
         super().__init__()
         if not dsn.strip():
             raise ValueError("POSTGRES_DSN must be provided for postgres store backend")
@@ -2354,6 +2496,28 @@ class PostgresBackedStore(InMemoryStore):
             documents_table="documents",
             chunks_table="document_chunks",
         )
+        self._evaluation_reports_pg_repo = PostgresEvaluationReportsRepository(
+            tx_runner=self._tx_runner,
+            table_name="evaluation_reports",
+        )
+        self._parse_manifests_pg_repo = PostgresParseManifestsRepository(
+            tx_runner=self._tx_runner,
+            table_name="parse_manifests",
+        )
+        self._audit_pg_repo = PostgresAuditLogsRepository(
+            tx_runner=self._tx_runner,
+            table_name="audit_logs",
+        )
+        self._dlq_pg_repo = PostgresDlqItemsRepository(
+            tx_runner=self._tx_runner,
+            table_name="dlq_items",
+        )
+        self._workflow_pg_repo = PostgresWorkflowCheckpointsRepository(
+            tx_runner=self._tx_runner,
+            table_name="workflow_checkpoints",
+        )
+        if apply_rls:
+            PostgresRlsManager(self._dsn).apply()
         self._load_state()
 
     def _connect(self) -> Any:
@@ -2418,12 +2582,81 @@ class PostgresBackedStore(InMemoryStore):
                     )
                     """
                 )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS evaluation_reports (
+                      evaluation_id TEXT PRIMARY KEY,
+                      tenant_id TEXT NOT NULL,
+                      supplier_id TEXT,
+                      total_score DOUBLE PRECISION,
+                      confidence DOUBLE PRECISION,
+                      citation_coverage DOUBLE PRECISION,
+                      risk_level TEXT,
+                      needs_human_review BOOLEAN NOT NULL DEFAULT FALSE,
+                      trace_id TEXT,
+                      thread_id TEXT,
+                      interrupt JSONB,
+                      payload JSONB NOT NULL
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS parse_manifests (
+                      job_id TEXT PRIMARY KEY,
+                      run_id TEXT NOT NULL,
+                      document_id TEXT NOT NULL,
+                      tenant_id TEXT NOT NULL,
+                      selected_parser TEXT NOT NULL,
+                      parser_version TEXT NOT NULL,
+                      fallback_chain JSONB NOT NULL,
+                      input_files JSONB NOT NULL,
+                      started_at TEXT,
+                      ended_at TEXT,
+                      status TEXT NOT NULL,
+                      error_code TEXT
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS audit_logs (
+                      audit_id TEXT PRIMARY KEY,
+                      tenant_id TEXT NOT NULL,
+                      evaluation_id TEXT,
+                      action TEXT NOT NULL,
+                      occurred_at TEXT,
+                      payload JSONB NOT NULL
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS dlq_items (
+                      dlq_id TEXT PRIMARY KEY,
+                      tenant_id TEXT NOT NULL,
+                      status TEXT NOT NULL,
+                      payload JSONB NOT NULL
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS workflow_checkpoints (
+                      checkpoint_id TEXT PRIMARY KEY,
+                      tenant_id TEXT NOT NULL,
+                      thread_id TEXT NOT NULL,
+                      seq INTEGER NOT NULL,
+                      payload JSONB NOT NULL
+                    )
+                    """
+                )
             conn.commit()
 
     def _persist_job(self, *, job: dict[str, Any]) -> dict[str, Any]:
         saved = super()._persist_job(job=job)
         tenant_id = str(saved.get("tenant_id") or "tenant_default")
-        self._jobs_pg_repo.create(tenant_id=tenant_id, job=saved)
+        self._jobs_pg_repo.upsert(tenant_id=tenant_id, job=saved)
         return saved
 
     def get_job_for_tenant(self, *, job_id: str, tenant_id: str) -> dict[str, Any] | None:
@@ -2458,6 +2691,33 @@ class PostgresBackedStore(InMemoryStore):
         )
         return saved
 
+    def _persist_evaluation_report(self, *, report: dict[str, Any]) -> dict[str, Any]:
+        saved = super()._persist_evaluation_report(report=report)
+        tenant_id = str(saved.get("tenant_id") or "tenant_default")
+        self._evaluation_reports_pg_repo.upsert(tenant_id=tenant_id, report=saved)
+        return saved
+
+    def _persist_parse_manifest(self, *, manifest: dict[str, Any]) -> dict[str, Any]:
+        saved = super()._persist_parse_manifest(manifest=manifest)
+        tenant_id = str(saved.get("tenant_id") or "tenant_default")
+        self._parse_manifests_pg_repo.upsert(tenant_id=tenant_id, manifest=saved)
+        return saved
+
+    def _append_audit_log(self, *, log: dict[str, Any]) -> dict[str, Any]:
+        saved = super()._append_audit_log(log=log)
+        self._audit_pg_repo.append(log=saved)
+        return saved
+
+    def _persist_dlq_item(self, *, item: dict[str, Any]) -> dict[str, Any]:
+        saved = super()._persist_dlq_item(item=item)
+        self._dlq_pg_repo.upsert(item=saved)
+        return saved
+
+    def _persist_workflow_checkpoint(self, *, checkpoint: dict[str, Any]) -> dict[str, Any]:
+        saved = super()._persist_workflow_checkpoint(checkpoint=checkpoint)
+        self._workflow_pg_repo.append(checkpoint=saved)
+        return saved
+
     def get_document_for_tenant(self, *, document_id: str, tenant_id: str) -> dict[str, Any] | None:
         loaded = self._documents_pg_repo.get(tenant_id=tenant_id, document_id=document_id)
         if loaded is not None:
@@ -2471,6 +2731,90 @@ class PostgresBackedStore(InMemoryStore):
             self.document_chunks[document_id] = loaded
             return loaded
         return super().list_document_chunks_for_tenant(document_id=document_id, tenant_id=tenant_id)
+
+    def get_parse_manifest_for_tenant(self, *, job_id: str, tenant_id: str) -> dict[str, Any] | None:
+        loaded = self._parse_manifests_pg_repo.get(tenant_id=tenant_id, job_id=job_id)
+        if loaded is not None:
+            self.parse_manifests[job_id] = loaded
+            return loaded
+        return super().get_parse_manifest_for_tenant(job_id=job_id, tenant_id=tenant_id)
+
+    def get_evaluation_report_for_tenant(
+        self,
+        *,
+        evaluation_id: str,
+        tenant_id: str,
+    ) -> dict[str, Any] | None:
+        loaded = self._evaluation_reports_pg_repo.get_any(evaluation_id=evaluation_id)
+        if loaded is not None:
+            self._assert_tenant_scope(loaded.get("tenant_id", "tenant_default"), tenant_id)
+            self.evaluation_reports[evaluation_id] = loaded
+            return {
+                "evaluation_id": loaded["evaluation_id"],
+                "supplier_id": loaded["supplier_id"],
+                "total_score": loaded["total_score"],
+                "confidence": loaded["confidence"],
+                "citation_coverage": loaded.get("citation_coverage", 0.0),
+                "risk_level": loaded["risk_level"],
+                "criteria_results": loaded["criteria_results"],
+                "citations": loaded["citations"],
+                "needs_human_review": loaded["needs_human_review"],
+                "trace_id": loaded["trace_id"],
+                "interrupt": loaded.get("interrupt"),
+            }
+        return super().get_evaluation_report_for_tenant(
+            evaluation_id=evaluation_id,
+            tenant_id=tenant_id,
+        )
+
+    def list_audit_logs_for_evaluation(
+        self,
+        *,
+        evaluation_id: str,
+        tenant_id: str,
+    ) -> list[dict[str, Any]]:
+        loaded = self._audit_pg_repo.list_for_evaluation(
+            tenant_id=tenant_id,
+            evaluation_id=evaluation_id,
+        )
+        # Keep list identity stable so repository bindings remain valid across calls.
+        self.audit_logs.clear()
+        self.audit_logs.extend(dict(x) for x in loaded)
+        return loaded
+
+    def list_dlq_items(self, *, tenant_id: str) -> list[dict[str, Any]]:
+        loaded = self._dlq_pg_repo.list(tenant_id=tenant_id)
+        if loaded:
+            for row in loaded:
+                dlq_id = str(row.get("dlq_id", ""))
+                if dlq_id:
+                    self.dlq_items[dlq_id] = row
+            return loaded
+        return super().list_dlq_items(tenant_id=tenant_id)
+
+    def get_dlq_item(self, dlq_id: str, *, tenant_id: str) -> dict[str, Any] | None:
+        loaded = self._dlq_pg_repo.get(tenant_id=tenant_id, dlq_id=dlq_id)
+        if loaded is not None:
+            self.dlq_items[dlq_id] = loaded
+            return loaded
+        return super().get_dlq_item(dlq_id, tenant_id=tenant_id)
+
+    def list_workflow_checkpoints(
+        self,
+        *,
+        thread_id: str,
+        tenant_id: str,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        loaded = self._workflow_pg_repo.list(
+            thread_id=thread_id,
+            tenant_id=tenant_id,
+            limit=limit,
+        )
+        if loaded:
+            self.workflow_checkpoints[thread_id] = [dict(x) for x in loaded]
+            return loaded
+        return super().list_workflow_checkpoints(thread_id=thread_id, tenant_id=tenant_id, limit=limit)
 
     def _state_snapshot(self) -> dict[str, Any]:
         idempotency_records = []
@@ -2494,6 +2838,7 @@ class PostgresBackedStore(InMemoryStore):
             "resume_tokens": self.resume_tokens,
             "audit_logs": self.audit_logs,
             "domain_events_outbox": self.domain_events_outbox,
+            "outbox_delivery_records": self.outbox_delivery_records,
             "workflow_checkpoints": self.workflow_checkpoints,
             "citation_sources": self.citation_sources,
             "dlq_items": self.dlq_items,
@@ -2540,6 +2885,11 @@ class PostgresBackedStore(InMemoryStore):
         self.domain_events_outbox = (
             payload.get("domain_events_outbox", {})
             if isinstance(payload.get("domain_events_outbox"), dict)
+            else {}
+        )
+        self.outbox_delivery_records = (
+            payload.get("outbox_delivery_records", {})
+            if isinstance(payload.get("outbox_delivery_records"), dict)
             else {}
         )
         self.workflow_checkpoints = (
@@ -2622,6 +2972,23 @@ class PostgresBackedStore(InMemoryStore):
         self._restore_state(payload)
 
     def reset(self) -> None:
+        with self._lock:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        TRUNCATE TABLE
+                          jobs,
+                          documents,
+                          document_chunks,
+                          evaluation_reports,
+                          parse_manifests,
+                          audit_logs,
+                          dlq_items,
+                          workflow_checkpoints
+                        """
+                    )
+                conn.commit()
         super().reset()
         self._save_state()
 
@@ -2727,6 +3094,23 @@ class PostgresBackedStore(InMemoryStore):
 
     def mark_outbox_event_published(self, *, tenant_id: str, event_id: str) -> dict[str, Any]:
         data = super().mark_outbox_event_published(tenant_id=tenant_id, event_id=event_id)
+        self._save_state()
+        return data
+
+    def mark_outbox_delivered(
+        self,
+        *,
+        tenant_id: str,
+        event_id: str,
+        consumer_name: str,
+        message_id: str,
+    ) -> dict[str, Any]:
+        data = super().mark_outbox_delivered(
+            tenant_id=tenant_id,
+            event_id=event_id,
+            consumer_name=consumer_name,
+            message_id=message_id,
+        )
         self._save_state()
         return data
 
@@ -2933,7 +3317,8 @@ def create_store_from_env(environ: Mapping[str, str] | None = None) -> InMemoryS
         if not dsn:
             raise ValueError("POSTGRES_DSN must be set when BEA_STORE_BACKEND=postgres")
         table_name = env.get("BEA_STORE_POSTGRES_TABLE", "bea_store_state")
-        return PostgresBackedStore(dsn=dsn, table_name=table_name)
+        apply_rls = env.get("POSTGRES_APPLY_RLS", "false").strip().lower() in {"1", "true", "yes", "on"}
+        return PostgresBackedStore(dsn=dsn, table_name=table_name, apply_rls=apply_rls)
     return InMemoryStore()
 
 

@@ -1,6 +1,6 @@
 # 存储与队列生产化规范
 
-> 版本：v2026.02.22-r8  
+> 版本：v2026.02.22-r16  
 > 状态：Active  
 > 对齐：`docs/plans/2026-02-22-production-capability-plan.md`
 
@@ -67,7 +67,7 @@ Worker -> Redis Queue -> Domain Executor -> PostgreSQL + Audit
 
 最小交付：
 
-1. 会话变量：`SET app.current_tenant = :tenant_id`。
+1. 会话变量：`SELECT set_config('app.current_tenant', :tenant_id, true)`。
 2. 核心表 RLS policy 全覆盖。
 3. 事务工具：`run_in_tx(tenant_id, fn)`。
 
@@ -125,6 +125,7 @@ Worker -> Redis Queue -> Domain Executor -> PostgreSQL + Audit
 8. `OUTBOX_POLL_INTERVAL_MS`
 9. `BEA_STORE_BACKEND`
 10. `BEA_QUEUE_BACKEND`
+11. `POSTGRES_APPLY_RLS`
 
 ## 8. 测试与验证命令
 
@@ -164,18 +165,18 @@ pytest -q
 
 ## 12. 实施检查清单
 
-1. [ ] repository 真实现可用。
-2. [ ] RLS 生效并有越权回归。
-3. [ ] Redis queue 路径通过并发回归。
-4. [ ] outbox relay 幂等验证通过。
-5. [ ] 回退脚本与演练记录完成。
+1. [x] repository 真实现可用。
+2. [x] RLS 生效并有越权回归。
+3. [x] Redis queue 路径通过并发回归。
+4. [x] outbox relay 幂等验证通过。
+5. [x] 回退脚本与演练记录完成。
 
 ## 13. 本轮实现更新（r2+）
 
 1. 新增 `PostgresBackedStore`，支持 `BEA_STORE_BACKEND=postgres`。
 2. `create_store_from_env` 新增 `POSTGRES_DSN` 校验与 `BEA_STORE_POSTGRES_TABLE` 配置。
 3. 新增工厂回归：`tests/test_store_persistence_backend.py` 覆盖 postgres 分支（fake driver）。
-4. 新增 `app/db/postgres.py` 事务执行器 `PostgresTxRunner`，统一 `SET LOCAL app.current_tenant` 注入。
+4. 新增 `app/db/postgres.py` 事务执行器 `PostgresTxRunner`，统一 `set_config('app.current_tenant', ..., true)` 注入。
 5. 新增 `RedisQueueBackend`，支持 `BEA_QUEUE_BACKEND=redis` 与 tenant 前缀 key 语义。
 6. 新增回归：`tests/test_queue_backend.py` 覆盖 redis 工厂与 `enqueue/dequeue/nack/ack` 生命周期（fake driver）。
 7. 新增仓储层起步实现：`app/repositories/jobs.py`（InMemory + Postgres jobs repository）与回归 `tests/test_jobs_repository.py`。
@@ -183,3 +184,23 @@ pytest -q
 9. `PostgresBackedStore` 已同步写入 `jobs` 表，并在 `get_job_for_tenant` 优先走 `PostgresJobsRepository`。
 10. 新增 `documents/chunks` 仓储层：`app/repositories/documents.py`（InMemory + Postgres）。
 11. `PostgresBackedStore` 增加 `documents/document_chunks` 表，并同步写入文档与 chunk 数据。
+12. 新增 `parse_manifests` 仓储层：`app/repositories/parse_manifests.py`（InMemory + Postgres）。
+13. `run_job_once` 的 parse 状态流转（running/retrying/failed/succeeded）统一通过仓储落库，避免仅内存修改。
+14. `PostgresBackedStore` 增加 `parse_manifests` 表，并在查询 manifest 时优先走 PostgreSQL 仓储。
+15. 新增 `workflow_checkpoints/dlq_items/audit_logs` 仓储层（InMemory + Postgres），并补齐对应单测。
+16. `InMemoryStore` 将 checkpoint、DLQ、audit 写入统一收敛到仓储 helper，避免直接修改内存结构导致的持久化偏差。
+17. `PostgresBackedStore` 增加 `workflow_checkpoints/dlq_items/audit_logs` 表，并将上述三类读写优先走 PostgreSQL 仓储。
+18. 新增仓储同步回归：当 repository 返回副本对象时，`append_workflow_checkpoint` 与 `requeue_dlq_item` 仍可正确持久化状态。
+19. outbox relay 增加消费幂等键实现：`event_id + consumer_name`，并在队列消息中携带 `consumer_name`。
+20. `store_state` 快照新增 `outbox_delivery_records`，覆盖 memory/sqlite/postgres 三种后端状态恢复。
+21. 新增 `app/db/rls.py`（`PostgresRlsManager`），支持核心表 RLS policy 批量下发（`ENABLE/FORCE RLS + tenant policy`）。
+22. `create_store_from_env` 支持 `POSTGRES_APPLY_RLS=true` 自动下发策略，并有工厂回归测试覆盖。
+23. 新增回退脚本 `scripts/rollback_to_sqlite.py`，可将 `.env` 后端开关一键切回 `sqlite`。
+24. 新增命令级回退手册 `docs/ops/2026-02-22-backend-rollback-runbook.md`，包含切换、重启、验证与证据模板。
+25. 新增 RLS 下发脚本 `scripts/apply_postgres_rls.py`，支持 `--dsn/--tables` 批量执行策略。
+26. 新增 `evaluation_reports` 仓储层（InMemory + Postgres），并将创建/恢复路径改为仓储落库。
+27. `PostgresBackedStore` 增加 `evaluation_reports` 表，并在读取评估报告时优先走 PostgreSQL 仓储。
+28. 新增双写一致性比对能力：`app/ops/backend_consistency.py` + `scripts/compare_store_backends.py`。
+29. 新增一致性比对 Runbook：`docs/ops/2026-02-22-backend-consistency-runbook.md`（命令级 + 证据模板）。
+30. 修复真实 PostgreSQL 事务上下文注入语句兼容性：`SET LOCAL ... = %s` 改为 `SELECT set_config(..., true)`，避免参数化语法错误。
+31. 修复 Postgres job 状态持久化缺口：`jobs` 仓储新增 upsert，`transition_job_status/run_job_once` 在状态与错误字段变更后立即落库。

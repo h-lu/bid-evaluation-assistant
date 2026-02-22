@@ -32,7 +32,7 @@ class PostgresTxRunner:
         psycopg = _import_psycopg()
         with psycopg.connect(self._dsn) as conn:
             with conn.cursor() as cur:
-                cur.execute("SET LOCAL app.current_tenant = %s", (tenant_id,))
+                cur.execute("SELECT set_config('app.current_tenant', %s, true)", (tenant_id,))
             result = fn(conn)
             conn.commit()
             return result

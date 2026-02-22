@@ -975,7 +975,8 @@
 请求参数：
 
 1. `queue_name`（query，可选，默认 `jobs`）
-2. `limit`（query，可选，默认 `100`，范围 `1..1000`）
+2. `consumer_name`（query，可选，默认 `default`）
+3. `limit`（query，可选，默认 `100`，范围 `1..1000`）
 
 响应 `200`：
 
@@ -985,7 +986,8 @@
   "data": {
     "published_count": 1,
     "queued_count": 1,
-    "message_ids": ["msg_xxx"]
+    "message_ids": ["msg_xxx"],
+    "consumer_name": "worker-a"
   },
   "meta": {
     "trace_id": "trace_xxx"
@@ -997,7 +999,8 @@
 
 1. 仅消费当前租户 `status=pending` 的 outbox 事件。
 2. 成功入队后事件必须原子标记为 `published`。
-3. 对已发布事件重复执行 relay 不得重复入队。
+3. 同一 `consumer_name` 对同一 `event_id` 重复 relay 不得重复入队（幂等键：`event_id + consumer_name`）。
+4. 不同 `consumer_name` 可对同一事件各消费一次。
 
 ### 5.20 Internal Queue 接口族
 

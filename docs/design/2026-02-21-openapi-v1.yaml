@@ -741,6 +741,12 @@ paths:
           schema:
             type: string
             default: jobs
+        - name: consumer_name
+          in: query
+          required: false
+          schema:
+            type: string
+            default: default
         - name: limit
           in: query
           required: false
@@ -2048,7 +2054,7 @@ components:
 
     OutboxRelayData:
       type: object
-      required: [published_count, queued_count, message_ids]
+      required: [published_count, queued_count, message_ids, consumer_name]
       properties:
         published_count:
           type: integer
@@ -2060,6 +2066,8 @@ components:
           type: array
           items:
             type: string
+        consumer_name:
+          type: string
 
     OutboxRelayResponse:
       type: object

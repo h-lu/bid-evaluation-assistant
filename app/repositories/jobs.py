@@ -18,6 +18,9 @@ class InMemoryJobsRepository:
         self._jobs = jobs
 
     def create(self, *, job: dict[str, Any]) -> dict[str, Any]:
+        return self.upsert(job=job)
+
+    def upsert(self, *, job: dict[str, Any]) -> dict[str, Any]:
         self._jobs[str(job["job_id"])] = dict(job)
         return dict(job)
 
@@ -38,12 +41,25 @@ class PostgresJobsRepository:
         self._table_name = _validate_identifier(table_name)
 
     def create(self, *, tenant_id: str, job: dict[str, Any]) -> dict[str, Any]:
+        return self.upsert(tenant_id=tenant_id, job=job)
+
+    def upsert(self, *, tenant_id: str, job: dict[str, Any]) -> dict[str, Any]:
         payload = dict(job)
         payload["tenant_id"] = tenant_id
         sql = f"""
             INSERT INTO {self._table_name} (
                 job_id, tenant_id, job_type, status, retry_count, thread_id, trace_id, resource, payload, last_error
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb)
+            ON CONFLICT(job_id) DO UPDATE SET
+                tenant_id = EXCLUDED.tenant_id,
+                job_type = EXCLUDED.job_type,
+                status = EXCLUDED.status,
+                retry_count = EXCLUDED.retry_count,
+                thread_id = EXCLUDED.thread_id,
+                trace_id = EXCLUDED.trace_id,
+                resource = EXCLUDED.resource,
+                payload = EXCLUDED.payload,
+                last_error = EXCLUDED.last_error
         """
 
         def _op(conn: Any) -> dict[str, Any]:

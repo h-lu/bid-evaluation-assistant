@@ -1,3 +1,6 @@
+from app.store import store
+
+
 def _eval_payload() -> dict:
     return {
         "project_id": "prj_internal",
@@ -220,3 +223,46 @@ def test_internal_queue_ack_nack_blocks_cross_tenant(client):
     )
     assert cross_nack.status_code == 403
     assert cross_nack.json()["error"]["code"] == "TENANT_SCOPE_VIOLATION"
+
+def test_internal_outbox_relay_is_idempotent_per_event_and_consumer(client):
+    create = client.post(
+        "/api/v1/evaluations",
+        headers={"Idempotency-Key": "idem_internal_relay_consumer_1", "x-tenant-id": "tenant_a"},
+        json=_eval_payload(),
+    )
+    assert create.status_code == 202
+
+    pending = client.get(
+        "/api/v1/internal/outbox/events?status=pending",
+        headers={"x-internal-debug": "true", "x-tenant-id": "tenant_a"},
+    )
+    assert pending.status_code == 200
+    event_id = pending.json()["data"]["items"][0]["event_id"]
+
+    first = client.post(
+        "/api/v1/internal/outbox/relay?queue_name=jobs&limit=50&consumer_name=worker-a",
+        headers={"x-internal-debug": "true", "x-tenant-id": "tenant_a"},
+    )
+    assert first.status_code == 200
+    assert first.json()["data"]["published_count"] >= 1
+
+    # Simulate replay window where event appears pending again; same consumer must not duplicate side effects.
+    store.domain_events_outbox[event_id]["status"] = "pending"
+    store.domain_events_outbox[event_id]["published_at"] = None
+
+    second_same_consumer = client.post(
+        "/api/v1/internal/outbox/relay?queue_name=jobs&limit=50&consumer_name=worker-a",
+        headers={"x-internal-debug": "true", "x-tenant-id": "tenant_a"},
+    )
+    assert second_same_consumer.status_code == 200
+    assert second_same_consumer.json()["data"]["published_count"] == 0
+
+    store.domain_events_outbox[event_id]["status"] = "pending"
+    store.domain_events_outbox[event_id]["published_at"] = None
+
+    third_other_consumer = client.post(
+        "/api/v1/internal/outbox/relay?queue_name=jobs&limit=50&consumer_name=worker-b",
+        headers={"x-internal-debug": "true", "x-tenant-id": "tenant_a"},
+    )
+    assert third_other_consumer.status_code == 200
+    assert third_other_consumer.json()["data"]["published_count"] >= 1

@@ -1061,6 +1061,7 @@ def create_app() -> FastAPI:
     def internal_relay_outbox_events(
         request: Request,
         queue_name: str = Query(default="jobs"),
+        consumer_name: str = Query(default="default"),
         limit: int = Query(default=100, ge=1, le=1000),
         x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
     ):
@@ -1076,6 +1077,17 @@ def create_app() -> FastAPI:
         pending_events = store.list_outbox_events(tenant_id=tenant_id, status="pending", limit=limit)
         message_ids: list[str] = []
         for event in pending_events:
+            existing_delivery = store.get_outbox_delivery(
+                tenant_id=tenant_id,
+                event_id=event["event_id"],
+                consumer_name=consumer_name,
+            )
+            if existing_delivery is not None:
+                store.mark_outbox_event_published(
+                    tenant_id=tenant_id,
+                    event_id=event["event_id"],
+                )
+                continue
             event_payload = event.get("payload", {})
             job_id = event_payload.get("job_id", event["aggregate_id"])
             job_type = event_payload.get("job_type", _job_type_from_event_type(event_type=event["event_type"]))
@@ -1091,6 +1103,7 @@ def create_app() -> FastAPI:
                 "trace_id": trace_id,
                 "job_type": job_type,
                 "attempt": int(event_payload.get("attempt", 0)),
+                "consumer_name": consumer_name,
             }
             msg = queue_backend.enqueue(
                 tenant_id=tenant_id,
@@ -1098,11 +1111,18 @@ def create_app() -> FastAPI:
                 payload=payload,
             )
             message_ids.append(msg.message_id)
+            store.mark_outbox_delivered(
+                tenant_id=tenant_id,
+                event_id=event["event_id"],
+                consumer_name=consumer_name,
+                message_id=msg.message_id,
+            )
             store.mark_outbox_event_published(tenant_id=tenant_id, event_id=event["event_id"])
         data = {
             "published_count": len(message_ids),
             "queued_count": len(message_ids),
             "message_ids": message_ids,
+            "consumer_name": consumer_name,
         }
         return success_envelope(data, _trace_id_from_request(request))
 
