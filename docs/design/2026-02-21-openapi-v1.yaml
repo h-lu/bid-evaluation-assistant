@@ -646,6 +646,117 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /internal/performance-gates/evaluate:
+    post:
+      operationId: internalEvaluatePerformanceGate
+      summary: Evaluate Gate D performance thresholds
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PerformanceGateEvaluateRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PerformanceGateEvaluateResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /internal/security-gates/evaluate:
+    post:
+      operationId: internalEvaluateSecurityGate
+      summary: Evaluate Gate D security blocking checks
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SecurityGateEvaluateRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SecurityGateEvaluateResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /internal/cost-gates/evaluate:
+    post:
+      operationId: internalEvaluateCostGate
+      summary: Evaluate Gate D cost thresholds and degradation availability
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CostGateEvaluateRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CostGateEvaluateResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
 components:
   securitySchemes:
     BearerAuth:
@@ -886,6 +997,327 @@ components:
           const: true
         data:
           $ref: '#/components/schemas/QualityGateEvaluateData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    PerformanceGateMetrics:
+      type: object
+      required: [api_p95_s, retrieval_p95_s, parse_50p_p95_s, evaluation_p95_s, queue_dlq_rate, cache_hit_rate]
+      properties:
+        api_p95_s:
+          type: number
+          minimum: 0
+        retrieval_p95_s:
+          type: number
+          minimum: 0
+        parse_50p_p95_s:
+          type: number
+          minimum: 0
+        evaluation_p95_s:
+          type: number
+          minimum: 0
+        queue_dlq_rate:
+          type: number
+          minimum: 0
+          maximum: 1
+        cache_hit_rate:
+          type: number
+          minimum: 0
+          maximum: 1
+
+    PerformanceGateEvaluateRequest:
+      type: object
+      required: [dataset_id, metrics]
+      properties:
+        dataset_id:
+          type: string
+        metrics:
+          $ref: '#/components/schemas/PerformanceGateMetrics'
+
+    PerformanceGateThresholds:
+      type: object
+      required:
+        [
+          api_p95_s_max,
+          retrieval_p95_s_max,
+          parse_50p_p95_s_max,
+          evaluation_p95_s_max,
+          queue_dlq_rate_max,
+          cache_hit_rate_min,
+        ]
+      properties:
+        api_p95_s_max:
+          type: number
+        retrieval_p95_s_max:
+          type: number
+        parse_50p_p95_s_max:
+          type: number
+        evaluation_p95_s_max:
+          type: number
+        queue_dlq_rate_max:
+          type: number
+        cache_hit_rate_min:
+          type: number
+
+    PerformanceGateValues:
+      type: object
+      required: [api_p95_s, retrieval_p95_s, parse_50p_p95_s, evaluation_p95_s, queue_dlq_rate, cache_hit_rate]
+      properties:
+        api_p95_s:
+          type: number
+        retrieval_p95_s:
+          type: number
+        parse_50p_p95_s:
+          type: number
+        evaluation_p95_s:
+          type: number
+        queue_dlq_rate:
+          type: number
+        cache_hit_rate:
+          type: number
+
+    PerformanceGateEvaluateData:
+      type: object
+      required: [gate, dataset_id, passed, failed_checks, thresholds, values]
+      properties:
+        gate:
+          type: string
+          enum: [performance]
+        dataset_id:
+          type: string
+        passed:
+          type: boolean
+        failed_checks:
+          type: array
+          items:
+            type: string
+        thresholds:
+          $ref: '#/components/schemas/PerformanceGateThresholds'
+        values:
+          $ref: '#/components/schemas/PerformanceGateValues'
+
+    PerformanceGateEvaluateResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/PerformanceGateEvaluateData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    SecurityGateMetrics:
+      type: object
+      required:
+        [
+          tenant_scope_violations,
+          auth_bypass_findings,
+          high_risk_approval_coverage,
+          log_redaction_failures,
+          secret_scan_findings,
+        ]
+      properties:
+        tenant_scope_violations:
+          type: integer
+          minimum: 0
+        auth_bypass_findings:
+          type: integer
+          minimum: 0
+        high_risk_approval_coverage:
+          type: number
+          minimum: 0
+          maximum: 1
+        log_redaction_failures:
+          type: integer
+          minimum: 0
+        secret_scan_findings:
+          type: integer
+          minimum: 0
+
+    SecurityGateEvaluateRequest:
+      type: object
+      required: [dataset_id, metrics]
+      properties:
+        dataset_id:
+          type: string
+        metrics:
+          $ref: '#/components/schemas/SecurityGateMetrics'
+
+    SecurityGateThresholds:
+      type: object
+      required:
+        [
+          tenant_scope_violations_max,
+          auth_bypass_findings_max,
+          high_risk_approval_coverage_min,
+          log_redaction_failures_max,
+          secret_scan_findings_max,
+        ]
+      properties:
+        tenant_scope_violations_max:
+          type: integer
+        auth_bypass_findings_max:
+          type: integer
+        high_risk_approval_coverage_min:
+          type: number
+        log_redaction_failures_max:
+          type: integer
+        secret_scan_findings_max:
+          type: integer
+
+    SecurityGateValues:
+      type: object
+      required:
+        [
+          tenant_scope_violations,
+          auth_bypass_findings,
+          high_risk_approval_coverage,
+          log_redaction_failures,
+          secret_scan_findings,
+        ]
+      properties:
+        tenant_scope_violations:
+          type: integer
+        auth_bypass_findings:
+          type: integer
+        high_risk_approval_coverage:
+          type: number
+        log_redaction_failures:
+          type: integer
+        secret_scan_findings:
+          type: integer
+
+    SecurityGateEvaluateData:
+      type: object
+      required: [gate, dataset_id, passed, failed_checks, thresholds, values]
+      properties:
+        gate:
+          type: string
+          enum: [security]
+        dataset_id:
+          type: string
+        passed:
+          type: boolean
+        failed_checks:
+          type: array
+          items:
+            type: string
+        thresholds:
+          $ref: '#/components/schemas/SecurityGateThresholds'
+        values:
+          $ref: '#/components/schemas/SecurityGateValues'
+
+    SecurityGateEvaluateResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/SecurityGateEvaluateData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    CostGateMetrics:
+      type: object
+      required: [task_cost_p95, baseline_task_cost_p95, routing_degrade_passed, degrade_availability, budget_alert_coverage]
+      properties:
+        task_cost_p95:
+          type: number
+          minimum: 0
+        baseline_task_cost_p95:
+          type: number
+          exclusiveMinimum: 0
+        routing_degrade_passed:
+          type: boolean
+        degrade_availability:
+          type: number
+          minimum: 0
+          maximum: 1
+        budget_alert_coverage:
+          type: number
+          minimum: 0
+          maximum: 1
+
+    CostGateEvaluateRequest:
+      type: object
+      required: [dataset_id, metrics]
+      properties:
+        dataset_id:
+          type: string
+        metrics:
+          $ref: '#/components/schemas/CostGateMetrics'
+
+    CostGateThresholds:
+      type: object
+      required: [task_cost_p95_ratio_max, degrade_availability_min, budget_alert_coverage_min, routing_degrade_passed_required]
+      properties:
+        task_cost_p95_ratio_max:
+          type: number
+        degrade_availability_min:
+          type: number
+        budget_alert_coverage_min:
+          type: number
+        routing_degrade_passed_required:
+          type: boolean
+
+    CostGateValues:
+      type: object
+      required:
+        [
+          task_cost_p95,
+          baseline_task_cost_p95,
+          task_cost_p95_ratio,
+          routing_degrade_passed,
+          degrade_availability,
+          budget_alert_coverage,
+        ]
+      properties:
+        task_cost_p95:
+          type: number
+        baseline_task_cost_p95:
+          type: number
+        task_cost_p95_ratio:
+          type: number
+        routing_degrade_passed:
+          type: boolean
+        degrade_availability:
+          type: number
+        budget_alert_coverage:
+          type: number
+
+    CostGateEvaluateData:
+      type: object
+      required: [gate, dataset_id, passed, failed_checks, thresholds, values]
+      properties:
+        gate:
+          type: string
+          enum: [cost]
+        dataset_id:
+          type: string
+        passed:
+          type: boolean
+        failed_checks:
+          type: array
+          items:
+            type: string
+        thresholds:
+          $ref: '#/components/schemas/CostGateThresholds'
+        values:
+          $ref: '#/components/schemas/CostGateValues'
+
+    CostGateEvaluateResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/CostGateEvaluateData'
         meta:
           $ref: '#/components/schemas/Meta'
 

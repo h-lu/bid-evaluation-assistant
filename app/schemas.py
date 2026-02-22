@@ -83,6 +83,46 @@ class QualityGateEvaluateRequest(BaseModel):
     metrics: QualityGateMetrics
 
 
+class PerformanceGateMetrics(BaseModel):
+    api_p95_s: float = Field(ge=0)
+    retrieval_p95_s: float = Field(ge=0)
+    parse_50p_p95_s: float = Field(ge=0)
+    evaluation_p95_s: float = Field(ge=0)
+    queue_dlq_rate: float = Field(ge=0, le=1)
+    cache_hit_rate: float = Field(ge=0, le=1)
+
+
+class PerformanceGateEvaluateRequest(BaseModel):
+    dataset_id: str
+    metrics: PerformanceGateMetrics
+
+
+class SecurityGateMetrics(BaseModel):
+    tenant_scope_violations: int = Field(ge=0)
+    auth_bypass_findings: int = Field(ge=0)
+    high_risk_approval_coverage: float = Field(ge=0, le=1)
+    log_redaction_failures: int = Field(ge=0)
+    secret_scan_findings: int = Field(ge=0)
+
+
+class SecurityGateEvaluateRequest(BaseModel):
+    dataset_id: str
+    metrics: SecurityGateMetrics
+
+
+class CostGateMetrics(BaseModel):
+    task_cost_p95: float = Field(ge=0)
+    baseline_task_cost_p95: float = Field(gt=0)
+    routing_degrade_passed: bool
+    degrade_availability: float = Field(ge=0, le=1)
+    budget_alert_coverage: float = Field(ge=0, le=1)
+
+
+class CostGateEvaluateRequest(BaseModel):
+    dataset_id: str
+    metrics: CostGateMetrics
+
+
 def success_envelope(data: Any, trace_id: str, message: str = "ok") -> dict[str, Any]:
     return {
         "success": True,

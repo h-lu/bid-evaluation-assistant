@@ -8,18 +8,24 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.cost_gates import evaluate_cost_gate
 from app.errors import ApiError
+from app.performance_gates import evaluate_performance_gate
 from app.quality_gates import evaluate_quality_gate
 from app.schemas import (
+    CostGateEvaluateRequest,
     CreateEvaluationRequest,
     DlqDiscardRequest,
     InternalTransitionRequest,
+    PerformanceGateEvaluateRequest,
     QualityGateEvaluateRequest,
     RetrievalQueryRequest,
     ResumeRequest,
+    SecurityGateEvaluateRequest,
     error_envelope,
     success_envelope,
 )
+from app.security_gates import evaluate_security_gate
 from app.store import store
 
 
@@ -679,6 +685,66 @@ def create_app() -> FastAPI:
             ragas=payload.metrics.ragas.model_dump(mode="json"),
             deepeval=payload.metrics.deepeval.model_dump(mode="json"),
             citation=payload.metrics.citation.model_dump(mode="json"),
+        )
+        return success_envelope(data, _trace_id_from_request(request))
+
+    @app.post("/api/v1/internal/performance-gates/evaluate")
+    def internal_evaluate_performance_gate(
+        payload: PerformanceGateEvaluateRequest,
+        request: Request,
+        x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
+    ):
+        if x_internal_debug != "true":
+            raise ApiError(
+                code="AUTH_FORBIDDEN",
+                message="internal endpoint forbidden",
+                error_class="security_sensitive",
+                retryable=False,
+                http_status=403,
+            )
+        data = evaluate_performance_gate(
+            dataset_id=payload.dataset_id,
+            metrics=payload.metrics.model_dump(mode="json"),
+        )
+        return success_envelope(data, _trace_id_from_request(request))
+
+    @app.post("/api/v1/internal/security-gates/evaluate")
+    def internal_evaluate_security_gate(
+        payload: SecurityGateEvaluateRequest,
+        request: Request,
+        x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
+    ):
+        if x_internal_debug != "true":
+            raise ApiError(
+                code="AUTH_FORBIDDEN",
+                message="internal endpoint forbidden",
+                error_class="security_sensitive",
+                retryable=False,
+                http_status=403,
+            )
+        data = evaluate_security_gate(
+            dataset_id=payload.dataset_id,
+            metrics=payload.metrics.model_dump(mode="json"),
+        )
+        return success_envelope(data, _trace_id_from_request(request))
+
+    @app.post("/api/v1/internal/cost-gates/evaluate")
+    def internal_evaluate_cost_gate(
+        payload: CostGateEvaluateRequest,
+        request: Request,
+        x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
+    ):
+        if x_internal_debug != "true":
+            raise ApiError(
+                code="AUTH_FORBIDDEN",
+                message="internal endpoint forbidden",
+                error_class="security_sensitive",
+                retryable=False,
+                http_status=403,
+            )
+        data = evaluate_cost_gate(
+            dataset_id=payload.dataset_id,
+            metrics=payload.metrics.model_dump(mode="json"),
         )
         return success_envelope(data, _trace_id_from_request(request))
 

@@ -226,6 +226,10 @@ B-2 输出物：
 
 验收：成本 P95 不突破基线 1.2x。
 
+### Gate D 输出汇总
+
+1. `docs/design/2026-02-22-gate-d-four-gates-checklist.md`
+
 ## 8. Gate E：灰度与回滚
 
 ### E-1 灰度策略

@@ -32,6 +32,9 @@
 16. `GET /api/v1/documents/{document_id}/chunks`
 17. `GET /api/v1/evaluations/{evaluation_id}/audit-logs`
 18. `POST /api/v1/internal/quality-gates/evaluate`
+19. `POST /api/v1/internal/performance-gates/evaluate`
+20. `POST /api/v1/internal/security-gates/evaluate`
+21. `POST /api/v1/internal/cost-gates/evaluate`
 
 ## 3. 执行约定
 
@@ -96,6 +99,15 @@
 | `CT-050` | `POST /internal/quality-gates/evaluate` | 质量门禁通过 | 指标全部达阈值 + `x-internal-debug=true` | `200` | `passed=true` 且 `ragchecker.triggered=false` |
 | `CT-051` | `POST /internal/quality-gates/evaluate` | 质量门禁阻断 | 任一指标跌破阈值 | `200` | `passed=false` 且返回 `failed_checks[]`、`ragchecker.triggered=true` |
 | `CT-052` | `POST /internal/quality-gates/evaluate` | 内部接口鉴权 | 缺失 `x-internal-debug=true` | `403` | `error.code=AUTH_FORBIDDEN` |
+| `CT-053` | `POST /internal/performance-gates/evaluate` | 性能门禁通过 | P95 与队列/缓存指标达阈值 | `200` | `passed=true` 且 `failed_checks=[]` |
+| `CT-054` | `POST /internal/performance-gates/evaluate` | 性能门禁阻断 | 任一 P95 或队列/缓存指标越界 | `200` | `passed=false` 且返回对应失败码 |
+| `CT-055` | `POST /internal/performance-gates/evaluate` | 内部接口鉴权 | 缺失 `x-internal-debug=true` | `403` | `error.code=AUTH_FORBIDDEN` |
+| `CT-056` | `POST /internal/security-gates/evaluate` | 安全门禁通过 | 越权/绕过/脱敏/密钥扫描均通过 | `200` | `passed=true` 且 `failed_checks=[]` |
+| `CT-057` | `POST /internal/security-gates/evaluate` | 安全门禁阻断 | 任一安全阻断项非 0 或审批覆盖不足 | `200` | `passed=false` 且返回对应失败码 |
+| `CT-058` | `POST /internal/security-gates/evaluate` | 内部接口鉴权 | 缺失 `x-internal-debug=true` | `403` | `error.code=AUTH_FORBIDDEN` |
+| `CT-059` | `POST /internal/cost-gates/evaluate` | 成本门禁通过 | `task_cost_p95 <= baseline*1.2` 且降级与预算告警通过 | `200` | `passed=true` 且 `failed_checks=[]` |
+| `CT-060` | `POST /internal/cost-gates/evaluate` | 成本门禁阻断 | 成本超阈值或降级/预算告警失败 | `200` | `passed=false` 且返回对应失败码 |
+| `CT-061` | `POST /internal/cost-gates/evaluate` | 内部接口鉴权 | 缺失 `x-internal-debug=true` | `403` | `error.code=AUTH_FORBIDDEN` |
 
 ## 5. 关键断言模板
 

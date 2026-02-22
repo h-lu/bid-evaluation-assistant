@@ -115,12 +115,18 @@
 ### 4.9 Internal Gates（内部调试）
 
 1. `POST /internal/quality-gates/evaluate`
+2. `POST /internal/performance-gates/evaluate`
+3. `POST /internal/security-gates/evaluate`
+4. `POST /internal/cost-gates/evaluate`
 
 说明：
 
 1. 仅内部调试与门禁流水线使用，必须携带 `x-internal-debug: true`。
-2. 输入 RAGAS/DeepEval/citation 指标，返回门禁通过/阻断结论。
-3. 当任一质量阈值不达标时，触发 `RAGChecker` 诊断流程标记。
+2. 质量门禁输入 RAGAS/DeepEval/citation 指标，返回通过/阻断结论。
+3. 性能门禁输入 P95、队列稳定性与缓存命中率指标。
+4. 安全门禁输入越权/绕过/审批/脱敏/密钥扫描结果。
+5. 成本门禁输入成本 P95、模型降级可用性与预算告警覆盖率。
+6. 当质量门禁不达标时，触发 `RAGChecker` 诊断流程标记。
 
 ## 5. 字段级契约（关键接口示例）
 
@@ -365,7 +371,65 @@
 }
 ```
 
-### 5.6 `POST /retrieval/query`
+### 5.7 `POST /internal/performance-gates/evaluate`
+
+请求体：
+
+```json
+{
+  "dataset_id": "ds_perf_smoke",
+  "metrics": {
+    "api_p95_s": 1.2,
+    "retrieval_p95_s": 3.5,
+    "parse_50p_p95_s": 170.0,
+    "evaluation_p95_s": 100.0,
+    "queue_dlq_rate": 0.006,
+    "cache_hit_rate": 0.75
+  }
+}
+```
+
+响应 `200`：返回 `gate=performance`、`passed`、`failed_checks`、阈值与观测值。
+
+### 5.8 `POST /internal/security-gates/evaluate`
+
+请求体：
+
+```json
+{
+  "dataset_id": "ds_security_smoke",
+  "metrics": {
+    "tenant_scope_violations": 0,
+    "auth_bypass_findings": 0,
+    "high_risk_approval_coverage": 1.0,
+    "log_redaction_failures": 0,
+    "secret_scan_findings": 0
+  }
+}
+```
+
+响应 `200`：返回 `gate=security`、`passed`、`failed_checks`、阈值与观测值。
+
+### 5.9 `POST /internal/cost-gates/evaluate`
+
+请求体：
+
+```json
+{
+  "dataset_id": "ds_cost_smoke",
+  "metrics": {
+    "task_cost_p95": 1.08,
+    "baseline_task_cost_p95": 1.0,
+    "routing_degrade_passed": true,
+    "degrade_availability": 0.997,
+    "budget_alert_coverage": 1.0
+  }
+}
+```
+
+响应 `200`：返回 `gate=cost`、`passed`、`failed_checks`、阈值与观测值。
+
+### 5.10 `POST /retrieval/query`
 
 请求体：
 
@@ -426,7 +490,7 @@
 2. `TENANT_SCOPE_VIOLATION`
 3. rerank 降级时 `data.degraded=true`，并回退到原召回分排序
 
-### 5.7 `POST /retrieval/preview`
+### 5.11 `POST /retrieval/preview`
 
 请求体：与 `POST /retrieval/query` 相同。
 
@@ -455,7 +519,7 @@
 }
 ```
 
-### 5.8 `GET /evaluations/{evaluation_id}/report`
+### 5.12 `GET /evaluations/{evaluation_id}/report`
 
 响应 `200`：
 
@@ -491,7 +555,7 @@
 }
 ```
 
-### 5.9 `GET /documents/{document_id}`
+### 5.13 `GET /documents/{document_id}`
 
 响应 `200`：
 
@@ -512,7 +576,7 @@
 }
 ```
 
-### 5.10 `GET /documents/{document_id}/chunks`
+### 5.14 `GET /documents/{document_id}/chunks`
 
 响应 `200`：
 
