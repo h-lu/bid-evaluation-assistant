@@ -162,6 +162,8 @@
 3. `POST /internal/outbox/relay`
 4. `POST /internal/queue/{queue_name}/enqueue`
 5. `POST /internal/queue/{queue_name}/dequeue`
+6. `POST /internal/queue/{queue_name}/ack`
+7. `POST /internal/queue/{queue_name}/nack`
 
 说明：
 
@@ -872,7 +874,7 @@
 2. 成功入队后事件必须原子标记为 `published`。
 3. 对已发布事件重复执行 relay 不得重复入队。
 
-### 5.20 `POST /internal/queue/{queue_name}/enqueue|dequeue`
+### 5.20 `POST /internal/queue/{queue_name}/enqueue|dequeue|ack|nack`
 
 `enqueue` 请求体示例：
 
@@ -905,6 +907,23 @@
   "meta": {
     "trace_id": "trace_xxx"
   }
+}
+```
+
+`ack` 请求体示例：
+
+```json
+{
+  "message_id": "msg_xxx"
+}
+```
+
+`nack` 请求体示例：
+
+```json
+{
+  "message_id": "msg_xxx",
+  "requeue": true
 }
 ```
 

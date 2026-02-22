@@ -133,3 +133,56 @@ def test_internal_outbox_relay_is_idempotent_for_published_events(client):
     )
     assert second.status_code == 200
     assert second.json()["data"]["published_count"] == 0
+
+
+def test_internal_queue_ack_and_nack_flow(client):
+    enqueue = client.post(
+        "/api/v1/internal/queue/jobs/enqueue",
+        headers={"x-internal-debug": "true", "x-tenant-id": "tenant_a"},
+        json={"job_id": "job_ack_nack"},
+    )
+    assert enqueue.status_code == 200
+
+    first = client.post(
+        "/api/v1/internal/queue/jobs/dequeue",
+        headers={"x-internal-debug": "true", "x-tenant-id": "tenant_a"},
+    )
+    assert first.status_code == 200
+    message = first.json()["data"]["message"]
+    assert message is not None
+    message_id = message["message_id"]
+
+    nack = client.post(
+        "/api/v1/internal/queue/jobs/nack",
+        headers={"x-internal-debug": "true", "x-tenant-id": "tenant_a"},
+        json={"message_id": message_id, "requeue": True},
+    )
+    assert nack.status_code == 200
+    nacked_message = nack.json()["data"]["message"]
+    assert nacked_message is not None
+    assert nacked_message["attempt"] == 1
+
+    second = client.post(
+        "/api/v1/internal/queue/jobs/dequeue",
+        headers={"x-internal-debug": "true", "x-tenant-id": "tenant_a"},
+    )
+    assert second.status_code == 200
+    replay = second.json()["data"]["message"]
+    assert replay is not None
+    assert replay["message_id"] == message_id
+    assert replay["attempt"] == 1
+
+    ack = client.post(
+        "/api/v1/internal/queue/jobs/ack",
+        headers={"x-internal-debug": "true", "x-tenant-id": "tenant_a"},
+        json={"message_id": message_id},
+    )
+    assert ack.status_code == 200
+    assert ack.json()["data"]["acked"] is True
+
+    empty = client.post(
+        "/api/v1/internal/queue/jobs/dequeue",
+        headers={"x-internal-debug": "true", "x-tenant-id": "tenant_a"},
+    )
+    assert empty.status_code == 200
+    assert empty.json()["data"]["message"] is None

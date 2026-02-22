@@ -117,6 +117,8 @@
    - `POST /api/v1/internal/outbox/events/{event_id}/publish`
    - `POST /api/v1/internal/queue/{queue_name}/enqueue`
    - `POST /api/v1/internal/queue/{queue_name}/dequeue`
+   - `POST /api/v1/internal/queue/{queue_name}/ack`
+   - `POST /api/v1/internal/queue/{queue_name}/nack`
 8. 新增回归测试：
    - `tests/test_store_persistence_backend.py`
    - `tests/test_outbox_events.py`

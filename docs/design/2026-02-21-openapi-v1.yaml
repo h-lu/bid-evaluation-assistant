@@ -790,6 +790,101 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /internal/queue/{queue_name}/ack:
+    post:
+      operationId: internalAckQueueMessage
+      summary: Ack one inflight queue message
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+        - name: queue_name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message_id]
+              properties:
+                message_id:
+                  type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueAckResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /internal/queue/{queue_name}/nack:
+    post:
+      operationId: internalNackQueueMessage
+      summary: Nack one inflight queue message and optionally requeue
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+        - name: queue_name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message_id]
+              properties:
+                message_id:
+                  type: string
+                requeue:
+                  type: boolean
+                  default: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueNackResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /internal/quality-gates/evaluate:
     post:
       operationId: internalEvaluateQualityGate
@@ -1817,6 +1912,42 @@ components:
             - $ref: '#/components/schemas/QueueMessage'
 
     QueueDequeueResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/QueueDequeueData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    QueueAckData:
+      type: object
+      required: [queue_name, message_id, acked]
+      properties:
+        queue_name:
+          type: string
+        message_id:
+          type: string
+        acked:
+          type: boolean
+          const: true
+
+    QueueAckResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/QueueAckData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    QueueNackResponse:
       type: object
       required: [success, data, meta]
       properties:

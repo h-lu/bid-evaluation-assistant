@@ -1035,6 +1035,74 @@ def create_app() -> FastAPI:
             }
         return success_envelope(data, _trace_id_from_request(request))
 
+    @app.post("/api/v1/internal/queue/{queue_name}/ack")
+    def internal_ack_queue_message(
+        queue_name: str,
+        request: Request,
+        payload: dict[str, object] = Body(default_factory=dict),
+        x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
+    ):
+        if x_internal_debug != "true":
+            raise ApiError(
+                code="AUTH_FORBIDDEN",
+                message="internal endpoint forbidden",
+                error_class="security_sensitive",
+                retryable=False,
+                http_status=403,
+            )
+        message_id = str(payload.get("message_id") or "")
+        if not message_id:
+            raise ApiError(
+                code="REQ_VALIDATION_FAILED",
+                message="message_id is required",
+                error_class="validation",
+                retryable=False,
+                http_status=400,
+            )
+        queue_backend.ack(message_id=message_id)
+        data = {"queue_name": queue_name, "message_id": message_id, "acked": True}
+        return success_envelope(data, _trace_id_from_request(request))
+
+    @app.post("/api/v1/internal/queue/{queue_name}/nack")
+    def internal_nack_queue_message(
+        queue_name: str,
+        request: Request,
+        payload: dict[str, object] = Body(default_factory=dict),
+        x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
+    ):
+        if x_internal_debug != "true":
+            raise ApiError(
+                code="AUTH_FORBIDDEN",
+                message="internal endpoint forbidden",
+                error_class="security_sensitive",
+                retryable=False,
+                http_status=403,
+            )
+        message_id = str(payload.get("message_id") or "")
+        if not message_id:
+            raise ApiError(
+                code="REQ_VALIDATION_FAILED",
+                message="message_id is required",
+                error_class="validation",
+                retryable=False,
+                http_status=400,
+            )
+        requeue = bool(payload.get("requeue", True))
+        msg = queue_backend.nack(message_id=message_id, requeue=requeue)
+        if msg is None:
+            data: dict[str, object] = {"message": None}
+        else:
+            data = {
+                "message": {
+                    "message_id": msg.message_id,
+                    "tenant_id": msg.tenant_id,
+                    "queue_name": msg.queue_name,
+                    "attempt": msg.attempt,
+                    "payload": msg.payload,
+                }
+            }
+        return success_envelope(data, _trace_id_from_request(request))
+
     return app
 
 
