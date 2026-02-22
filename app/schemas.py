@@ -38,6 +38,7 @@ class ResumeRequest(BaseModel):
 class DlqDiscardRequest(BaseModel):
     reason: str = ""
     reviewer_id: str = ""
+    reviewer_id_2: str = ""
 
 
 class InternalTransitionRequest(BaseModel):
@@ -176,6 +177,25 @@ class StrategyTuningApplyRequest(BaseModel):
     selector: StrategySelectorConfig
     score_calibration: StrategyScoreCalibration
     tool_policy: StrategyToolPolicy
+
+
+class LegalHoldImposeRequest(BaseModel):
+    object_type: str
+    object_id: str
+    reason: str
+    imposed_by: str
+
+
+class LegalHoldReleaseRequest(BaseModel):
+    reason: str = ""
+    reviewer_id: str = ""
+    reviewer_id_2: str = ""
+
+
+class StorageCleanupRequest(BaseModel):
+    object_type: str
+    object_id: str
+    reason: str
 
 
 def success_envelope(data: Any, trace_id: str, message: str = "ok") -> dict[str, Any]:

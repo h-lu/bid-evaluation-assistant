@@ -12,6 +12,7 @@
 4. 长任务：返回 `202 Accepted + job_id`
 5. 所有响应：包含 `trace_id`
 6. 所有响应头：包含 `x-trace-id` 与 `x-request-id`
+7. 当 `TRACE_ID_STRICT_REQUIRED=true` 时，`/api/v1/*` 请求必须显式携带 `x-trace-id`，缺失返回 `400 TRACE_ID_REQUIRED`
 
 ## 2. 统一响应模型
 
@@ -164,7 +165,22 @@
 4. 策略优化同步更新 selector 阈值、评分校准参数、工具权限审批策略。
 5. metrics summary 按租户聚合 API/Worker/Quality/Cost/SLO 指标视图。
 
-### 4.12 Internal Persistence & Queue（生产化调试）
+### 4.12 Internal Governance（合规与保全）
+
+1. `GET /internal/audit/integrity`
+2. `POST /internal/legal-hold/impose`
+3. `GET /internal/legal-hold/items`
+4. `POST /internal/legal-hold/{hold_id}/release`
+5. `POST /internal/storage/cleanup`
+
+说明：
+
+1. 仅内部治理流程使用，必须携带 `x-internal-debug: true`。
+2. `legal-hold/release` 必须满足双人复核与必填 reason。
+3. `storage/cleanup` 对被 hold 对象返回 `409 LEGAL_HOLD_ACTIVE`。
+4. 审计完整性校验失败返回 `409 AUDIT_INTEGRITY_BROKEN`。
+
+### 4.13 Internal Persistence & Queue（生产化调试）
 
 1. `GET /internal/outbox/events`
 2. `POST /internal/outbox/events/{event_id}/publish`
@@ -181,7 +197,7 @@
 3. 队列消息最小字段：`event_id/job_id/tenant_id/trace_id/job_type/attempt`。
 4. 队列消费保持租户隔离，跨租户不可见。
 
-### 4.13 Internal Workflow（生产化调试）
+### 4.14 Internal Workflow（生产化调试）
 
 1. `GET /internal/workflows/{thread_id}/checkpoints`
 2. `POST /internal/worker/queues/{queue_name}/drain-once`

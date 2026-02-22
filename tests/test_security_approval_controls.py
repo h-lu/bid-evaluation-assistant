@@ -34,6 +34,7 @@ def test_strategy_tuning_requires_approval_when_action_enabled(monkeypatch):
         headers={
             "x-internal-debug": "true",
             "x-reviewer-id": "u_security_reviewer",
+            "x-reviewer-id-2": "u_security_reviewer_2",
             "x-approval-reason": "production tuning approved",
         },
         json=_strategy_payload(),

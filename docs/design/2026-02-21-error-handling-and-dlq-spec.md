@@ -138,7 +138,7 @@ running
 
 1. 条件：确认无需重放或已人工替代处理。
 2. 约束：双人复核 + 必填 reason。
-3. 审计：记录操作者与复核者。
+3. 审计：记录 `reviewer_id/reviewer_id_2/approval_reviewers`。
 
 ## 8. 审计与告警
 

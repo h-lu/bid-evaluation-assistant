@@ -118,6 +118,7 @@ def test_dlq_discard_requires_approval(client):
         json={
             "reason": "manual replacement completed",
             "reviewer_id": "u_reviewer_1",
+            "reviewer_id_2": "u_reviewer_2",
         },
         headers={"Idempotency-Key": "idem_dlq_discard_2"},
     )
@@ -139,7 +140,7 @@ def test_dlq_write_endpoints_require_idempotency_key(client):
 
     discard = client.post(
         f"/api/v1/dlq/items/{item_id}/discard",
-        json={"reason": "manual", "reviewer_id": "u_1"},
+        json={"reason": "manual", "reviewer_id": "u_1", "reviewer_id_2": "u_2"},
     )
     assert discard.status_code == 400
     assert discard.json()["error"]["code"] == "IDEMPOTENCY_MISSING"
@@ -184,12 +185,18 @@ def test_dlq_requeue_and_discard_write_audit_logs(client):
     discard_id = seeded_discard["dlq_id"]
     discard_resp = client.post(
         f"/api/v1/dlq/items/{discard_id}/discard",
-        json={"reason": "operator verified", "reviewer_id": "u_reviewer_9"},
+        json={
+            "reason": "operator verified",
+            "reviewer_id": "u_reviewer_9",
+            "reviewer_id_2": "u_reviewer_10",
+        },
         headers={"Idempotency-Key": "idem_dlq_audit_discard"},
     )
     assert discard_resp.status_code == 200
     discard_logs = [x for x in store.audit_logs if x.get("action") == "dlq_discard_submitted"]
     assert any(
-        x.get("dlq_id") == discard_id and x.get("reviewer_id") == "u_reviewer_9"
+        x.get("dlq_id") == discard_id
+        and x.get("reviewer_id") == "u_reviewer_9"
+        and x.get("reviewer_id_2") == "u_reviewer_10"
         for x in discard_logs
     )

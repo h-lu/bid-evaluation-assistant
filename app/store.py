@@ -101,6 +101,7 @@ class InMemoryStore:
         self.workflow_checkpoints: dict[str, list[dict[str, Any]]] = {}
         self.citation_sources: dict[str, dict[str, Any]] = {}
         self.dlq_items: dict[str, dict[str, Any]] = {}
+        self.legal_hold_objects: dict[str, dict[str, Any]] = {}
         self.release_rollout_policies: dict[str, dict[str, Any]] = {}
         self.release_replay_runs: dict[str, dict[str, Any]] = {}
         self.release_readiness_assessments: dict[str, dict[str, Any]] = {}
@@ -184,6 +185,7 @@ class InMemoryStore:
         self.workflow_checkpoints.clear()
         self.citation_sources.clear()
         self.dlq_items.clear()
+        self.legal_hold_objects.clear()
         self.release_rollout_policies.clear()
         self.release_replay_runs.clear()
         self.release_readiness_assessments.clear()
@@ -275,14 +277,65 @@ class InMemoryStore:
     def _persist_evaluation_report(self, *, report: dict[str, Any]) -> dict[str, Any]:
         return self.evaluation_reports_repository.upsert(report=report)
 
+    @staticmethod
+    def _compute_audit_hash(*, log: dict[str, Any], prev_hash: str) -> str:
+        material = {
+            key: value
+            for key, value in log.items()
+            if key not in {"audit_hash", "prev_hash"}
+        }
+        material["prev_hash"] = prev_hash
+        blob = json.dumps(material, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
+        return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
     def _append_audit_log(self, *, log: dict[str, Any]) -> dict[str, Any]:
-        return self.audit_repository.append(log=log)
+        entry = dict(log)
+        if not entry.get("audit_id"):
+            entry["audit_id"] = f"audit_{uuid.uuid4().hex[:12]}"
+        if not entry.get("occurred_at"):
+            entry["occurred_at"] = self._utcnow_iso()
+        prev_hash = ""
+        if self.audit_logs:
+            prev_hash = str(self.audit_logs[-1].get("audit_hash") or "")
+        entry["prev_hash"] = prev_hash
+        entry["audit_hash"] = self._compute_audit_hash(log=entry, prev_hash=prev_hash)
+        return self.audit_repository.append(log=entry)
 
     def _persist_dlq_item(self, *, item: dict[str, Any]) -> dict[str, Any]:
         return self.dlq_repository.upsert(item=item)
 
     def _persist_workflow_checkpoint(self, *, checkpoint: dict[str, Any]) -> dict[str, Any]:
         return self.workflow_repository.append(checkpoint=checkpoint)
+
+    def verify_audit_integrity(self, *, tenant_id: str | None = None) -> dict[str, Any]:
+        rows = self.audit_logs
+        if tenant_id:
+            rows = [x for x in rows if str(x.get("tenant_id") or "") == tenant_id]
+        prev_hash = ""
+        for idx, row in enumerate(rows):
+            stored_prev = str(row.get("prev_hash") or "")
+            if stored_prev != prev_hash:
+                return {
+                    "valid": False,
+                    "checked_count": idx + 1,
+                    "reason": "prev_hash_mismatch",
+                    "audit_id": row.get("audit_id"),
+                }
+            expected = self._compute_audit_hash(log=row, prev_hash=stored_prev)
+            actual = str(row.get("audit_hash") or "")
+            if actual != expected:
+                return {
+                    "valid": False,
+                    "checked_count": idx + 1,
+                    "reason": "audit_hash_mismatch",
+                    "audit_id": row.get("audit_id"),
+                }
+            prev_hash = actual
+        return {
+            "valid": True,
+            "checked_count": len(rows),
+            "last_hash": prev_hash,
+        }
 
     @staticmethod
     def _select_parser(*, filename: str, doc_type: str | None) -> ParseRoute:
@@ -1470,6 +1523,7 @@ class InMemoryStore:
         dlq_id: str,
         reason: str,
         reviewer_id: str,
+        reviewer_id_2: str,
         tenant_id: str,
         trace_id: str | None = None,
     ) -> dict[str, Any]:
@@ -1482,10 +1536,20 @@ class InMemoryStore:
                 retryable=False,
                 http_status=404,
             )
-        if not reason.strip() or not reviewer_id.strip():
+        reviewer_a = reviewer_id.strip()
+        reviewer_b = reviewer_id_2.strip()
+        if not reason.strip() or not reviewer_a or not reviewer_b:
             raise ApiError(
                 code="APPROVAL_REQUIRED",
-                message="discard requires reviewer and reason",
+                message="discard requires reason and dual reviewers",
+                error_class="business_rule",
+                retryable=False,
+                http_status=400,
+            )
+        if reviewer_a == reviewer_b:
+            raise ApiError(
+                code="APPROVAL_REQUIRED",
+                message="dual reviewers must be different identities",
                 error_class="business_rule",
                 retryable=False,
                 http_status=400,
@@ -1493,7 +1557,8 @@ class InMemoryStore:
 
         item["status"] = "discarded"
         item["discard_reason"] = reason
-        item["reviewer_id"] = reviewer_id
+        item["reviewer_id"] = reviewer_a
+        item["reviewer_id_2"] = reviewer_b
         self._persist_dlq_item(item=item)
         self._append_audit_log(
             log={
@@ -1501,7 +1566,9 @@ class InMemoryStore:
                 "tenant_id": tenant_id,
                 "action": "dlq_discard_submitted",
                 "dlq_id": dlq_id,
-                "reviewer_id": reviewer_id,
+                "reviewer_id": reviewer_a,
+                "reviewer_id_2": reviewer_b,
+                "approval_reviewers": [reviewer_a, reviewer_b],
                 "reason": reason,
                 "trace_id": trace_id or "",
                 "occurred_at": self._utcnow_iso(),
@@ -1510,6 +1577,188 @@ class InMemoryStore:
         return {
             "dlq_id": dlq_id,
             "status": "discarded",
+        }
+
+    def _find_active_legal_hold(
+        self,
+        *,
+        tenant_id: str,
+        object_type: str,
+        object_id: str,
+    ) -> dict[str, Any] | None:
+        for hold in self.legal_hold_objects.values():
+            if hold.get("tenant_id") != tenant_id:
+                continue
+            if hold.get("object_type") != object_type:
+                continue
+            if hold.get("object_id") != object_id:
+                continue
+            if hold.get("status") == "active":
+                return hold
+        return None
+
+    def impose_legal_hold(
+        self,
+        *,
+        tenant_id: str,
+        object_type: str,
+        object_id: str,
+        reason: str,
+        imposed_by: str,
+        trace_id: str,
+    ) -> dict[str, Any]:
+        if not object_type.strip() or not object_id.strip() or not reason.strip() or not imposed_by.strip():
+            raise ApiError(
+                code="REQ_VALIDATION_FAILED",
+                message="invalid legal hold payload",
+                error_class="validation",
+                retryable=False,
+                http_status=400,
+            )
+        existing = self._find_active_legal_hold(
+            tenant_id=tenant_id,
+            object_type=object_type,
+            object_id=object_id,
+        )
+        if existing is not None:
+            return existing
+        hold_id = f"hold_{uuid.uuid4().hex[:12]}"
+        hold = {
+            "hold_id": hold_id,
+            "tenant_id": tenant_id,
+            "object_type": object_type.strip(),
+            "object_id": object_id.strip(),
+            "reason": reason.strip(),
+            "imposed_by": imposed_by.strip(),
+            "imposed_at": self._utcnow_iso(),
+            "released_by": None,
+            "released_by_2": None,
+            "released_at": None,
+            "release_reason": None,
+            "status": "active",
+        }
+        self.legal_hold_objects[hold_id] = hold
+        self._append_audit_log(
+            log={
+                "tenant_id": tenant_id,
+                "action": "legal_hold_imposed",
+                "hold_id": hold_id,
+                "object_type": hold["object_type"],
+                "object_id": hold["object_id"],
+                "reason": hold["reason"],
+                "imposed_by": hold["imposed_by"],
+                "trace_id": trace_id,
+            }
+        )
+        return hold
+
+    def list_legal_holds(
+        self,
+        *,
+        tenant_id: str,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        items = [x for x in self.legal_hold_objects.values() if x.get("tenant_id") == tenant_id]
+        if status:
+            items = [x for x in items if x.get("status") == status]
+        return sorted(items, key=lambda x: str(x.get("imposed_at") or ""), reverse=True)
+
+    def release_legal_hold(
+        self,
+        *,
+        hold_id: str,
+        tenant_id: str,
+        reason: str,
+        reviewer_id: str,
+        reviewer_id_2: str,
+        trace_id: str,
+    ) -> dict[str, Any]:
+        hold = self.legal_hold_objects.get(hold_id)
+        if hold is None or hold.get("tenant_id") != tenant_id:
+            raise ApiError(
+                code="LEGAL_HOLD_NOT_FOUND",
+                message="legal hold not found",
+                error_class="validation",
+                retryable=False,
+                http_status=404,
+            )
+        if hold.get("status") != "active":
+            raise ApiError(
+                code="LEGAL_HOLD_RELEASE_CONFLICT",
+                message="legal hold already released",
+                error_class="business_rule",
+                retryable=False,
+                http_status=409,
+            )
+        reviewer_a = reviewer_id.strip()
+        reviewer_b = reviewer_id_2.strip()
+        if not reason.strip() or not reviewer_a or not reviewer_b or reviewer_a == reviewer_b:
+            raise ApiError(
+                code="APPROVAL_REQUIRED",
+                message="legal hold release requires reason and dual reviewers",
+                error_class="business_rule",
+                retryable=False,
+                http_status=400,
+            )
+        hold["status"] = "released"
+        hold["released_by"] = reviewer_a
+        hold["released_by_2"] = reviewer_b
+        hold["released_at"] = self._utcnow_iso()
+        hold["release_reason"] = reason.strip()
+        self._append_audit_log(
+            log={
+                "tenant_id": tenant_id,
+                "action": "legal_hold_released",
+                "hold_id": hold_id,
+                "object_type": hold.get("object_type"),
+                "object_id": hold.get("object_id"),
+                "reason": reason.strip(),
+                "reviewer_id": reviewer_a,
+                "reviewer_id_2": reviewer_b,
+                "approval_reviewers": [reviewer_a, reviewer_b],
+                "trace_id": trace_id,
+            }
+        )
+        return hold
+
+    def execute_storage_cleanup(
+        self,
+        *,
+        tenant_id: str,
+        object_type: str,
+        object_id: str,
+        reason: str,
+        trace_id: str,
+    ) -> dict[str, Any]:
+        active_hold = self._find_active_legal_hold(
+            tenant_id=tenant_id,
+            object_type=object_type,
+            object_id=object_id,
+        )
+        if active_hold is not None:
+            raise ApiError(
+                code="LEGAL_HOLD_ACTIVE",
+                message="object is under legal hold",
+                error_class="business_rule",
+                retryable=False,
+                http_status=409,
+            )
+        self._append_audit_log(
+            log={
+                "tenant_id": tenant_id,
+                "action": "storage_cleanup_executed",
+                "object_type": object_type,
+                "object_id": object_id,
+                "reason": reason,
+                "trace_id": trace_id,
+            }
+        )
+        return {
+            "tenant_id": tenant_id,
+            "object_type": object_type,
+            "object_id": object_id,
+            "reason": reason,
+            "cleaned": True,
         }
 
     def cancel_job(self, *, job_id: str, tenant_id: str) -> dict[str, Any]:
@@ -2475,6 +2724,7 @@ class SqliteBackedStore(InMemoryStore):
             "workflow_checkpoints": self.workflow_checkpoints,
             "citation_sources": self.citation_sources,
             "dlq_items": self.dlq_items,
+            "legal_hold_objects": self.legal_hold_objects,
             "release_rollout_policies": self.release_rollout_policies,
             "release_replay_runs": self.release_replay_runs,
             "release_readiness_assessments": self.release_readiness_assessments,
@@ -2535,6 +2785,11 @@ class SqliteBackedStore(InMemoryStore):
             payload.get("citation_sources", {}) if isinstance(payload.get("citation_sources"), dict) else {}
         )
         self.dlq_items = payload.get("dlq_items", {}) if isinstance(payload.get("dlq_items"), dict) else {}
+        self.legal_hold_objects = (
+            payload.get("legal_hold_objects", {})
+            if isinstance(payload.get("legal_hold_objects"), dict)
+            else {}
+        )
         self.release_rollout_policies = (
             payload.get("release_rollout_policies", {})
             if isinstance(payload.get("release_rollout_policies"), dict)
@@ -2787,6 +3042,7 @@ class SqliteBackedStore(InMemoryStore):
         dlq_id: str,
         reason: str,
         reviewer_id: str,
+        reviewer_id_2: str,
         tenant_id: str,
         trace_id: str | None = None,
     ) -> dict[str, Any]:
@@ -2794,7 +3050,69 @@ class SqliteBackedStore(InMemoryStore):
             dlq_id=dlq_id,
             reason=reason,
             reviewer_id=reviewer_id,
+            reviewer_id_2=reviewer_id_2,
             tenant_id=tenant_id,
+            trace_id=trace_id,
+        )
+        self._save_state()
+        return data
+
+    def impose_legal_hold(
+        self,
+        *,
+        tenant_id: str,
+        object_type: str,
+        object_id: str,
+        reason: str,
+        imposed_by: str,
+        trace_id: str,
+    ) -> dict[str, Any]:
+        data = super().impose_legal_hold(
+            tenant_id=tenant_id,
+            object_type=object_type,
+            object_id=object_id,
+            reason=reason,
+            imposed_by=imposed_by,
+            trace_id=trace_id,
+        )
+        self._save_state()
+        return data
+
+    def release_legal_hold(
+        self,
+        *,
+        hold_id: str,
+        tenant_id: str,
+        reason: str,
+        reviewer_id: str,
+        reviewer_id_2: str,
+        trace_id: str,
+    ) -> dict[str, Any]:
+        data = super().release_legal_hold(
+            hold_id=hold_id,
+            tenant_id=tenant_id,
+            reason=reason,
+            reviewer_id=reviewer_id,
+            reviewer_id_2=reviewer_id_2,
+            trace_id=trace_id,
+        )
+        self._save_state()
+        return data
+
+    def execute_storage_cleanup(
+        self,
+        *,
+        tenant_id: str,
+        object_type: str,
+        object_id: str,
+        reason: str,
+        trace_id: str,
+    ) -> dict[str, Any]:
+        data = super().execute_storage_cleanup(
+            tenant_id=tenant_id,
+            object_type=object_type,
+            object_id=object_id,
+            reason=reason,
             trace_id=trace_id,
         )
         self._save_state()
@@ -3357,6 +3675,7 @@ class PostgresBackedStore(InMemoryStore):
             "workflow_checkpoints": self.workflow_checkpoints,
             "citation_sources": self.citation_sources,
             "dlq_items": self.dlq_items,
+            "legal_hold_objects": self.legal_hold_objects,
             "release_rollout_policies": self.release_rollout_policies,
             "release_replay_runs": self.release_replay_runs,
             "release_readiness_assessments": self.release_readiness_assessments,
@@ -3417,6 +3736,11 @@ class PostgresBackedStore(InMemoryStore):
             payload.get("citation_sources", {}) if isinstance(payload.get("citation_sources"), dict) else {}
         )
         self.dlq_items = payload.get("dlq_items", {}) if isinstance(payload.get("dlq_items"), dict) else {}
+        self.legal_hold_objects = (
+            payload.get("legal_hold_objects", {})
+            if isinstance(payload.get("legal_hold_objects"), dict)
+            else {}
+        )
         self.release_rollout_policies = (
             payload.get("release_rollout_policies", {})
             if isinstance(payload.get("release_rollout_policies"), dict)
@@ -3669,6 +3993,7 @@ class PostgresBackedStore(InMemoryStore):
         dlq_id: str,
         reason: str,
         reviewer_id: str,
+        reviewer_id_2: str,
         tenant_id: str,
         trace_id: str | None = None,
     ) -> dict[str, Any]:
@@ -3676,7 +4001,69 @@ class PostgresBackedStore(InMemoryStore):
             dlq_id=dlq_id,
             reason=reason,
             reviewer_id=reviewer_id,
+            reviewer_id_2=reviewer_id_2,
             tenant_id=tenant_id,
+            trace_id=trace_id,
+        )
+        self._save_state()
+        return data
+
+    def impose_legal_hold(
+        self,
+        *,
+        tenant_id: str,
+        object_type: str,
+        object_id: str,
+        reason: str,
+        imposed_by: str,
+        trace_id: str,
+    ) -> dict[str, Any]:
+        data = super().impose_legal_hold(
+            tenant_id=tenant_id,
+            object_type=object_type,
+            object_id=object_id,
+            reason=reason,
+            imposed_by=imposed_by,
+            trace_id=trace_id,
+        )
+        self._save_state()
+        return data
+
+    def release_legal_hold(
+        self,
+        *,
+        hold_id: str,
+        tenant_id: str,
+        reason: str,
+        reviewer_id: str,
+        reviewer_id_2: str,
+        trace_id: str,
+    ) -> dict[str, Any]:
+        data = super().release_legal_hold(
+            hold_id=hold_id,
+            tenant_id=tenant_id,
+            reason=reason,
+            reviewer_id=reviewer_id,
+            reviewer_id_2=reviewer_id_2,
+            trace_id=trace_id,
+        )
+        self._save_state()
+        return data
+
+    def execute_storage_cleanup(
+        self,
+        *,
+        tenant_id: str,
+        object_type: str,
+        object_id: str,
+        reason: str,
+        trace_id: str,
+    ) -> dict[str, Any]:
+        data = super().execute_storage_cleanup(
+            tenant_id=tenant_id,
+            object_type=object_type,
+            object_id=object_id,
+            reason=reason,
             trace_id=trace_id,
         )
         self._save_state()

@@ -85,6 +85,13 @@
 2. 审计字段至少含：`actor/action/resource/trace_id/reason`。
 3. legal hold 对象禁止自动删除。
 4. 报告归档进入 WORM 存储。
+5. 审计日志追加 `prev_hash/audit_hash` 完整性链，支持在线校验。
+
+### 8.1 双人复核动作基线
+
+1. `dlq_discard`
+2. `legal_hold_release`
+3. 其他动作可通过配置提升到双人复核（如 `strategy_tuning_apply`）。
 
 ## 9. 安全测试要求
 

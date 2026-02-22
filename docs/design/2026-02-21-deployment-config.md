@@ -92,6 +92,7 @@ Internet / Office -> | Nginx + TLS + WAF      |
 2. `REQUEST_TIMEOUT_MS`
 3. `JWT_ISSUER/JWT_AUDIENCE`
 4. `IDEMPOTENCY_TTL_HOURS=24`
+5. `TRACE_ID_STRICT_REQUIRED=true`（staging/prod）
 
 ### 5.2 Worker
 
@@ -164,6 +165,7 @@ Internet / Office -> | Nginx + TLS + WAF      |
 3. 发布前执行配置差异检查。
 4. 审计日志与报告归档进入受控存储。
 5. `staging/prod` 禁止静默回退到 `memory/sqlite`（通过 `BEA_REQUIRE_TRUESTACK=true` 强制约束）。
+6. `staging/prod` 强制要求请求显式携带 `x-trace-id`（通过 `TRACE_ID_STRICT_REQUIRED=true`）。
 
 ## 9. 发布流水线（Gate 驱动）
 

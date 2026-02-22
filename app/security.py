@@ -80,8 +80,10 @@ class JwtSecurityConfig:
     required_claims: list[str]
     tenant_claim: str
     approval_required_actions: set[str]
+    dual_approval_required_actions: set[str]
     log_redaction_enabled: bool
     secret_scan_enabled: bool
+    trace_id_strict_required: bool
 
     @classmethod
     def from_env(cls) -> "JwtSecurityConfig":
@@ -91,7 +93,15 @@ class JwtSecurityConfig:
         required_claims = _split_csv(os.environ.get("JWT_REQUIRED_CLAIMS", "tenant_id,sub,exp"))
         enabled = bool(issuer or audience or shared_secret)
         approval_required_actions = set(
-            _split_csv(os.environ.get("SECURITY_APPROVAL_REQUIRED_ACTIONS", "dlq_discard"))
+            _split_csv(os.environ.get("SECURITY_APPROVAL_REQUIRED_ACTIONS", "dlq_discard,legal_hold_release"))
+        )
+        dual_approval_required_actions = set(
+            _split_csv(
+                os.environ.get(
+                    "SECURITY_DUAL_APPROVAL_REQUIRED_ACTIONS",
+                    "dlq_discard,legal_hold_release",
+                )
+            )
         )
         return cls(
             enabled=enabled,
@@ -101,8 +111,10 @@ class JwtSecurityConfig:
             required_claims=required_claims,
             tenant_claim=os.environ.get("JWT_TENANT_CLAIM", "tenant_id").strip() or "tenant_id",
             approval_required_actions=approval_required_actions,
+            dual_approval_required_actions=dual_approval_required_actions,
             log_redaction_enabled=_env_bool("SECURITY_LOG_REDACTION_ENABLED", True),
             secret_scan_enabled=_env_bool("SECURITY_SECRET_SCAN_ENABLED", True),
+            trace_id_strict_required=_env_bool("TRACE_ID_STRICT_REQUIRED", False),
         )
 
 

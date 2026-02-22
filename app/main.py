@@ -21,6 +21,8 @@ from app.schemas import (
     DataFeedbackRunRequest,
     DlqDiscardRequest,
     InternalTransitionRequest,
+    LegalHoldImposeRequest,
+    LegalHoldReleaseRequest,
     PerformanceGateEvaluateRequest,
     QualityGateEvaluateRequest,
     RollbackExecuteRequest,
@@ -29,6 +31,7 @@ from app.schemas import (
     RetrievalQueryRequest,
     ResumeRequest,
     SecurityGateEvaluateRequest,
+    StorageCleanupRequest,
     StrategyTuningApplyRequest,
     error_envelope,
     success_envelope,
@@ -140,10 +143,13 @@ def create_app() -> FastAPI:
         request: Request,
         reviewer_id: str,
         reason: str,
+        reviewer_id_2: str = "",
     ) -> None:
         if action not in security_cfg.approval_required_actions:
             return
-        if not reviewer_id.strip() or not reason.strip() or not _trace_id_from_request(request).strip():
+        reviewer_a = reviewer_id.strip()
+        reviewer_b = reviewer_id_2.strip()
+        if not reviewer_a or not reason.strip() or not _trace_id_from_request(request).strip():
             raise ApiError(
                 code="APPROVAL_REQUIRED",
                 message=f"approval required for action: {action}",
@@ -151,12 +157,39 @@ def create_app() -> FastAPI:
                 retryable=False,
                 http_status=400,
             )
+        if action in security_cfg.dual_approval_required_actions:
+            if not reviewer_b or reviewer_a == reviewer_b:
+                raise ApiError(
+                    code="APPROVAL_REQUIRED",
+                    message=f"dual approval required for action: {action}",
+                    error_class="business_rule",
+                    retryable=False,
+                    http_status=400,
+                )
 
     @app.middleware("http")
     async def add_trace_id(request: Request, call_next):
-        request.state.trace_id = request.headers.get("x-trace-id", uuid.uuid4().hex)
+        incoming_trace_id = request.headers.get("x-trace-id", "").strip()
+        request.state.trace_id = incoming_trace_id or uuid.uuid4().hex
         request.state.request_id = request.headers.get("x-request-id", f"req_{uuid.uuid4().hex[:12]}")
         request.state.auth_subject = "anonymous"
+        if (
+            security_cfg.trace_id_strict_required
+            and request.url.path.startswith("/api/v1/")
+            and request.url.path != "/api/v1/health"
+            and not incoming_trace_id
+        ):
+            response = _error_response(
+                request,
+                code="TRACE_ID_REQUIRED",
+                message="x-trace-id header is required",
+                error_class="validation",
+                retryable=False,
+                status_code=400,
+            )
+            response.headers["x-trace-id"] = _trace_id_from_request(request)
+            response.headers["x-request-id"] = _request_id_from_request(request)
+            return response
         try:
             path = request.url.path
             header_tenant_explicit = request.headers.get("x-tenant-id")
@@ -268,6 +301,10 @@ def create_app() -> FastAPI:
 
     @app.get("/healthz")
     def healthz(request: Request) -> dict[str, object]:
+        return success_envelope({"status": "ok"}, _trace_id_from_request(request))
+
+    @app.get("/api/v1/health")
+    def health_api(request: Request) -> dict[str, object]:
         return success_envelope({"status": "ok"}, _trace_id_from_request(request))
 
     @app.post("/api/v1/evaluations")
@@ -714,6 +751,7 @@ def create_app() -> FastAPI:
             action="dlq_discard",
             request=request,
             reviewer_id=payload.reviewer_id,
+            reviewer_id_2=payload.reviewer_id_2,
             reason=payload.reason,
         )
         req_payload = payload.model_dump(mode="json")
@@ -726,6 +764,7 @@ def create_app() -> FastAPI:
                 dlq_id=item_id,
                 reason=payload.reason,
                 reviewer_id=payload.reviewer_id,
+                reviewer_id_2=payload.reviewer_id_2,
                 tenant_id=_tenant_id_from_request(request),
                 trace_id=_trace_id_from_request(request),
             ),
@@ -1161,6 +1200,7 @@ def create_app() -> FastAPI:
         request: Request,
         x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
         x_reviewer_id: str | None = Header(default=None, alias="x-reviewer-id"),
+        x_reviewer_id_2: str | None = Header(default=None, alias="x-reviewer-id-2"),
         x_approval_reason: str | None = Header(default=None, alias="x-approval-reason"),
     ):
         if x_internal_debug != "true":
@@ -1175,6 +1215,7 @@ def create_app() -> FastAPI:
             action="strategy_tuning_apply",
             request=request,
             reviewer_id=x_reviewer_id or "",
+            reviewer_id_2=x_reviewer_id_2 or "",
             reason=x_approval_reason or "",
         )
         data = store.apply_strategy_tuning(
@@ -1183,6 +1224,126 @@ def create_app() -> FastAPI:
             score_calibration=payload.score_calibration.model_dump(mode="json"),
             tool_policy=payload.tool_policy.model_dump(mode="json"),
             tenant_id=_tenant_id_from_request(request),
+            trace_id=_trace_id_from_request(request),
+        )
+        return success_envelope(data, _trace_id_from_request(request))
+
+    @app.get("/api/v1/internal/audit/integrity")
+    def internal_verify_audit_integrity(
+        request: Request,
+        x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
+    ):
+        if x_internal_debug != "true":
+            raise ApiError(
+                code="AUTH_FORBIDDEN",
+                message="internal endpoint forbidden",
+                error_class="security_sensitive",
+                retryable=False,
+                http_status=403,
+            )
+        result = store.verify_audit_integrity(tenant_id=_tenant_id_from_request(request))
+        if not result.get("valid", False):
+            raise ApiError(
+                code="AUDIT_INTEGRITY_BROKEN",
+                message="audit log integrity check failed",
+                error_class="security_sensitive",
+                retryable=False,
+                http_status=409,
+            )
+        return success_envelope(result, _trace_id_from_request(request))
+
+    @app.post("/api/v1/internal/legal-hold/impose")
+    def internal_impose_legal_hold(
+        payload: LegalHoldImposeRequest,
+        request: Request,
+        x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
+    ):
+        if x_internal_debug != "true":
+            raise ApiError(
+                code="AUTH_FORBIDDEN",
+                message="internal endpoint forbidden",
+                error_class="security_sensitive",
+                retryable=False,
+                http_status=403,
+            )
+        data = store.impose_legal_hold(
+            tenant_id=_tenant_id_from_request(request),
+            object_type=payload.object_type,
+            object_id=payload.object_id,
+            reason=payload.reason,
+            imposed_by=payload.imposed_by,
+            trace_id=_trace_id_from_request(request),
+        )
+        return success_envelope(data, _trace_id_from_request(request))
+
+    @app.get("/api/v1/internal/legal-hold/items")
+    def internal_list_legal_hold_items(
+        request: Request,
+        status: str | None = Query(default=None),
+        x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
+    ):
+        if x_internal_debug != "true":
+            raise ApiError(
+                code="AUTH_FORBIDDEN",
+                message="internal endpoint forbidden",
+                error_class="security_sensitive",
+                retryable=False,
+                http_status=403,
+            )
+        items = store.list_legal_holds(tenant_id=_tenant_id_from_request(request), status=status)
+        return success_envelope({"items": items, "total": len(items)}, _trace_id_from_request(request))
+
+    @app.post("/api/v1/internal/legal-hold/{hold_id}/release")
+    def internal_release_legal_hold(
+        hold_id: str,
+        payload: LegalHoldReleaseRequest,
+        request: Request,
+        x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
+    ):
+        if x_internal_debug != "true":
+            raise ApiError(
+                code="AUTH_FORBIDDEN",
+                message="internal endpoint forbidden",
+                error_class="security_sensitive",
+                retryable=False,
+                http_status=403,
+            )
+        _require_approval(
+            action="legal_hold_release",
+            request=request,
+            reviewer_id=payload.reviewer_id,
+            reviewer_id_2=payload.reviewer_id_2,
+            reason=payload.reason,
+        )
+        data = store.release_legal_hold(
+            hold_id=hold_id,
+            tenant_id=_tenant_id_from_request(request),
+            reason=payload.reason,
+            reviewer_id=payload.reviewer_id,
+            reviewer_id_2=payload.reviewer_id_2,
+            trace_id=_trace_id_from_request(request),
+        )
+        return success_envelope(data, _trace_id_from_request(request))
+
+    @app.post("/api/v1/internal/storage/cleanup")
+    def internal_execute_storage_cleanup(
+        payload: StorageCleanupRequest,
+        request: Request,
+        x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
+    ):
+        if x_internal_debug != "true":
+            raise ApiError(
+                code="AUTH_FORBIDDEN",
+                message="internal endpoint forbidden",
+                error_class="security_sensitive",
+                retryable=False,
+                http_status=403,
+            )
+        data = store.execute_storage_cleanup(
+            tenant_id=_tenant_id_from_request(request),
+            object_type=payload.object_type,
+            object_id=payload.object_id,
+            reason=payload.reason,
             trace_id=_trace_id_from_request(request),
         )
         return success_envelope(data, _trace_id_from_request(request))
