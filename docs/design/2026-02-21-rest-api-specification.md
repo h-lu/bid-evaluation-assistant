@@ -230,6 +230,9 @@
   "resume_token": "rt_xxx",
   "decision": "approve",
   "comment": "证据充分，允许继续",
+  "editor": {
+    "reviewer_id": "u_xxx"
+  },
   "edited_scores": []
 }
 ```
@@ -254,6 +257,7 @@
 
 1. `WF_INTERRUPT_RESUME_INVALID`
 2. `REQ_VALIDATION_FAILED`
+3. `WF_INTERRUPT_REVIEWER_REQUIRED`
 
 ### 5.5 `GET /citations/{chunk_id}/source`
 
@@ -393,11 +397,24 @@
     ],
     "citations": ["ck_xxx"],
     "needs_human_review": false,
-    "trace_id": "trace_xxx"
+    "trace_id": "trace_xxx",
+    "interrupt": null
   },
   "meta": {
     "trace_id": "trace_xxx"
   }
+}
+```
+
+当命中 HITL 条件（例如 `force_hitl=true`）时，`data.interrupt` 返回：
+
+```json
+{
+  "type": "human_review",
+  "evaluation_id": "ev_xxx",
+  "reasons": ["force_hitl"],
+  "suggested_actions": ["approve", "reject", "edit_scores"],
+  "resume_token": "rt_xxx"
 }
 ```
 

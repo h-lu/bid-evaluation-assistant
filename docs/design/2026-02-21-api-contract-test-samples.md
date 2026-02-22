@@ -52,8 +52,10 @@
 | `CT-010` | `GET /jobs/{job_id}` | 查询不存在任务 | 不存在 `job_id` | `404` | `success=false`，错误对象完整 |
 | `CT-011` | `POST /jobs/{job_id}/cancel` | 正常取消 | 合法 `job_id` + `Idempotency-Key` | `202` | `data.status=failed,error_code=JOB_CANCELLED` |
 | `CT-012` | `POST /jobs/{job_id}/cancel` | 终态冲突 | 任务已 `succeeded/failed` | `409` | `error.code=JOB_CANCEL_CONFLICT` |
-| `CT-013` | `POST /evaluations/{evaluation_id}/resume` | 合法恢复 | 合法 `resume_token + decision + comment` | `202` | 返回新的 `job_id` |
+| `CT-013` | `POST /evaluations/{evaluation_id}/resume` | 合法恢复 | 合法 `resume_token + decision + comment + editor.reviewer_id` | `202` | 返回新的 `job_id` |
 | `CT-014` | `POST /evaluations/{evaluation_id}/resume` | token 非法/过期 | `resume_token` 无效 | `409` | `error.code=WF_INTERRUPT_RESUME_INVALID` |
+| `CT-038` | `POST /evaluations/{evaluation_id}/resume` | 缺失 reviewer | 无 `editor.reviewer_id` | `400` | `error.code=WF_INTERRUPT_REVIEWER_REQUIRED` |
+| `CT-039` | `POST /evaluations/{evaluation_id}/resume` | token 单次有效 | 同 `resume_token` 二次提交 | `409` | `error.code=WF_INTERRUPT_RESUME_INVALID` |
 | `CT-015` | `GET /citations/{chunk_id}/source` | 引用回跳成功 | 合法 `chunk_id` | `200` | 返回 `document_id/page/bbox/text/context` |
 | `CT-016` | `GET /citations/{chunk_id}/source` | 引用不存在 | 不存在 `chunk_id` | `404` | `success=false`，错误对象完整 |
 | `CT-017` | `GET /dlq/items` | 查询 DLQ 列表 | 无 | `200` | 返回 `items[]/total` |
@@ -77,6 +79,7 @@
 | `CT-035` | `POST /retrieval/query` | 约束词过滤 | `must_include_terms + must_exclude_terms` | `200` | 仅返回满足约束词的候选 |
 | `CT-036` | `POST /retrieval/query` | rerank 降级 | `enable_rerank=false` | `200` | `data.degraded=true` 且 `score_rerank=null` |
 | `CT-037` | `GET /evaluations/{evaluation_id}/report` | 报告查询 | 合法 `evaluation_id` | `200` | 返回 `total_score/confidence/criteria_results/citations` |
+| `CT-040` | `GET /evaluations/{evaluation_id}/report` | HITL 中断负载 | `evaluation_scope.force_hitl=true` | `200` | `needs_human_review=true` 且 `interrupt.resume_token` 存在 |
 
 ## 5. 关键断言模板
 

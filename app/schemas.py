@@ -25,9 +25,13 @@ class CreateEvaluationRequest(BaseModel):
 
 
 class ResumeRequest(BaseModel):
+    class Editor(BaseModel):
+        reviewer_id: str
+
     resume_token: str
     decision: str
     comment: str
+    editor: Editor
     edited_scores: list[dict[str, Any]] = Field(default_factory=list)
 
 

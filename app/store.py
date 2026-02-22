@@ -33,7 +33,7 @@ class InMemoryStore:
         self.documents: dict[str, dict[str, Any]] = {}
         self.evaluation_reports: dict[str, dict[str, Any]] = {}
         self.parse_manifests: dict[str, dict[str, Any]] = {}
-        self.resume_tokens: dict[str, str] = {}
+        self.resume_tokens: dict[str, dict[str, Any]] = {}
         self.citation_sources: dict[str, dict[str, Any]] = {}
         self.dlq_items: dict[str, dict[str, Any]] = {}
 
@@ -155,6 +155,25 @@ class InMemoryStore:
         evaluation_id = f"ev_{uuid.uuid4().hex[:12]}"
         job_id = f"job_{uuid.uuid4().hex[:12]}"
         tenant_id = payload.get("tenant_id", "tenant_default")
+        force_hitl = bool(payload.get("evaluation_scope", {}).get("force_hitl", False))
+        needs_human_review = force_hitl
+        confidence = 0.62 if force_hitl else 0.78
+        interrupt_payload = None
+        if needs_human_review:
+            resume_token = f"rt_{uuid.uuid4().hex[:12]}"
+            interrupt_payload = {
+                "type": "human_review",
+                "evaluation_id": evaluation_id,
+                "reasons": ["force_hitl"],
+                "suggested_actions": ["approve", "reject", "edit_scores"],
+                "resume_token": resume_token,
+            }
+            self.register_resume_token(
+                evaluation_id=evaluation_id,
+                resume_token=resume_token,
+                tenant_id=tenant_id,
+                reasons=["force_hitl"],
+            )
         self.jobs[job_id] = {
             "job_id": job_id,
             "job_type": "evaluation",
@@ -173,7 +192,7 @@ class InMemoryStore:
             "evaluation_id": evaluation_id,
             "supplier_id": payload.get("supplier_id", ""),
             "total_score": 88.5,
-            "confidence": 0.78,
+            "confidence": confidence,
             "risk_level": "medium",
             "criteria_results": [
                 {
@@ -187,9 +206,10 @@ class InMemoryStore:
                 }
             ],
             "citations": ["ck_eval_stub_1"],
-            "needs_human_review": False,
+            "needs_human_review": needs_human_review,
             "trace_id": payload.get("trace_id") or "",
             "tenant_id": tenant_id,
+            "interrupt": interrupt_payload,
         }
         return {
             "evaluation_id": evaluation_id,
@@ -326,6 +346,7 @@ class InMemoryStore:
             "citations": report["citations"],
             "needs_human_review": report["needs_human_review"],
             "trace_id": report["trace_id"],
+            "interrupt": report.get("interrupt"),
         }
 
     def transition_job_status(
@@ -364,11 +385,53 @@ class InMemoryStore:
         job["status"] = new_status
         return job
 
-    def register_resume_token(self, *, evaluation_id: str, resume_token: str) -> None:
-        self.resume_tokens[evaluation_id] = resume_token
+    def register_resume_token(
+        self,
+        *,
+        evaluation_id: str,
+        resume_token: str,
+        tenant_id: str = "tenant_default",
+        reasons: list[str] | None = None,
+    ) -> None:
+        self.resume_tokens[evaluation_id] = {
+            "resume_token": resume_token,
+            "tenant_id": tenant_id,
+            "used": False,
+            "reasons": list(reasons or []),
+            "issued_at": self._utcnow_iso(),
+        }
 
-    def validate_resume_token(self, *, evaluation_id: str, resume_token: str) -> bool:
-        return self.resume_tokens.get(evaluation_id) == resume_token
+    def validate_resume_token(
+        self,
+        *,
+        evaluation_id: str,
+        resume_token: str,
+        tenant_id: str | None = None,
+    ) -> bool:
+        record = self.resume_tokens.get(evaluation_id)
+        if record is None:
+            return False
+        if tenant_id is not None:
+            self._assert_tenant_scope(record.get("tenant_id", "tenant_default"), tenant_id)
+        return record.get("resume_token") == resume_token and not bool(record.get("used", False))
+
+    def consume_resume_token(
+        self,
+        *,
+        evaluation_id: str,
+        resume_token: str,
+        tenant_id: str,
+    ) -> bool:
+        if not self.validate_resume_token(
+            evaluation_id=evaluation_id,
+            resume_token=resume_token,
+            tenant_id=tenant_id,
+        ):
+            return False
+        record = self.resume_tokens[evaluation_id]
+        record["used"] = True
+        record["used_at"] = self._utcnow_iso()
+        return True
 
     def create_resume_job(self, *, evaluation_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         job_id = f"job_{uuid.uuid4().hex[:12]}"
@@ -387,6 +450,11 @@ class InMemoryStore:
             "payload": payload,
             "last_error": None,
         }
+        report = self.evaluation_reports.get(evaluation_id)
+        if report is not None:
+            self._assert_tenant_scope(report.get("tenant_id", "tenant_default"), tenant_id)
+            report["needs_human_review"] = False
+            report["interrupt"] = None
         return {
             "evaluation_id": evaluation_id,
             "job_id": job_id,

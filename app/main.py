@@ -77,6 +77,18 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(RequestValidationError)
     async def handle_validation_error(request: Request, exc: RequestValidationError):
+        if request.url.path.startswith("/api/v1/evaluations/") and request.url.path.endswith("/resume"):
+            for err in exc.errors():
+                loc = tuple(err.get("loc", ()))
+                if "editor" in loc or "reviewer_id" in loc:
+                    return _error_response(
+                        request,
+                        code="WF_INTERRUPT_REVIEWER_REQUIRED",
+                        message="reviewer_id is required for resume",
+                        error_class="business_rule",
+                        retryable=False,
+                        status_code=400,
+                    )
         return _error_response(
             request,
             code="REQ_VALIDATION_FAILED",
@@ -351,32 +363,46 @@ def create_app() -> FastAPI:
                 retryable=False,
                 http_status=400,
             )
-        if not store.validate_resume_token(
-            evaluation_id=evaluation_id,
-            resume_token=payload.resume_token,
-        ):
+        reviewer_id = payload.editor.reviewer_id.strip()
+        if not reviewer_id:
             raise ApiError(
-                code="WF_INTERRUPT_RESUME_INVALID",
-                message="resume token expired or mismatched",
+                code="WF_INTERRUPT_REVIEWER_REQUIRED",
+                message="reviewer_id is required for resume",
                 error_class="business_rule",
                 retryable=False,
-                http_status=409,
+                http_status=400,
             )
 
         req_payload = payload.model_dump(mode="json")
-        data = store.run_idempotent(
-            endpoint=f"POST:/api/v1/evaluations/{evaluation_id}/resume",
-            tenant_id=_tenant_id_from_request(request),
-            idempotency_key=idempotency_key,
-            payload=req_payload,
-            execute=lambda: store.create_resume_job(
+
+        def _execute_resume():
+            if not store.consume_resume_token(
+                evaluation_id=evaluation_id,
+                resume_token=payload.resume_token,
+                tenant_id=_tenant_id_from_request(request),
+            ):
+                raise ApiError(
+                    code="WF_INTERRUPT_RESUME_INVALID",
+                    message="resume token expired or mismatched",
+                    error_class="business_rule",
+                    retryable=False,
+                    http_status=409,
+                )
+            return store.create_resume_job(
                 evaluation_id=evaluation_id,
                 payload={
                     **req_payload,
                     "trace_id": _trace_id_from_request(request),
                     "tenant_id": _tenant_id_from_request(request),
                 },
-            ),
+            )
+
+        data = store.run_idempotent(
+            endpoint=f"POST:/api/v1/evaluations/{evaluation_id}/resume",
+            tenant_id=_tenant_id_from_request(request),
+            idempotency_key=idempotency_key,
+            payload=req_payload,
+            execute=_execute_resume,
         )
         return JSONResponse(
             status_code=202,

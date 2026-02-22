@@ -28,6 +28,7 @@ def test_get_evaluation_report_returns_scoring_payload(client):
     assert 0 <= data["confidence"] <= 1
     assert data["criteria_results"]
     assert data["citations"]
+    assert data["interrupt"] is None
 
 
 def test_get_evaluation_report_missing_returns_404(client):
@@ -50,3 +51,26 @@ def test_get_evaluation_report_cross_tenant_is_blocked(client):
     )
     assert denied.status_code == 403
     assert denied.json()["error"]["code"] == "TENANT_SCOPE_VIOLATION"
+
+
+def test_report_force_hitl_includes_interrupt_payload(client):
+    payload = _eval_payload()
+    payload["evaluation_scope"]["force_hitl"] = True
+    created = client.post(
+        "/api/v1/evaluations",
+        json=payload,
+        headers={"Idempotency-Key": "idem_report_hitl_1", "x-tenant-id": "tenant_a"},
+    )
+    evaluation_id = created.json()["data"]["evaluation_id"]
+
+    resp = client.get(
+        f"/api/v1/evaluations/{evaluation_id}/report",
+        headers={"x-tenant-id": "tenant_a"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["needs_human_review"] is True
+    interrupt = data["interrupt"]
+    assert interrupt["type"] == "human_review"
+    assert interrupt["evaluation_id"] == evaluation_id
+    assert "resume_token" in interrupt and interrupt["resume_token"].startswith("rt_")

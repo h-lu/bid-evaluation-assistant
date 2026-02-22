@@ -12,6 +12,7 @@ def test_resume_with_valid_token_returns_202(client):
             "resume_token": token,
             "decision": "approve",
             "comment": "looks good",
+            "editor": {"reviewer_id": "u_reviewer_1"},
         },
         headers={"Idempotency-Key": "idem_resume_1"},
     )
@@ -33,11 +34,61 @@ def test_resume_with_invalid_token_returns_409(client):
             "resume_token": "rt_invalid",
             "decision": "approve",
             "comment": "nope",
+            "editor": {"reviewer_id": "u_reviewer_2"},
         },
         headers={"Idempotency-Key": "idem_resume_2"},
     )
     assert resp.status_code == 409
     assert resp.json()["error"]["code"] == "WF_INTERRUPT_RESUME_INVALID"
+
+
+def test_resume_requires_reviewer_identity(client):
+    evaluation_id = "ev_resume_need_reviewer"
+    token = "rt_need_reviewer"
+    store.register_resume_token(evaluation_id=evaluation_id, resume_token=token)
+
+    resp = client.post(
+        f"/api/v1/evaluations/{evaluation_id}/resume",
+        json={
+            "resume_token": token,
+            "decision": "approve",
+            "comment": "missing editor",
+        },
+        headers={"Idempotency-Key": "idem_resume_need_reviewer"},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == "WF_INTERRUPT_REVIEWER_REQUIRED"
+
+
+def test_resume_token_is_single_use(client):
+    evaluation_id = "ev_resume_once"
+    token = "rt_once_1"
+    store.register_resume_token(evaluation_id=evaluation_id, resume_token=token)
+
+    first = client.post(
+        f"/api/v1/evaluations/{evaluation_id}/resume",
+        json={
+            "resume_token": token,
+            "decision": "approve",
+            "comment": "first use",
+            "editor": {"reviewer_id": "u_reviewer_3"},
+        },
+        headers={"Idempotency-Key": "idem_resume_once_1"},
+    )
+    assert first.status_code == 202
+
+    second = client.post(
+        f"/api/v1/evaluations/{evaluation_id}/resume",
+        json={
+            "resume_token": token,
+            "decision": "approve",
+            "comment": "second use",
+            "editor": {"reviewer_id": "u_reviewer_4"},
+        },
+        headers={"Idempotency-Key": "idem_resume_once_2"},
+    )
+    assert second.status_code == 409
+    assert second.json()["error"]["code"] == "WF_INTERRUPT_RESUME_INVALID"
 
 
 def test_get_citation_source_returns_required_fields(client):

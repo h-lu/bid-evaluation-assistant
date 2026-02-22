@@ -63,9 +63,10 @@
 说明：以下为 `codex/gate-c-api-skeleton` 分支的最小可运行证据。
 
 1. 运行命令：`pytest -v`
-2. 测试结果：`58 passed`
+2. 测试结果：`61 passed`
 3. 覆盖范围：
    - B-1：统一响应包络、幂等、`202 + job_id`、`resume_token`、citation source、DLQ 运维接口、retrieval query/preview 契约、evaluation report 契约
+   - B-1：HITL 恢复输入校验（`editor.reviewer_id`）、`resume_token` 单次有效与 `interrupt` 负载返回
    - B-2：任务初始状态、`jobs/{job_id}` 状态查询契约、状态机流转、`cancel` 语义、内部回放接口
    - B-4：`documents/{document_id}/parse` 异步受理契约、parse manifest 最小字段、解析失败错误码分类
    - B-4：`content_list/context_list` 发现、bbox 归一化、`utf-8 -> gb18030` 编码回退
@@ -91,7 +92,7 @@
 
 更新结论：
 
-1. B-1 运行验证：已在本分支完成最小闭环验证（含 retrieval/report 契约）。
+1. B-1 运行验证：已在本分支完成最小闭环验证（含 retrieval/report 与 HITL resume 契约）。
 2. B-2 运行验证：已在本分支完成核心状态查询、状态机和取消语义验证。
 3. B-4 运行验证：已完成 parse 受理、检索模式选择/过滤/降级和基础 DLQ 运维契约验证（内存实现）。
 4. B-3 运行验证：已完成接口层跨租户阻断验证；真实存储层 RLS 验证待后续接入 DB 补齐。

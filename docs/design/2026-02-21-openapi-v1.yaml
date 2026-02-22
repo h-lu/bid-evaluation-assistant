@@ -720,6 +720,27 @@ components:
           minimum: 0
           maximum: 1
 
+    HumanReviewInterrupt:
+      type: object
+      required: [type, evaluation_id, reasons, suggested_actions, resume_token]
+      properties:
+        type:
+          type: string
+          enum: [human_review]
+        evaluation_id:
+          type: string
+        reasons:
+          type: array
+          items:
+            type: string
+        suggested_actions:
+          type: array
+          items:
+            type: string
+            enum: [approve, reject, edit_scores]
+        resume_token:
+          type: string
+
     EvaluationReportData:
       type: object
       required:
@@ -733,6 +754,7 @@ components:
           citations,
           needs_human_review,
           trace_id,
+          interrupt,
         ]
       properties:
         evaluation_id:
@@ -760,6 +782,10 @@ components:
           type: boolean
         trace_id:
           type: string
+        interrupt:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/HumanReviewInterrupt'
 
     EvaluationReportResponse:
       type: object
@@ -799,7 +825,7 @@ components:
 
     ResumeRequest:
       type: object
-      required: [resume_token, decision, comment]
+      required: [resume_token, decision, comment, editor]
       properties:
         resume_token:
           type: string
@@ -808,6 +834,12 @@ components:
           enum: [approve, reject, edit_scores]
         comment:
           type: string
+        editor:
+          type: object
+          required: [reviewer_id]
+          properties:
+            reviewer_id:
+              type: string
         edited_scores:
           type: array
           items:
