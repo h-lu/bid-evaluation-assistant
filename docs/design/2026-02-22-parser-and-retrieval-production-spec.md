@@ -1,6 +1,6 @@
 # 解析与检索生产化规范
 
-> 版本：v2026.02.22-r1  
+> 版本：v2026.02.22-r2  
 > 状态：Draft  
 > 对齐：`docs/plans/2026-02-22-production-capability-plan.md`
 
@@ -76,3 +76,10 @@
 1. `docs/design/2026-02-21-mineru-ingestion-spec.md`
 2. `docs/design/2026-02-21-retrieval-and-scoring-spec.md`
 3. `docs/design/2026-02-21-rest-api-specification.md`
+
+## 8. 当前实现增量（r2）
+
+1. parse manifest 已补齐 `run_id` 字段（格式：`prun_*`）。
+2. parse manifest 已补齐 `parser_version` 字段（当前：`v0`）。
+3. parse 成功后生成 chunk 时统一继承 manifest 的 `selected_parser/parser_version`。
+4. 新增回归断言：`tests/test_parse_manifest_and_error_classification.py` 校验 manifest 最小字段闭环。
