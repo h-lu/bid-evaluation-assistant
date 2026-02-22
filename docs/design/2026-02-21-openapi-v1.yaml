@@ -1,11 +1,13 @@
 openapi: 3.1.0
 info:
   title: Bid Evaluation Assistant API
-  version: v2026.02.21-r3
+  version: v2026.02.21-r4
   description: |
     Gate C OpenAPI contract subset for async job submission, parse/resume/cancel,
     job status query, DLQ operations, citation source lookup, retrieval query/preview,
     and evaluation report lookup.
+    The following planned interfaces are intentionally out of this subset:
+    auth/session, projects/suppliers CRUD, and GET /evaluations/{evaluation_id}.
 servers:
   - url: /api/v1
 security:

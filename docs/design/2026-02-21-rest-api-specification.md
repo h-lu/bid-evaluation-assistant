@@ -1,6 +1,6 @@
 # REST API 规范
 
-> 版本：v2026.02.21-r3  
+> 版本：v2026.02.21-r4  
 > 状态：Active  
 > 对齐：`docs/plans/2026-02-21-end-to-end-unified-design.md`
 
@@ -46,7 +46,7 @@
 }
 ```
 
-## 3. 认证与会话接口
+## 3. 认证与会话接口（规划，未纳入当前 v1 契约子集）
 
 1. `POST /auth/login`
 2. `POST /auth/refresh`
@@ -60,7 +60,7 @@
 
 ## 4. 业务资源接口
 
-### 4.1 Projects
+### 4.1 Projects（规划，未纳入当前 v1 契约子集）
 
 1. `GET /projects`
 2. `POST /projects`
@@ -68,7 +68,7 @@
 4. `PUT /projects/{project_id}`
 5. `DELETE /projects/{project_id}`
 
-### 4.2 Suppliers
+### 4.2 Suppliers（规划，未纳入当前 v1 契约子集）
 
 1. `GET /suppliers`
 2. `POST /suppliers`
@@ -90,14 +90,14 @@
 ### 4.5 Evaluations
 
 1. `POST /evaluations` -> `202 + job_id`
-2. `GET /evaluations/{evaluation_id}`
+2. `GET /evaluations/{evaluation_id}`（规划，未纳入当前 v1 契约子集）
 3. `GET /evaluations/{evaluation_id}/report`
 4. `POST /evaluations/{evaluation_id}/resume` -> `202 + job_id`
 
 ### 4.6 Jobs
 
 1. `GET /jobs/{job_id}`
-2. `GET /jobs?status=&type=&cursor=`
+2. `GET /jobs`（支持查询参数：`status/type/cursor`）
 3. `POST /jobs/{job_id}/cancel`
 
 ### 4.7 DLQ（受限）
@@ -999,7 +999,7 @@
 2. 成功入队后事件必须原子标记为 `published`。
 3. 对已发布事件重复执行 relay 不得重复入队。
 
-### 5.20 `POST /internal/queue/{queue_name}/enqueue|dequeue|ack|nack`
+### 5.20 Internal Queue 接口族
 
 `enqueue` 请求体示例：
 
@@ -1230,7 +1230,7 @@
 
 `queued -> running -> retrying -> succeeded|failed`
 
-### 5.15 `POST /dlq/items/{item_id}/requeue|discard`
+### 5.15 DLQ 运维动作接口
 
 约束：
 
