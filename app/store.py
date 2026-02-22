@@ -61,6 +61,25 @@ class InMemoryStore:
     }
 
     def __init__(self) -> None:
+        self.resume_token_ttl_hours = self._env_int(
+            "RESUME_TOKEN_TTL_HOURS",
+            default=self.RESUME_TOKEN_TTL_HOURS,
+            minimum=1,
+        )
+        self.worker_max_retries = self._env_int("WORKER_MAX_RETRIES", default=3, minimum=0)
+        self.worker_retry_backoff_base_ms = self._env_int(
+            "WORKER_RETRY_BACKOFF_BASE_MS",
+            default=1000,
+            minimum=0,
+        )
+        self.worker_retry_backoff_max_ms = self._env_int(
+            "WORKER_RETRY_BACKOFF_MAX_MS",
+            default=30000,
+            minimum=0,
+        )
+        self.workflow_checkpoint_backend = (
+            os.environ.get("WORKFLOW_CHECKPOINT_BACKEND", "memory").strip().lower() or "memory"
+        )
         self.idempotency_records: dict[tuple[str, str], IdempotencyRecord] = {}
         self.jobs: dict[str, dict[str, Any]] = {}
         self.documents: dict[str, dict[str, Any]] = {}
@@ -100,6 +119,17 @@ class InMemoryStore:
             "rerank_degraded_total": 0,
         }
         self._bind_repositories()
+
+    @staticmethod
+    def _env_int(name: str, *, default: int, minimum: int = 0) -> int:
+        raw = os.environ.get(name, "").strip()
+        if not raw:
+            return default
+        try:
+            value = int(raw)
+        except ValueError:
+            return default
+        return max(minimum, value)
 
     def _bind_repositories(self) -> None:
         self.jobs_repository = InMemoryJobsRepository(self.jobs)
@@ -176,6 +206,22 @@ class InMemoryStore:
     @staticmethod
     def _new_thread_id(prefix: str) -> str:
         return f"thr_{prefix}_{uuid.uuid4().hex[:10]}"
+
+    @staticmethod
+    def _retry_jitter_ms(*, job_id: str, retry_count: int) -> int:
+        seed = f"{job_id}:{retry_count}".encode("utf-8")
+        digest = hashlib.sha256(seed).digest()
+        return int.from_bytes(digest[:2], byteorder="big") % 301
+
+    def _retry_backoff_ms(self, *, job_id: str, retry_count: int) -> int:
+        normalized_retry = max(1, int(retry_count))
+        base = max(0, int(self.worker_retry_backoff_base_ms))
+        max_backoff = max(base, int(self.worker_retry_backoff_max_ms))
+        exponential = base * (2 ** (normalized_retry - 1))
+        return min(max_backoff, exponential) + self._retry_jitter_ms(
+            job_id=job_id,
+            retry_count=normalized_retry,
+        )
 
     def _persist_job(self, *, job: dict[str, Any]) -> dict[str, Any]:
         return self.jobs_repository.create(job=job)
@@ -882,7 +928,7 @@ class InMemoryStore:
         if issued_at.tzinfo is None:
             issued_at = issued_at.replace(tzinfo=UTC)
 
-        expires_at = issued_at + timedelta(hours=self.RESUME_TOKEN_TTL_HOURS)
+        expires_at = issued_at + timedelta(hours=self.resume_token_ttl_hours)
         return datetime.now(UTC) <= expires_at
 
     def consume_resume_token(
@@ -1544,6 +1590,11 @@ class InMemoryStore:
                 "retrying_jobs": retrying_jobs,
                 "dlq_open": dlq_open,
                 "outbox_pending": outbox_pending,
+                "max_retries": self.worker_max_retries,
+                "retry_backoff_base_ms": self.worker_retry_backoff_base_ms,
+                "retry_backoff_max_ms": self.worker_retry_backoff_max_ms,
+                "resume_token_ttl_hours": self.resume_token_ttl_hours,
+                "checkpoint_backend": self.workflow_checkpoint_backend,
             },
             "quality": {
                 "report_count": len(reports),
@@ -2071,12 +2122,16 @@ class InMemoryStore:
             error = self._classify_error_code(error_code)
             current_retry = int(job.get("retry_count", 0))
 
-            if current_retry < 3:
+            if current_retry < self.worker_max_retries:
                 retried_job = self.transition_job_status(
                     job_id=job_id,
                     new_status="retrying",
                     tenant_id=tenant_id,
                 )
+                retry_count = int(retried_job.get("retry_count", 0))
+                retry_after_ms = self._retry_backoff_ms(job_id=job_id, retry_count=retry_count)
+                retry_at = (datetime.now(UTC) + timedelta(milliseconds=retry_after_ms)).isoformat()
+                retried_job["next_retry_at"] = retry_at
                 retried_job["last_error"] = {
                     "code": error_code,
                     "message": error["message"],
@@ -2096,13 +2151,20 @@ class InMemoryStore:
                     tenant_id=tenant_id,
                     node="job_retrying",
                     status="retrying",
-                    payload={"retry_count": retried_job.get("retry_count", 0), "error_code": error_code},
+                    payload={
+                        "retry_count": retried_job.get("retry_count", 0),
+                        "error_code": error_code,
+                        "retry_after_ms": retry_after_ms,
+                        "retry_at": retry_at,
+                    },
                 )
                 return {
                     "job_id": job_id,
                     "final_status": "retrying",
                     "retry_count": retried_job.get("retry_count", 0),
                     "dlq_id": None,
+                    "retry_after_ms": retry_after_ms,
+                    "retry_at": retry_at,
                 }
             force_fail = True
             force_error_code = error_code
@@ -2136,6 +2198,7 @@ class InMemoryStore:
                 new_status="failed",
                 tenant_id=tenant_id,
             )
+            failed_job.pop("next_retry_at", None)
             failed_job["last_error"] = {
                 "code": error_code,
                 "message": error["message"],
@@ -2171,11 +2234,13 @@ class InMemoryStore:
                 "dlq_id": dlq_item["dlq_id"],
             }
 
-        self.transition_job_status(
+        succeeded_job = self.transition_job_status(
             job_id=job_id,
             new_status="succeeded",
             tenant_id=tenant_id,
         )
+        succeeded_job.pop("next_retry_at", None)
+        self._persist_job(job=succeeded_job)
         if job.get("job_type") == "parse":
             manifest = self.get_parse_manifest_for_tenant(job_id=job_id, tenant_id=tenant_id)
             if manifest is not None:
@@ -2252,7 +2317,7 @@ class InMemoryStore:
         return {
             "job_id": job_id,
             "final_status": "succeeded",
-            "retry_count": job.get("retry_count", 0),
+            "retry_count": succeeded_job.get("retry_count", 0),
             "dlq_id": None,
         }
 
@@ -2783,6 +2848,8 @@ class PostgresBackedStore(InMemoryStore):
         apply_rls: bool = False,
     ) -> None:
         super().__init__()
+        if not os.environ.get("WORKFLOW_CHECKPOINT_BACKEND", "").strip():
+            self.workflow_checkpoint_backend = "postgres"
         if not dsn.strip():
             raise ValueError("POSTGRES_DSN must be provided for postgres store backend")
         self._dsn = dsn.strip()

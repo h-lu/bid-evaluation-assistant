@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from app.queue_backend import InMemoryQueueBackend, RedisQueueBackend, create_queue_from_env
@@ -227,3 +228,31 @@ def test_queue_ack_and_nack_require_same_tenant():
         assert "tenant mismatch" in str(exc)
     else:
         raise AssertionError("expected RuntimeError for cross-tenant nack")
+
+
+def test_queue_dequeue_skips_future_available_messages():
+    q = InMemoryQueueBackend()
+    future_at = datetime.now(UTC) + timedelta(seconds=60)
+    q.enqueue(
+        tenant_id="tenant_a",
+        queue_name="jobs",
+        payload={"job_id": "job_future"},
+        available_at=future_at,
+    )
+    q.enqueue(tenant_id="tenant_a", queue_name="jobs", payload={"job_id": "job_now"})
+
+    msg = q.dequeue(tenant_id="tenant_a", queue_name="jobs")
+    assert msg is not None
+    assert msg.payload["job_id"] == "job_now"
+
+
+def test_queue_nack_with_delay_hides_message_until_due():
+    q = InMemoryQueueBackend()
+    sent = q.enqueue(tenant_id="tenant_a", queue_name="jobs", payload={"job_id": "job_delay"})
+    got = q.dequeue(tenant_id="tenant_a", queue_name="jobs")
+    assert got is not None
+    assert got.message_id == sent.message_id
+
+    q.nack(tenant_id="tenant_a", message_id=got.message_id, requeue=True, delay_ms=5000)
+    immediate = q.dequeue(tenant_id="tenant_a", queue_name="jobs")
+    assert immediate is None

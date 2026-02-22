@@ -1,6 +1,6 @@
 # 工作流与 Worker 生产化规范
 
-> 版本：v2026.02.22-r4  
+> 版本：v2026.02.23-r5  
 > 状态：Active  
 > 对齐：`docs/plans/2026-02-22-production-capability-plan.md`
 
@@ -134,8 +134,16 @@ pytest -q
 
 ## 12. 实施检查清单
 
-1. [ ] Worker 常驻进程可用。
-2. [ ] checkpointer 真实后端可恢复。
-3. [ ] HITL token/审计一致性通过。
-4. [ ] 重试与 DLQ 时序通过。
-5. [ ] 并发配额压测通过。
+1. [x] Worker 常驻进程可用。
+2. [x] checkpointer 真实后端可恢复。
+3. [x] HITL token/审计一致性通过。
+4. [x] 重试与 DLQ 时序通过。
+5. [x] 并发配额压测通过。
+
+## 13. 实施更新（2026-02-23）
+
+1. 新增常驻 Worker 运行时：`app/worker_runtime.py` + `scripts/run_worker.py`，支持按队列持续轮询执行。
+2. 队列层新增延迟可见能力（available_at）与 `nack(delay_ms)`，用于指数退避重试。
+3. `run_job_once` 接入配置化重试参数：`WORKER_MAX_RETRIES`、`WORKER_RETRY_BACKOFF_BASE_MS`、`WORKER_RETRY_BACKOFF_MAX_MS`。
+4. HITL token TTL 接入 `RESUME_TOKEN_TTL_HOURS` 配置，保持单次消费与租户绑定约束。
+5. Worker 调度引入按 tenant 轮询与 `tenant_burst_limit`，避免单租户突发独占消费窗口。

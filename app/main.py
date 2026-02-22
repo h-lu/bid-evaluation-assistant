@@ -1323,7 +1323,13 @@ def create_app() -> FastAPI:
             )
             final_status = str(result.get("final_status"))
             if final_status == "retrying":
-                queue_backend.nack(tenant_id=tenant_id, message_id=msg.message_id, requeue=True)
+                retry_after_ms = int(result.get("retry_after_ms", 0) or 0)
+                queue_backend.nack(
+                    tenant_id=tenant_id,
+                    message_id=msg.message_id,
+                    requeue=True,
+                    delay_ms=max(0, retry_after_ms),
+                )
                 requeued += 1
                 retrying += 1
                 continue

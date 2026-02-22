@@ -189,6 +189,7 @@
 2. checkpoint 查询按 `thread_id + tenant_id` 过滤。
 3. `thread_id` 由任务创建时分配，并在 resume 任务中复用。
 4. `drain-once` 每次最多消费 `max_messages` 条消息并驱动对应 job 执行。
+5. 当任务进入 `retrying` 时，worker 按指数退避结果执行延迟重投（`nack(delay_ms)`）。
 
 ## 5. 字段级契约（关键接口示例）
 
@@ -1123,6 +1124,11 @@
       "retrying_jobs": 1,
       "dlq_open": 1,
       "outbox_pending": 0,
+      "max_retries": 3,
+      "retry_backoff_base_ms": 1000,
+      "retry_backoff_max_ms": 30000,
+      "resume_token_ttl_hours": 24,
+      "checkpoint_backend": "postgres",
       "queue_name": "jobs",
       "queue_pending": 0
     },

@@ -2610,7 +2610,19 @@ components:
 
     OpsMetricsWorkerSummary:
       type: object
-      required: [retrying_jobs, dlq_open, outbox_pending, queue_name, queue_pending]
+      required:
+        [
+          retrying_jobs,
+          dlq_open,
+          outbox_pending,
+          max_retries,
+          retry_backoff_base_ms,
+          retry_backoff_max_ms,
+          resume_token_ttl_hours,
+          checkpoint_backend,
+          queue_name,
+          queue_pending,
+        ]
       properties:
         retrying_jobs:
           type: integer
@@ -2621,6 +2633,20 @@ components:
         outbox_pending:
           type: integer
           minimum: 0
+        max_retries:
+          type: integer
+          minimum: 0
+        retry_backoff_base_ms:
+          type: integer
+          minimum: 0
+        retry_backoff_max_ms:
+          type: integer
+          minimum: 0
+        resume_token_ttl_hours:
+          type: integer
+          minimum: 1
+        checkpoint_backend:
+          type: string
         queue_name:
           type: string
         queue_pending:
