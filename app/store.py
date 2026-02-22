@@ -19,7 +19,9 @@ from app.parser_adapters import (
     disabled_parsers_from_env,
     select_parse_route,
 )
+from app.db.postgres import PostgresTxRunner
 from app.repositories.jobs import InMemoryJobsRepository
+from app.repositories.jobs import PostgresJobsRepository
 
 
 @dataclass
@@ -2308,6 +2310,8 @@ class PostgresBackedStore(InMemoryStore):
         self._table_name = table_name.strip() or "bea_store_state"
         self._lock = threading.RLock()
         self._initialize_database()
+        self._tx_runner = PostgresTxRunner(self._dsn)
+        self._jobs_pg_repo = PostgresJobsRepository(tx_runner=self._tx_runner, table_name="jobs")
         self._load_state()
 
     def _connect(self) -> Any:
@@ -2324,7 +2328,36 @@ class PostgresBackedStore(InMemoryStore):
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(create_sql)
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS jobs (
+                      job_id TEXT PRIMARY KEY,
+                      tenant_id TEXT NOT NULL,
+                      job_type TEXT NOT NULL,
+                      status TEXT NOT NULL,
+                      retry_count INTEGER NOT NULL DEFAULT 0,
+                      thread_id TEXT NOT NULL,
+                      trace_id TEXT,
+                      resource JSONB NOT NULL,
+                      payload JSONB NOT NULL,
+                      last_error JSONB
+                    )
+                    """
+                )
             conn.commit()
+
+    def _persist_job(self, *, job: dict[str, Any]) -> dict[str, Any]:
+        saved = super()._persist_job(job=job)
+        tenant_id = str(saved.get("tenant_id") or "tenant_default")
+        self._jobs_pg_repo.create(tenant_id=tenant_id, job=saved)
+        return saved
+
+    def get_job_for_tenant(self, *, job_id: str, tenant_id: str) -> dict[str, Any] | None:
+        loaded = self._jobs_pg_repo.get(tenant_id=tenant_id, job_id=job_id)
+        if loaded is not None:
+            self.jobs[job_id] = loaded
+            return loaded
+        return super().get_job_for_tenant(job_id=job_id, tenant_id=tenant_id)
 
     def _state_snapshot(self) -> dict[str, Any]:
         idempotency_records = []

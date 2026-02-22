@@ -82,10 +82,10 @@ def test_store_factory_requires_postgres_dsn(monkeypatch):
 
 
 def test_store_factory_uses_postgres_backend_with_fake_driver(monkeypatch):
-    shared: dict[str, str] = {}
+    shared: dict[str, object] = {"jobs": {}}
 
     class FakeCursor:
-        def __init__(self, state: dict[str, str]) -> None:
+        def __init__(self, state: dict[str, object]) -> None:
             self._state = state
             self._row = None
 
@@ -99,14 +99,35 @@ def test_store_factory_uses_postgres_backend_with_fake_driver(monkeypatch):
             normalized = " ".join(query.strip().split()).lower()
             if normalized.startswith("create table if not exists"):
                 return
+            if normalized.startswith("set local app.current_tenant ="):
+                return
             if normalized.startswith("select payload::text from"):
                 payload = self._state.get("payload")
                 self._row = (payload,) if payload is not None else None
                 return
-            if normalized.startswith("insert into"):
+            if normalized.startswith("select job_id, tenant_id, job_type"):
+                if not params:
+                    raise AssertionError("expected tenant_id and job_id")
+                tenant_id, job_id = params
+                jobs = self._state.get("jobs", {})
+                assert isinstance(jobs, dict)
+                row = jobs.get(str(job_id))
+                if isinstance(row, tuple) and row[1] == tenant_id:
+                    self._row = row
+                else:
+                    self._row = None
+                return
+            if normalized.startswith("insert into") and "bea_store_state" in normalized:
                 if not params:
                     raise AssertionError("expected payload parameter")
                 self._state["payload"] = str(params[0])
+                return
+            if normalized.startswith("insert into") and "insert into jobs" in normalized:
+                if not params:
+                    raise AssertionError("expected jobs insert parameters")
+                jobs = self._state.setdefault("jobs", {})
+                assert isinstance(jobs, dict)
+                jobs[str(params[0])] = params
                 return
             raise AssertionError(f"unexpected SQL: {query}")
 
@@ -114,7 +135,7 @@ def test_store_factory_uses_postgres_backend_with_fake_driver(monkeypatch):
             return self._row
 
     class FakeConnection:
-        def __init__(self, state: dict[str, str]) -> None:
+        def __init__(self, state: dict[str, object]) -> None:
             self._state = state
 
         def __enter__(self):
@@ -130,7 +151,7 @@ def test_store_factory_uses_postgres_backend_with_fake_driver(monkeypatch):
             return None
 
     class FakePsycopg:
-        def __init__(self, state: dict[str, str]) -> None:
+        def __init__(self, state: dict[str, object]) -> None:
             self._state = state
             self.dsns: list[str] = []
 
@@ -142,6 +163,7 @@ def test_store_factory_uses_postgres_backend_with_fake_driver(monkeypatch):
     monkeypatch.setenv("BEA_STORE_BACKEND", "postgres")
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://test-user:test-pass@localhost:5432/bea")
     monkeypatch.setattr("app.store._import_psycopg", lambda: fake_psycopg)
+    monkeypatch.setattr("app.db.postgres._import_psycopg", lambda: fake_psycopg)
 
     store = create_store_from_env()
     assert isinstance(store, PostgresBackedStore)
