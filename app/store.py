@@ -55,6 +55,8 @@ class InMemoryStore:
         self.citation_sources: dict[str, dict[str, Any]] = {}
         self.dlq_items: dict[str, dict[str, Any]] = {}
         self.release_rollout_policies: dict[str, dict[str, Any]] = {}
+        self.release_replay_runs: dict[str, dict[str, Any]] = {}
+        self.release_readiness_assessments: dict[str, dict[str, Any]] = {}
         self.counterexample_samples: dict[str, dict[str, Any]] = {}
         self.gold_candidate_samples: dict[str, dict[str, Any]] = {}
         self.dataset_version: str = "v1.0.0"
@@ -85,6 +87,8 @@ class InMemoryStore:
         self.citation_sources.clear()
         self.dlq_items.clear()
         self.release_rollout_policies.clear()
+        self.release_replay_runs.clear()
+        self.release_readiness_assessments.clear()
         self.counterexample_samples.clear()
         self.gold_candidate_samples.clear()
         self.dataset_version = "v1.0.0"
@@ -1137,6 +1141,153 @@ class InMemoryStore:
             },
         }
 
+    def run_release_replay_e2e(
+        self,
+        *,
+        release_id: str,
+        tenant_id: str,
+        trace_id: str,
+        project_id: str,
+        supplier_id: str,
+        doc_type: str = "bid",
+        force_hitl: bool = True,
+        decision: str = "approve",
+    ) -> dict[str, Any]:
+        replay_run_id = f"rpy_{uuid.uuid4().hex[:12]}"
+        upload = self.create_upload_job(
+            {
+                "tenant_id": tenant_id,
+                "trace_id": trace_id,
+                "project_id": project_id,
+                "supplier_id": supplier_id,
+                "doc_type": doc_type,
+                "filename": f"{release_id}.pdf",
+                "file_sha256": uuid.uuid4().hex,
+                "file_size": 128,
+            }
+        )
+        parse_job_id = upload["job_id"]
+        parse_result = self.run_job_once(job_id=parse_job_id, tenant_id=tenant_id)
+        parse_status = parse_result["final_status"]
+
+        eval_created = self.create_evaluation_job(
+            {
+                "tenant_id": tenant_id,
+                "trace_id": trace_id,
+                "project_id": project_id,
+                "supplier_id": supplier_id,
+                "rule_pack_version": "v1.0.0",
+                "evaluation_scope": {"include_doc_types": [doc_type], "force_hitl": force_hitl},
+                "query_options": {"mode_hint": "hybrid", "top_k": 10},
+            }
+        )
+        evaluation_id = eval_created["evaluation_id"]
+        evaluation_job_id = eval_created["job_id"]
+        resume_job_id: str | None = None
+
+        report = self.evaluation_reports.get(evaluation_id)
+        if force_hitl and isinstance(report, dict):
+            interrupt = report.get("interrupt")
+            token = interrupt.get("resume_token") if isinstance(interrupt, dict) else None
+            if isinstance(token, str) and token:
+                if self.consume_resume_token(
+                    evaluation_id=evaluation_id,
+                    resume_token=token,
+                    tenant_id=tenant_id,
+                ):
+                    resumed = self.create_resume_job(
+                        evaluation_id=evaluation_id,
+                        payload={
+                            "tenant_id": tenant_id,
+                            "trace_id": trace_id,
+                            "decision": decision,
+                            "comment": "release replay auto resume",
+                            "editor": {"reviewer_id": "system_replay"},
+                        },
+                    )
+                    resume_job_id = resumed["job_id"]
+                    self.run_job_once(job_id=resume_job_id, tenant_id=tenant_id)
+
+        final_report = self.evaluation_reports.get(evaluation_id, {})
+        needs_human_review = bool(final_report.get("needs_human_review", False))
+        passed = parse_status == "succeeded" and (not force_hitl or not needs_human_review)
+
+        data = {
+            "replay_run_id": replay_run_id,
+            "release_id": release_id,
+            "tenant_id": tenant_id,
+            "parse": {"job_id": parse_job_id, "status": parse_status},
+            "evaluation": {
+                "evaluation_id": evaluation_id,
+                "job_id": evaluation_job_id,
+                "resume_job_id": resume_job_id,
+                "needs_human_review": needs_human_review,
+            },
+            "passed": passed,
+        }
+        self.release_replay_runs[replay_run_id] = {**data, "trace_id": trace_id, "created_at": self._utcnow_iso()}
+        self.audit_logs.append(
+            {
+                "audit_id": f"audit_{uuid.uuid4().hex[:12]}",
+                "tenant_id": tenant_id,
+                "action": "release_replay_e2e_executed",
+                "release_id": release_id,
+                "replay_run_id": replay_run_id,
+                "passed": passed,
+                "trace_id": trace_id,
+                "occurred_at": self._utcnow_iso(),
+            }
+        )
+        return data
+
+    def evaluate_release_readiness(
+        self,
+        *,
+        release_id: str,
+        tenant_id: str,
+        trace_id: str,
+        replay_passed: bool,
+        gate_results: dict[str, Any],
+    ) -> dict[str, Any]:
+        expected_gates = ["quality", "performance", "security", "cost", "rollout", "rollback", "ops"]
+        normalized_gate_results = {name: bool(gate_results.get(name, False)) for name in expected_gates}
+        failed_checks: list[str] = []
+        for gate_name in expected_gates:
+            if not normalized_gate_results[gate_name]:
+                failed_checks.append(f"{gate_name.upper()}_GATE_FAILED")
+        if not replay_passed:
+            failed_checks.append("REPLAY_E2E_FAILED")
+        admitted = len(failed_checks) == 0
+        assessment_id = f"ra_{uuid.uuid4().hex[:12]}"
+        data = {
+            "assessment_id": assessment_id,
+            "release_id": release_id,
+            "tenant_id": tenant_id,
+            "admitted": admitted,
+            "failed_checks": failed_checks,
+            "replay_passed": replay_passed,
+            "gate_results": normalized_gate_results,
+        }
+        self.release_readiness_assessments[assessment_id] = {
+            **data,
+            "trace_id": trace_id,
+            "created_at": self._utcnow_iso(),
+        }
+        self.audit_logs.append(
+            {
+                "audit_id": f"audit_{uuid.uuid4().hex[:12]}",
+                "tenant_id": tenant_id,
+                "action": "release_readiness_evaluated",
+                "release_id": release_id,
+                "assessment_id": assessment_id,
+                "admitted": admitted,
+                "failed_checks": failed_checks,
+                "trace_id": trace_id,
+                "occurred_at": self._utcnow_iso(),
+            }
+        )
+        return data
+
     def upsert_rollout_policy(
         self,
         *,
@@ -1700,6 +1851,8 @@ class SqliteBackedStore(InMemoryStore):
             "citation_sources": self.citation_sources,
             "dlq_items": self.dlq_items,
             "release_rollout_policies": self.release_rollout_policies,
+            "release_replay_runs": self.release_replay_runs,
+            "release_readiness_assessments": self.release_readiness_assessments,
             "counterexample_samples": self.counterexample_samples,
             "gold_candidate_samples": self.gold_candidate_samples,
             "dataset_version": self.dataset_version,
@@ -1754,6 +1907,14 @@ class SqliteBackedStore(InMemoryStore):
         self.release_rollout_policies = (
             payload.get("release_rollout_policies", {})
             if isinstance(payload.get("release_rollout_policies"), dict)
+            else {}
+        )
+        self.release_replay_runs = (
+            payload.get("release_replay_runs", {}) if isinstance(payload.get("release_replay_runs"), dict) else {}
+        )
+        self.release_readiness_assessments = (
+            payload.get("release_readiness_assessments", {})
+            if isinstance(payload.get("release_readiness_assessments"), dict)
             else {}
         )
         self.counterexample_samples = (
@@ -2001,6 +2162,50 @@ class SqliteBackedStore(InMemoryStore):
             breaches=breaches,
             tenant_id=tenant_id,
             trace_id=trace_id,
+        )
+        self._save_state()
+        return data
+
+    def run_release_replay_e2e(
+        self,
+        *,
+        release_id: str,
+        tenant_id: str,
+        trace_id: str,
+        project_id: str,
+        supplier_id: str,
+        doc_type: str = "bid",
+        force_hitl: bool = True,
+        decision: str = "approve",
+    ) -> dict[str, Any]:
+        data = super().run_release_replay_e2e(
+            release_id=release_id,
+            tenant_id=tenant_id,
+            trace_id=trace_id,
+            project_id=project_id,
+            supplier_id=supplier_id,
+            doc_type=doc_type,
+            force_hitl=force_hitl,
+            decision=decision,
+        )
+        self._save_state()
+        return data
+
+    def evaluate_release_readiness(
+        self,
+        *,
+        release_id: str,
+        tenant_id: str,
+        trace_id: str,
+        replay_passed: bool,
+        gate_results: dict[str, Any],
+    ) -> dict[str, Any]:
+        data = super().evaluate_release_readiness(
+            release_id=release_id,
+            tenant_id=tenant_id,
+            trace_id=trace_id,
+            replay_passed=replay_passed,
+            gate_results=gate_results,
         )
         self._save_state()
         return data

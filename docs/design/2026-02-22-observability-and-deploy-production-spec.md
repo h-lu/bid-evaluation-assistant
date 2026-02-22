@@ -1,6 +1,6 @@
 # 观测与部署生产化规范
 
-> 版本：v2026.02.22-r2  
+> 版本：v2026.02.22-r3  
 > 状态：Draft  
 > 对齐：`docs/plans/2026-02-22-production-capability-plan.md`
 
@@ -86,9 +86,13 @@ build
 3. `docs/design/2026-02-21-agent-evals-observability.md`
 4. `docs/ops/agent-incident-runbook.md`
 
-## 10. 当前实现增量（r2）
+## 10. 当前实现增量（r3）
 
 1. 新增内部观测接口：`GET /api/v1/internal/ops/metrics/summary`。
 2. 指标按租户聚合输出 `api/worker/quality/cost/slo` 五类摘要。
 3. `worker` 维度新增 `queue_pending`（按 `queue_name` 查询）与 `dlq_open/outbox_pending`。
 4. 新增回归：`tests/test_observability_metrics_api.py`（鉴权、租户隔离、指标结构）。
+5. 新增 P6 回放接口：`POST /api/v1/internal/release/replay/e2e`，用于执行发布前最小真链路回放。
+6. 新增 P6 准入接口：`POST /api/v1/internal/release/readiness/evaluate`，用于汇总 Gate D/E/F 与回放结果。
+7. `SqliteBackedStore` 快照已纳入 `release_replay_runs/release_readiness_assessments`，支持重启后追溯。
+8. 新增回归：`tests/test_release_readiness_api.py`（鉴权、回放通过、准入阻断）。

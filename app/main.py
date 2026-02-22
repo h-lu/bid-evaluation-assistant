@@ -863,6 +863,89 @@ def create_app() -> FastAPI:
         )
         return success_envelope(data, _trace_id_from_request(request))
 
+    @app.post("/api/v1/internal/release/replay/e2e")
+    def internal_run_release_replay_e2e(
+        request: Request,
+        payload: dict[str, object] = Body(default_factory=dict),
+        x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
+    ):
+        if x_internal_debug != "true":
+            raise ApiError(
+                code="AUTH_FORBIDDEN",
+                message="internal endpoint forbidden",
+                error_class="security_sensitive",
+                retryable=False,
+                http_status=403,
+            )
+        release_id = str(payload.get("release_id") or "").strip()
+        project_id = str(payload.get("project_id") or "").strip()
+        supplier_id = str(payload.get("supplier_id") or "").strip()
+        if not release_id or not project_id or not supplier_id:
+            raise ApiError(
+                code="REQ_VALIDATION_FAILED",
+                message="release_id, project_id and supplier_id are required",
+                error_class="validation",
+                retryable=False,
+                http_status=400,
+            )
+        doc_type = str(payload.get("doc_type") or "bid").strip() or "bid"
+        force_hitl = bool(payload.get("force_hitl", True))
+        decision = str(payload.get("decision") or "approve").strip() or "approve"
+        data = store.run_release_replay_e2e(
+            release_id=release_id,
+            tenant_id=_tenant_id_from_request(request),
+            trace_id=_trace_id_from_request(request),
+            project_id=project_id,
+            supplier_id=supplier_id,
+            doc_type=doc_type,
+            force_hitl=force_hitl,
+            decision=decision,
+        )
+        return success_envelope(data, _trace_id_from_request(request))
+
+    @app.post("/api/v1/internal/release/readiness/evaluate")
+    def internal_evaluate_release_readiness(
+        request: Request,
+        payload: dict[str, object] = Body(default_factory=dict),
+        x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
+    ):
+        if x_internal_debug != "true":
+            raise ApiError(
+                code="AUTH_FORBIDDEN",
+                message="internal endpoint forbidden",
+                error_class="security_sensitive",
+                retryable=False,
+                http_status=403,
+            )
+        release_id = str(payload.get("release_id") or "").strip()
+        if not release_id:
+            raise ApiError(
+                code="REQ_VALIDATION_FAILED",
+                message="release_id is required",
+                error_class="validation",
+                retryable=False,
+                http_status=400,
+            )
+        if "replay_passed" not in payload:
+            raise ApiError(
+                code="REQ_VALIDATION_FAILED",
+                message="replay_passed is required",
+                error_class="validation",
+                retryable=False,
+                http_status=400,
+            )
+        replay_passed = bool(payload.get("replay_passed"))
+        gate_results_obj = payload.get("gate_results", {})
+        gate_results = gate_results_obj if isinstance(gate_results_obj, dict) else {}
+        data = store.evaluate_release_readiness(
+            release_id=release_id,
+            tenant_id=_tenant_id_from_request(request),
+            trace_id=_trace_id_from_request(request),
+            replay_passed=replay_passed,
+            gate_results=gate_results,
+        )
+        return success_envelope(data, _trace_id_from_request(request))
+
     @app.get("/api/v1/internal/ops/metrics/summary")
     def internal_get_ops_metrics_summary(
         request: Request,

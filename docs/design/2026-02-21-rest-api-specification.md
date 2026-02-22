@@ -133,6 +133,8 @@
 1. `POST /internal/release/rollout/plan`
 2. `POST /internal/release/rollout/decision`
 3. `POST /internal/release/rollback/execute`
+4. `POST /internal/release/replay/e2e`
+5. `POST /internal/release/readiness/evaluate`
 
 说明：
 
@@ -142,6 +144,8 @@
 4. 回滚触发条件为“任一门禁连续超阈值（默认阈值 2 次）”。
 5. 回滚执行顺序固定为：`model_config -> retrieval_params -> workflow_version -> release_version`。
 6. 回滚执行后必须触发一次 `replay verification`。
+7. `replay/e2e` 会执行上传、解析、评估与（可选）自动恢复，产出 `passed`。
+8. `readiness/evaluate` 汇总 Gate D/E/F 与 replay 结果，给出发布准入结论。
 
 ### 4.11 Internal Ops（Gate F 运行优化）
 
@@ -772,6 +776,108 @@
 1. 当且仅当存在 `consecutive_failures >= consecutive_threshold` 的 breach 时触发回滚。
 2. 回滚完成后必须创建并执行一次回放验证任务。
 3. `rollback_completed_within_30m=false` 视为 Gate E 验收失败。
+
+### 5.16A `POST /internal/release/replay/e2e`
+
+请求体：
+
+```json
+{
+  "release_id": "rel_20260222_01",
+  "project_id": "prj_release",
+  "supplier_id": "sup_release",
+  "doc_type": "bid",
+  "force_hitl": true,
+  "decision": "approve"
+}
+```
+
+响应 `200`：
+
+```json
+{
+  "success": true,
+  "data": {
+    "replay_run_id": "rpy_xxx",
+    "release_id": "rel_20260222_01",
+    "tenant_id": "tenant_a",
+    "parse": {
+      "job_id": "job_parse_xxx",
+      "status": "succeeded"
+    },
+    "evaluation": {
+      "evaluation_id": "ev_xxx",
+      "job_id": "job_eval_xxx",
+      "resume_job_id": "job_resume_xxx",
+      "needs_human_review": false
+    },
+    "passed": true
+  },
+  "meta": {
+    "trace_id": "trace_xxx"
+  }
+}
+```
+
+规则说明：
+
+1. 仅内部发布准入验证使用，必须携带 `x-internal-debug: true`。
+2. `force_hitl=true` 时会尝试按 `decision` 自动提交恢复动作。
+3. `passed` 仅在 parse 成功且评估链路满足通过条件时为 `true`。
+
+### 5.16B `POST /internal/release/readiness/evaluate`
+
+请求体：
+
+```json
+{
+  "release_id": "rel_20260222_01",
+  "replay_passed": true,
+  "gate_results": {
+    "quality": true,
+    "performance": true,
+    "security": true,
+    "cost": true,
+    "rollout": true,
+    "rollback": true,
+    "ops": true
+  }
+}
+```
+
+响应 `200`：
+
+```json
+{
+  "success": true,
+  "data": {
+    "assessment_id": "ra_xxx",
+    "release_id": "rel_20260222_01",
+    "tenant_id": "tenant_a",
+    "admitted": true,
+    "failed_checks": [],
+    "replay_passed": true,
+    "gate_results": {
+      "quality": true,
+      "performance": true,
+      "security": true,
+      "cost": true,
+      "rollout": true,
+      "rollback": true,
+      "ops": true
+    }
+  },
+  "meta": {
+    "trace_id": "trace_xxx"
+  }
+}
+```
+
+规则说明：
+
+1. 仅内部发布准入流水线使用，必须携带 `x-internal-debug: true`。
+2. 任一门禁为 `false` 或 `replay_passed=false`，都必须阻断发布（`admitted=false`）。
+3. `failed_checks` 必须给出可审计的失败原因列表。
 
 ### 5.17 `POST /internal/ops/data-feedback/run`
 

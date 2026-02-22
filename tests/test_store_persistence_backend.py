@@ -87,3 +87,41 @@ def test_sqlite_store_persists_workflow_checkpoints(tmp_path: Path):
     reloaded_checkpoints = store2.list_workflow_checkpoints(thread_id=thread_id, tenant_id="tenant_store")
     assert reloaded_checkpoints
     assert reloaded_checkpoints[-1]["status"] == "succeeded"
+
+
+def test_sqlite_store_persists_release_replay_and_readiness(tmp_path: Path):
+    db_path = tmp_path / "release.sqlite3"
+    store1 = SqliteBackedStore(str(db_path))
+    replay = store1.run_release_replay_e2e(
+        release_id="rel_store_001",
+        tenant_id="tenant_store",
+        trace_id="trace_store",
+        project_id="prj_store",
+        supplier_id="sup_store",
+        doc_type="bid",
+        force_hitl=True,
+        decision="approve",
+    )
+    readiness = store1.evaluate_release_readiness(
+        release_id="rel_store_001",
+        tenant_id="tenant_store",
+        trace_id="trace_store",
+        replay_passed=True,
+        gate_results={
+            "quality": True,
+            "performance": True,
+            "security": True,
+            "cost": True,
+            "rollout": True,
+            "rollback": True,
+            "ops": True,
+        },
+    )
+
+    store2 = SqliteBackedStore(str(db_path))
+    persisted_replay = store2.release_replay_runs.get(replay["replay_run_id"])
+    assert persisted_replay is not None
+    assert persisted_replay["release_id"] == "rel_store_001"
+    persisted_readiness = store2.release_readiness_assessments.get(readiness["assessment_id"])
+    assert persisted_readiness is not None
+    assert persisted_readiness["admitted"] is True

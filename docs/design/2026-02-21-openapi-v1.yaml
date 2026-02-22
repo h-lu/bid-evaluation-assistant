@@ -1237,6 +1237,80 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /internal/release/replay/e2e:
+    post:
+      operationId: internalRunReleaseReplayE2E
+      summary: Run P6 end-to-end replay for one release candidate
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReleaseReplayRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReleaseReplayResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /internal/release/readiness/evaluate:
+    post:
+      operationId: internalEvaluateReleaseReadiness
+      summary: Evaluate release admission using gates and replay evidence
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReleaseReadinessRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReleaseReadinessResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /internal/ops/metrics/summary:
     get:
       operationId: internalGetOpsMetricsSummary
@@ -2364,6 +2438,145 @@ components:
           const: true
         data:
           $ref: '#/components/schemas/RollbackExecuteData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    ReleaseReplayRequest:
+      type: object
+      required: [release_id, project_id, supplier_id]
+      properties:
+        release_id:
+          type: string
+        project_id:
+          type: string
+        supplier_id:
+          type: string
+        doc_type:
+          type: string
+          default: bid
+        force_hitl:
+          type: boolean
+          default: true
+        decision:
+          type: string
+          enum: [approve, reject, edit_scores]
+          default: approve
+
+    ReleaseReplayParseData:
+      type: object
+      required: [job_id, status]
+      properties:
+        job_id:
+          type: string
+        status:
+          type: string
+          enum: [queued, running, retrying, succeeded, failed]
+
+    ReleaseReplayEvaluationData:
+      type: object
+      required: [evaluation_id, job_id, resume_job_id, needs_human_review]
+      properties:
+        evaluation_id:
+          type: string
+        job_id:
+          type: string
+        resume_job_id:
+          oneOf:
+            - type: 'null'
+            - type: string
+        needs_human_review:
+          type: boolean
+
+    ReleaseReplayData:
+      type: object
+      required: [replay_run_id, release_id, tenant_id, parse, evaluation, passed]
+      properties:
+        replay_run_id:
+          type: string
+        release_id:
+          type: string
+        tenant_id:
+          type: string
+        parse:
+          $ref: '#/components/schemas/ReleaseReplayParseData'
+        evaluation:
+          $ref: '#/components/schemas/ReleaseReplayEvaluationData'
+        passed:
+          type: boolean
+
+    ReleaseReplayResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/ReleaseReplayData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    ReleaseReadinessGateResults:
+      type: object
+      required: [quality, performance, security, cost, rollout, rollback, ops]
+      properties:
+        quality:
+          type: boolean
+        performance:
+          type: boolean
+        security:
+          type: boolean
+        cost:
+          type: boolean
+        rollout:
+          type: boolean
+        rollback:
+          type: boolean
+        ops:
+          type: boolean
+
+    ReleaseReadinessRequest:
+      type: object
+      required: [release_id, replay_passed, gate_results]
+      properties:
+        release_id:
+          type: string
+        replay_passed:
+          type: boolean
+        gate_results:
+          $ref: '#/components/schemas/ReleaseReadinessGateResults'
+
+    ReleaseReadinessData:
+      type: object
+      required:
+        [assessment_id, release_id, tenant_id, admitted, failed_checks, replay_passed, gate_results]
+      properties:
+        assessment_id:
+          type: string
+        release_id:
+          type: string
+        tenant_id:
+          type: string
+        admitted:
+          type: boolean
+        failed_checks:
+          type: array
+          items:
+            type: string
+        replay_passed:
+          type: boolean
+        gate_results:
+          $ref: '#/components/schemas/ReleaseReadinessGateResults'
+
+    ReleaseReadinessResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/ReleaseReadinessData'
         meta:
           $ref: '#/components/schemas/Meta'
 
