@@ -1182,6 +1182,37 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /internal/ops/metrics/summary:
+    get:
+      operationId: internalGetOpsMetricsSummary
+      summary: Get tenant-scoped ops metrics summary for observability
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+        - name: queue_name
+          in: query
+          required: false
+          schema:
+            type: string
+            default: jobs
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpsMetricsSummaryResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /internal/ops/data-feedback/run:
     post:
       operationId: internalRunDataFeedback
@@ -2237,6 +2268,102 @@ components:
           const: true
         data:
           $ref: '#/components/schemas/RollbackExecuteData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    OpsMetricsApiSummary:
+      type: object
+      required: [total_jobs, succeeded_jobs, failed_jobs, error_rate]
+      properties:
+        total_jobs:
+          type: integer
+          minimum: 0
+        succeeded_jobs:
+          type: integer
+          minimum: 0
+        failed_jobs:
+          type: integer
+          minimum: 0
+        error_rate:
+          type: number
+          minimum: 0
+          maximum: 1
+
+    OpsMetricsWorkerSummary:
+      type: object
+      required: [retrying_jobs, dlq_open, outbox_pending, queue_name, queue_pending]
+      properties:
+        retrying_jobs:
+          type: integer
+          minimum: 0
+        dlq_open:
+          type: integer
+          minimum: 0
+        outbox_pending:
+          type: integer
+          minimum: 0
+        queue_name:
+          type: string
+        queue_pending:
+          type: integer
+          minimum: 0
+
+    OpsMetricsQualitySummary:
+      type: object
+      required: [report_count, citation_coverage_avg]
+      properties:
+        report_count:
+          type: integer
+          minimum: 0
+        citation_coverage_avg:
+          type: number
+          minimum: 0
+          maximum: 1
+
+    OpsMetricsCostSummary:
+      type: object
+      required: [dataset_version, strategy_version]
+      properties:
+        dataset_version:
+          type: string
+        strategy_version:
+          type: string
+
+    OpsMetricsSloSummary:
+      type: object
+      required: [success_rate]
+      properties:
+        success_rate:
+          type: number
+          minimum: 0
+          maximum: 1
+
+    OpsMetricsSummaryData:
+      type: object
+      required: [tenant_id, api, worker, quality, cost, slo]
+      properties:
+        tenant_id:
+          type: string
+        api:
+          $ref: '#/components/schemas/OpsMetricsApiSummary'
+        worker:
+          $ref: '#/components/schemas/OpsMetricsWorkerSummary'
+        quality:
+          $ref: '#/components/schemas/OpsMetricsQualitySummary'
+        cost:
+          $ref: '#/components/schemas/OpsMetricsCostSummary'
+        slo:
+          $ref: '#/components/schemas/OpsMetricsSloSummary'
+
+    OpsMetricsSummaryResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/OpsMetricsSummaryData'
         meta:
           $ref: '#/components/schemas/Meta'
 

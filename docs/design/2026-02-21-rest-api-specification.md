@@ -145,8 +145,9 @@
 
 ### 4.11 Internal Ops（Gate F 运行优化）
 
-1. `POST /internal/ops/data-feedback/run`
-2. `POST /internal/ops/strategy-tuning/apply`
+1. `GET /internal/ops/metrics/summary`
+2. `POST /internal/ops/data-feedback/run`
+3. `POST /internal/ops/strategy-tuning/apply`
 
 说明：
 
@@ -154,6 +155,7 @@
 2. 数据回流会将 DLQ 样本写入反例集，并将人审改判样本写入黄金集候选。
 3. 每次回流执行都必须产出新的评估数据集版本号。
 4. 策略优化同步更新 selector 阈值、评分校准参数、工具权限审批策略。
+5. metrics summary 按租户聚合 API/Worker/Quality/Cost/SLO 指标视图。
 
 ### 4.12 Internal Persistence & Queue（生产化调试）
 
@@ -977,6 +979,50 @@
       }
     ],
     "total": 1
+  },
+  "meta": {
+    "trace_id": "trace_xxx"
+  }
+}
+```
+
+### 5.22 `GET /internal/ops/metrics/summary`
+
+请求参数：
+
+1. `queue_name`（query，可选，默认 `jobs`）
+
+响应 `200`：
+
+```json
+{
+  "success": true,
+  "data": {
+    "tenant_id": "tenant_a",
+    "api": {
+      "total_jobs": 12,
+      "succeeded_jobs": 9,
+      "failed_jobs": 2,
+      "error_rate": 0.1667
+    },
+    "worker": {
+      "retrying_jobs": 1,
+      "dlq_open": 1,
+      "outbox_pending": 0,
+      "queue_name": "jobs",
+      "queue_pending": 0
+    },
+    "quality": {
+      "report_count": 3,
+      "citation_coverage_avg": 1.0
+    },
+    "cost": {
+      "dataset_version": "v1.0.1",
+      "strategy_version": "stg_v2"
+    },
+    "slo": {
+      "success_rate": 0.75
+    }
   },
   "meta": {
     "trace_id": "trace_xxx"

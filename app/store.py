@@ -1085,6 +1085,58 @@ class InMemoryStore:
             "next_cursor": next_cursor,
         }
 
+    def summarize_ops_metrics(self, *, tenant_id: str) -> dict[str, Any]:
+        jobs = [j for j in self.jobs.values() if j.get("tenant_id") == tenant_id]
+        total_jobs = len(jobs)
+        succeeded_jobs = sum(1 for j in jobs if j.get("status") == "succeeded")
+        failed_jobs = sum(1 for j in jobs if j.get("status") == "failed")
+        retrying_jobs = sum(1 for j in jobs if j.get("status") == "retrying")
+        success_rate = (succeeded_jobs / total_jobs) if total_jobs else 0.0
+        error_rate = (failed_jobs / total_jobs) if total_jobs else 0.0
+
+        dlq_open = sum(
+            1
+            for item in self.dlq_items.values()
+            if item.get("tenant_id") == tenant_id and item.get("status") == "open"
+        )
+        outbox_pending = sum(
+            1
+            for item in self.domain_events_outbox.values()
+            if item.get("tenant_id") == tenant_id and item.get("status") == "pending"
+        )
+
+        reports = [r for r in self.evaluation_reports.values() if r.get("tenant_id") == tenant_id]
+        if reports:
+            citation_coverage_avg = sum(float(r.get("citation_coverage", 0.0)) for r in reports) / len(reports)
+        else:
+            citation_coverage_avg = 0.0
+
+        return {
+            "tenant_id": tenant_id,
+            "api": {
+                "total_jobs": total_jobs,
+                "succeeded_jobs": succeeded_jobs,
+                "failed_jobs": failed_jobs,
+                "error_rate": round(error_rate, 4),
+            },
+            "worker": {
+                "retrying_jobs": retrying_jobs,
+                "dlq_open": dlq_open,
+                "outbox_pending": outbox_pending,
+            },
+            "quality": {
+                "report_count": len(reports),
+                "citation_coverage_avg": round(citation_coverage_avg, 4),
+            },
+            "cost": {
+                "dataset_version": self.dataset_version,
+                "strategy_version": f"stg_v{self.strategy_version_counter}",
+            },
+            "slo": {
+                "success_rate": round(success_rate, 4),
+            },
+        }
+
     def upsert_rollout_policy(
         self,
         *,

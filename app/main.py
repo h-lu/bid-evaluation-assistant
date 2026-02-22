@@ -863,6 +863,29 @@ def create_app() -> FastAPI:
         )
         return success_envelope(data, _trace_id_from_request(request))
 
+    @app.get("/api/v1/internal/ops/metrics/summary")
+    def internal_get_ops_metrics_summary(
+        request: Request,
+        queue_name: str = Query(default="jobs"),
+        x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
+    ):
+        if x_internal_debug != "true":
+            raise ApiError(
+                code="AUTH_FORBIDDEN",
+                message="internal endpoint forbidden",
+                error_class="security_sensitive",
+                retryable=False,
+                http_status=403,
+            )
+        tenant_id = _tenant_id_from_request(request)
+        summary = store.summarize_ops_metrics(tenant_id=tenant_id)
+        summary["worker"]["queue_name"] = queue_name
+        summary["worker"]["queue_pending"] = queue_backend.pending_count(
+            tenant_id=tenant_id,
+            queue_name=queue_name,
+        )
+        return success_envelope(summary, _trace_id_from_request(request))
+
     @app.post("/api/v1/internal/ops/data-feedback/run")
     def internal_run_data_feedback(
         payload: DataFeedbackRunRequest,
