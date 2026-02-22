@@ -155,6 +155,22 @@ def test_store_factory_uses_postgres_backend_with_fake_driver(monkeypatch):
     assert fake_psycopg.dsns
 
 
+def test_store_factory_postgres_reports_missing_psycopg(monkeypatch):
+    monkeypatch.setenv("BEA_STORE_BACKEND", "postgres")
+    monkeypatch.setenv("POSTGRES_DSN", "postgresql://missing-driver")
+
+    def _raise_missing():
+        raise ImportError("No module named psycopg")
+
+    monkeypatch.setattr("app.store._import_psycopg", _raise_missing)
+    try:
+        create_store_from_env()
+    except (RuntimeError, ImportError) as exc:
+        assert "psycopg" in str(exc)
+    else:
+        raise AssertionError("expected error when psycopg is missing")
+
+
 def test_sqlite_store_persists_workflow_checkpoints(tmp_path: Path):
     db_path = tmp_path / "checkpoints.sqlite3"
     store1 = SqliteBackedStore(str(db_path))

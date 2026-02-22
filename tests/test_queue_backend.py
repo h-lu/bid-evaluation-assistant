@@ -192,6 +192,22 @@ def test_queue_factory_requires_redis_dsn(monkeypatch):
         raise AssertionError("expected ValueError when REDIS_DSN is missing")
 
 
+def test_queue_factory_redis_reports_missing_driver(monkeypatch):
+    monkeypatch.setenv("BEA_QUEUE_BACKEND", "redis")
+    monkeypatch.setenv("REDIS_DSN", "redis://localhost:6379/0")
+
+    def _raise_missing():
+        raise ImportError("No module named redis")
+
+    monkeypatch.setattr("app.queue_backend._import_redis", _raise_missing)
+    try:
+        create_queue_from_env()
+    except (RuntimeError, ImportError) as exc:
+        assert "redis" in str(exc)
+    else:
+        raise AssertionError("expected error when redis driver is missing")
+
+
 def test_queue_ack_and_nack_require_same_tenant():
     q = InMemoryQueueBackend()
     sent = q.enqueue(tenant_id="tenant_a", queue_name="jobs", payload={"job_id": "job_tenant"})
