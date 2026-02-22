@@ -57,6 +57,32 @@ class RetrievalQueryRequest(BaseModel):
     must_exclude_terms: list[str] = Field(default_factory=list)
 
 
+class QualityGateRagasMetrics(BaseModel):
+    context_precision: float = Field(ge=0, le=1)
+    context_recall: float = Field(ge=0, le=1)
+    faithfulness: float = Field(ge=0, le=1)
+    response_relevancy: float = Field(ge=0, le=1)
+
+
+class QualityGateDeepEvalMetrics(BaseModel):
+    hallucination_rate: float = Field(ge=0, le=1)
+
+
+class QualityGateCitationMetrics(BaseModel):
+    resolvable_rate: float = Field(ge=0, le=1)
+
+
+class QualityGateMetrics(BaseModel):
+    ragas: QualityGateRagasMetrics
+    deepeval: QualityGateDeepEvalMetrics
+    citation: QualityGateCitationMetrics
+
+
+class QualityGateEvaluateRequest(BaseModel):
+    dataset_id: str
+    metrics: QualityGateMetrics
+
+
 def success_envelope(data: Any, trace_id: str, message: str = "ok") -> dict[str, Any]:
     return {
         "success": True,

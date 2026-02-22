@@ -112,6 +112,16 @@
 
 返回最小字段：`document_id/page/bbox/text/context`。
 
+### 4.9 Internal Gates（内部调试）
+
+1. `POST /internal/quality-gates/evaluate`
+
+说明：
+
+1. 仅内部调试与门禁流水线使用，必须携带 `x-internal-debug: true`。
+2. 输入 RAGAS/DeepEval/citation 指标，返回门禁通过/阻断结论。
+3. 当任一质量阈值不达标时，触发 `RAGChecker` 诊断流程标记。
+
 ## 5. 字段级契约（关键接口示例）
 
 ### 5.1 `POST /documents/upload`
@@ -287,6 +297,66 @@
     "viewport_hint": {
       "scale": 1.0,
       "unit": "pdf_point"
+    }
+  },
+  "meta": {
+    "trace_id": "trace_xxx"
+  }
+}
+```
+
+### 5.6 `POST /internal/quality-gates/evaluate`
+
+请求体：
+
+```json
+{
+  "dataset_id": "ds_gate_d_smoke",
+  "metrics": {
+    "ragas": {
+      "context_precision": 0.82,
+      "context_recall": 0.81,
+      "faithfulness": 0.91,
+      "response_relevancy": 0.87
+    },
+    "deepeval": {
+      "hallucination_rate": 0.03
+    },
+    "citation": {
+      "resolvable_rate": 0.99
+    }
+  }
+}
+```
+
+响应 `200`：
+
+```json
+{
+  "success": true,
+  "data": {
+    "gate": "quality",
+    "passed": true,
+    "failed_checks": [],
+    "thresholds": {
+      "ragas_context_precision_min": 0.8,
+      "ragas_context_recall_min": 0.8,
+      "ragas_faithfulness_min": 0.9,
+      "ragas_response_relevancy_min": 0.85,
+      "deepeval_hallucination_rate_max": 0.05,
+      "citation_resolvable_rate_min": 0.98
+    },
+    "values": {
+      "context_precision": 0.82,
+      "context_recall": 0.81,
+      "faithfulness": 0.91,
+      "response_relevancy": 0.87,
+      "hallucination_rate": 0.03,
+      "citation_resolvable_rate": 0.99
+    },
+    "ragchecker": {
+      "triggered": false,
+      "reason_codes": []
     }
   },
   "meta": {

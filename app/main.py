@@ -9,10 +9,12 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.errors import ApiError
+from app.quality_gates import evaluate_quality_gate
 from app.schemas import (
     CreateEvaluationRequest,
     DlqDiscardRequest,
     InternalTransitionRequest,
+    QualityGateEvaluateRequest,
     RetrievalQueryRequest,
     ResumeRequest,
     error_envelope,
@@ -657,6 +659,28 @@ def create_app() -> FastAPI:
                 http_status=404,
             )
         return success_envelope(manifest, _trace_id_from_request(request))
+
+    @app.post("/api/v1/internal/quality-gates/evaluate")
+    def internal_evaluate_quality_gate(
+        payload: QualityGateEvaluateRequest,
+        request: Request,
+        x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
+    ):
+        if x_internal_debug != "true":
+            raise ApiError(
+                code="AUTH_FORBIDDEN",
+                message="internal endpoint forbidden",
+                error_class="security_sensitive",
+                retryable=False,
+                http_status=403,
+            )
+        data = evaluate_quality_gate(
+            dataset_id=payload.dataset_id,
+            ragas=payload.metrics.ragas.model_dump(mode="json"),
+            deepeval=payload.metrics.deepeval.model_dump(mode="json"),
+            citation=payload.metrics.citation.model_dump(mode="json"),
+        )
+        return success_envelope(data, _trace_id_from_request(request))
 
     return app
 

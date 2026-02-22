@@ -609,6 +609,43 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /internal/quality-gates/evaluate:
+    post:
+      operationId: internalEvaluateQualityGate
+      summary: Evaluate Gate D quality thresholds and ragchecker trigger
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QualityGateEvaluateRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QualityGateEvaluateResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
 components:
   securitySchemes:
     BearerAuth:
@@ -695,6 +732,160 @@ components:
           const: false
         error:
           $ref: '#/components/schemas/ErrorObject'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    QualityGateRagasMetrics:
+      type: object
+      required: [context_precision, context_recall, faithfulness, response_relevancy]
+      properties:
+        context_precision:
+          type: number
+          minimum: 0
+          maximum: 1
+        context_recall:
+          type: number
+          minimum: 0
+          maximum: 1
+        faithfulness:
+          type: number
+          minimum: 0
+          maximum: 1
+        response_relevancy:
+          type: number
+          minimum: 0
+          maximum: 1
+
+    QualityGateDeepEvalMetrics:
+      type: object
+      required: [hallucination_rate]
+      properties:
+        hallucination_rate:
+          type: number
+          minimum: 0
+          maximum: 1
+
+    QualityGateCitationMetrics:
+      type: object
+      required: [resolvable_rate]
+      properties:
+        resolvable_rate:
+          type: number
+          minimum: 0
+          maximum: 1
+
+    QualityGateMetrics:
+      type: object
+      required: [ragas, deepeval, citation]
+      properties:
+        ragas:
+          $ref: '#/components/schemas/QualityGateRagasMetrics'
+        deepeval:
+          $ref: '#/components/schemas/QualityGateDeepEvalMetrics'
+        citation:
+          $ref: '#/components/schemas/QualityGateCitationMetrics'
+
+    QualityGateEvaluateRequest:
+      type: object
+      required: [dataset_id, metrics]
+      properties:
+        dataset_id:
+          type: string
+        metrics:
+          $ref: '#/components/schemas/QualityGateMetrics'
+
+    QualityGateThresholds:
+      type: object
+      required:
+        [
+          ragas_context_precision_min,
+          ragas_context_recall_min,
+          ragas_faithfulness_min,
+          ragas_response_relevancy_min,
+          deepeval_hallucination_rate_max,
+          citation_resolvable_rate_min,
+        ]
+      properties:
+        ragas_context_precision_min:
+          type: number
+        ragas_context_recall_min:
+          type: number
+        ragas_faithfulness_min:
+          type: number
+        ragas_response_relevancy_min:
+          type: number
+        deepeval_hallucination_rate_max:
+          type: number
+        citation_resolvable_rate_min:
+          type: number
+
+    QualityGateValues:
+      type: object
+      required:
+        [
+          context_precision,
+          context_recall,
+          faithfulness,
+          response_relevancy,
+          hallucination_rate,
+          citation_resolvable_rate,
+        ]
+      properties:
+        context_precision:
+          type: number
+        context_recall:
+          type: number
+        faithfulness:
+          type: number
+        response_relevancy:
+          type: number
+        hallucination_rate:
+          type: number
+        citation_resolvable_rate:
+          type: number
+
+    QualityGateRagchecker:
+      type: object
+      required: [triggered, reason_codes]
+      properties:
+        triggered:
+          type: boolean
+        reason_codes:
+          type: array
+          items:
+            type: string
+
+    QualityGateEvaluateData:
+      type: object
+      required: [gate, dataset_id, passed, failed_checks, thresholds, values, ragchecker]
+      properties:
+        gate:
+          type: string
+          enum: [quality]
+        dataset_id:
+          type: string
+        passed:
+          type: boolean
+        failed_checks:
+          type: array
+          items:
+            type: string
+        thresholds:
+          $ref: '#/components/schemas/QualityGateThresholds'
+        values:
+          $ref: '#/components/schemas/QualityGateValues'
+        ragchecker:
+          $ref: '#/components/schemas/QualityGateRagchecker'
+
+    QualityGateEvaluateResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/QualityGateEvaluateData'
         meta:
           $ref: '#/components/schemas/Meta'
 

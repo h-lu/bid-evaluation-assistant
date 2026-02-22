@@ -31,6 +31,7 @@
 15. `GET /api/v1/documents/{document_id}`
 16. `GET /api/v1/documents/{document_id}/chunks`
 17. `GET /api/v1/evaluations/{evaluation_id}/audit-logs`
+18. `POST /api/v1/internal/quality-gates/evaluate`
 
 ## 3. 执行约定
 
@@ -92,6 +93,9 @@
 | `CT-043` | `GET /documents/{document_id}/chunks` | 跨租户阻断 | 文档归属租户不一致 | `403` | `error.code=TENANT_SCOPE_VIOLATION` |
 | `CT-044` | `GET /evaluations/{evaluation_id}/audit-logs` | 恢复审计查询 | 完成一次 resume 后查询 | `200` | 返回 `resume_submitted` 日志 |
 | `CT-045` | `GET /evaluations/{evaluation_id}/audit-logs` | 跨租户阻断 | evaluation 租户不一致 | `403` | `error.code=TENANT_SCOPE_VIOLATION` |
+| `CT-050` | `POST /internal/quality-gates/evaluate` | 质量门禁通过 | 指标全部达阈值 + `x-internal-debug=true` | `200` | `passed=true` 且 `ragchecker.triggered=false` |
+| `CT-051` | `POST /internal/quality-gates/evaluate` | 质量门禁阻断 | 任一指标跌破阈值 | `200` | `passed=false` 且返回 `failed_checks[]`、`ragchecker.triggered=true` |
+| `CT-052` | `POST /internal/quality-gates/evaluate` | 内部接口鉴权 | 缺失 `x-internal-debug=true` | `403` | `error.code=AUTH_FORBIDDEN` |
 
 ## 5. 关键断言模板
 
