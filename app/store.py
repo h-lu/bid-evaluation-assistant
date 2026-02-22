@@ -35,6 +35,7 @@ class InMemoryStore:
         self.evaluation_reports: dict[str, dict[str, Any]] = {}
         self.parse_manifests: dict[str, dict[str, Any]] = {}
         self.resume_tokens: dict[str, dict[str, Any]] = {}
+        self.audit_logs: list[dict[str, Any]] = []
         self.citation_sources: dict[str, dict[str, Any]] = {}
         self.dlq_items: dict[str, dict[str, Any]] = {}
 
@@ -46,6 +47,7 @@ class InMemoryStore:
         self.evaluation_reports.clear()
         self.parse_manifests.clear()
         self.resume_tokens.clear()
+        self.audit_logs.clear()
         self.citation_sources.clear()
         self.dlq_items.clear()
 
@@ -477,11 +479,36 @@ class InMemoryStore:
             self._assert_tenant_scope(report.get("tenant_id", "tenant_default"), tenant_id)
             report["needs_human_review"] = False
             report["interrupt"] = None
+        self.audit_logs.append(
+            {
+                "audit_id": f"audit_{uuid.uuid4().hex[:12]}",
+                "tenant_id": tenant_id,
+                "evaluation_id": evaluation_id,
+                "action": "resume_submitted",
+                "reviewer_id": payload.get("editor", {}).get("reviewer_id", ""),
+                "decision": payload.get("decision", ""),
+                "comment": payload.get("comment", ""),
+                "trace_id": payload.get("trace_id", ""),
+                "occurred_at": self._utcnow_iso(),
+            }
+        )
         return {
             "evaluation_id": evaluation_id,
             "job_id": job_id,
             "status": "queued",
         }
+
+    def list_audit_logs_for_evaluation(
+        self,
+        *,
+        evaluation_id: str,
+        tenant_id: str,
+    ) -> list[dict[str, Any]]:
+        return [
+            x
+            for x in self.audit_logs
+            if x.get("tenant_id") == tenant_id and x.get("evaluation_id") == evaluation_id
+        ]
 
     def register_citation_source(self, *, chunk_id: str, source: dict[str, Any]) -> None:
         self.citation_sources[chunk_id] = source

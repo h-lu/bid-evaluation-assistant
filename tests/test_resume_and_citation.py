@@ -22,6 +22,14 @@ def test_resume_with_valid_token_returns_202(client):
     assert body["data"]["evaluation_id"] == evaluation_id
     assert body["data"]["job_id"].startswith("job_")
     assert body["data"]["status"] == "queued"
+    logs = store.list_audit_logs_for_evaluation(
+        evaluation_id=evaluation_id,
+        tenant_id="tenant_default",
+    )
+    assert len(logs) == 1
+    assert logs[0]["action"] == "resume_submitted"
+    assert logs[0]["reviewer_id"] == "u_reviewer_1"
+    assert logs[0]["decision"] == "approve"
 
 
 def test_resume_with_invalid_token_returns_409(client):
