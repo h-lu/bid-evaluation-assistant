@@ -74,3 +74,62 @@ def test_internal_queue_requires_internal_header(client):
     resp = client.post("/api/v1/internal/queue/jobs/enqueue", json={"job_id": "x"})
     assert resp.status_code == 403
     assert resp.json()["error"]["code"] == "AUTH_FORBIDDEN"
+
+
+def test_internal_outbox_relay_enqueues_queue_messages(client):
+    create = client.post(
+        "/api/v1/evaluations",
+        headers={"Idempotency-Key": "idem_internal_relay_1", "x-tenant-id": "tenant_a"},
+        json=_eval_payload(),
+    )
+    assert create.status_code == 202
+    created_job_id = create.json()["data"]["job_id"]
+
+    relay = client.post(
+        "/api/v1/internal/outbox/relay?queue_name=jobs&limit=50",
+        headers={"x-internal-debug": "true", "x-tenant-id": "tenant_a"},
+    )
+    assert relay.status_code == 200
+    assert relay.json()["data"]["published_count"] >= 1
+
+    dequeue = client.post(
+        "/api/v1/internal/queue/jobs/dequeue",
+        headers={"x-internal-debug": "true", "x-tenant-id": "tenant_a"},
+    )
+    assert dequeue.status_code == 200
+    message = dequeue.json()["data"]["message"]
+    assert message is not None
+    assert message["payload"]["job_id"] == created_job_id
+    assert message["payload"]["tenant_id"] == "tenant_a"
+    assert message["payload"]["trace_id"]
+    assert message["payload"]["job_type"] == "evaluation"
+
+    listed = client.get(
+        "/api/v1/internal/outbox/events?status=published",
+        headers={"x-internal-debug": "true", "x-tenant-id": "tenant_a"},
+    )
+    assert listed.status_code == 200
+    assert any(x["aggregate_id"] == created_job_id for x in listed.json()["data"]["items"])
+
+
+def test_internal_outbox_relay_is_idempotent_for_published_events(client):
+    create = client.post(
+        "/api/v1/evaluations",
+        headers={"Idempotency-Key": "idem_internal_relay_2", "x-tenant-id": "tenant_a"},
+        json=_eval_payload(),
+    )
+    assert create.status_code == 202
+
+    first = client.post(
+        "/api/v1/internal/outbox/relay?queue_name=jobs&limit=50",
+        headers={"x-internal-debug": "true", "x-tenant-id": "tenant_a"},
+    )
+    assert first.status_code == 200
+    assert first.json()["data"]["published_count"] >= 1
+
+    second = client.post(
+        "/api/v1/internal/outbox/relay?queue_name=jobs&limit=50",
+        headers={"x-internal-debug": "true", "x-tenant-id": "tenant_a"},
+    )
+    assert second.status_code == 200
+    assert second.json()["data"]["published_count"] == 0

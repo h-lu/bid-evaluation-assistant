@@ -609,6 +609,187 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /internal/outbox/events:
+    get:
+      operationId: internalListOutboxEvents
+      summary: List outbox events by tenant with status filter
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [pending, published]
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OutboxListResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /internal/outbox/events/{event_id}/publish:
+    post:
+      operationId: internalPublishOutboxEvent
+      summary: Mark outbox event as published
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+        - name: event_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OutboxPublishResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Outbox event not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /internal/outbox/relay:
+    post:
+      operationId: internalRelayOutboxEvents
+      summary: Relay pending outbox events into queue and mark as published
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+        - name: queue_name
+          in: query
+          required: false
+          schema:
+            type: string
+            default: jobs
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OutboxRelayResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /internal/queue/{queue_name}/enqueue:
+    post:
+      operationId: internalEnqueueQueueMessage
+      summary: Enqueue one message into named queue
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+        - name: queue_name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueEnqueueResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /internal/queue/{queue_name}/dequeue:
+    post:
+      operationId: internalDequeueQueueMessage
+      summary: Dequeue one message from named queue
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+        - name: queue_name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueDequeueResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /internal/quality-gates/evaluate:
     post:
       operationId: internalEvaluateQualityGate
@@ -1503,6 +1684,147 @@ components:
           const: true
         data:
           $ref: '#/components/schemas/CostGateEvaluateData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    OutboxEvent:
+      type: object
+      required:
+        [event_id, tenant_id, event_type, aggregate_type, aggregate_id, payload, status, created_at]
+      properties:
+        event_id:
+          type: string
+        tenant_id:
+          type: string
+        event_type:
+          type: string
+        aggregate_type:
+          type: string
+        aggregate_id:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+        status:
+          type: string
+          enum: [pending, published]
+        published_at:
+          oneOf:
+            - type: 'null'
+            - type: string
+        created_at:
+          type: string
+
+    OutboxListData:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OutboxEvent'
+        total:
+          type: integer
+          minimum: 0
+
+    OutboxListResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/OutboxListData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    OutboxPublishResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/OutboxEvent'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    OutboxRelayData:
+      type: object
+      required: [published_count, queued_count, message_ids]
+      properties:
+        published_count:
+          type: integer
+          minimum: 0
+        queued_count:
+          type: integer
+          minimum: 0
+        message_ids:
+          type: array
+          items:
+            type: string
+
+    OutboxRelayResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/OutboxRelayData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    QueueMessage:
+      type: object
+      required: [message_id, tenant_id, queue_name, attempt, payload]
+      properties:
+        message_id:
+          type: string
+        tenant_id:
+          type: string
+        queue_name:
+          type: string
+        attempt:
+          type: integer
+          minimum: 0
+        payload:
+          type: object
+          additionalProperties: true
+
+    QueueEnqueueResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/QueueMessage'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    QueueDequeueData:
+      type: object
+      required: [message]
+      properties:
+        message:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/QueueMessage'
+
+    QueueDequeueResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/QueueDequeueData'
         meta:
           $ref: '#/components/schemas/Meta'
 

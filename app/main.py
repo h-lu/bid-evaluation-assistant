@@ -74,6 +74,15 @@ def _error_response(
         ),
     )
 
+
+def _job_type_from_event_type(event_type: str) -> str:
+    if event_type.endswith(".job.created"):
+        return event_type.split(".", maxsplit=1)[0]
+    if event_type.endswith(".created"):
+        return event_type.rsplit(".", maxsplit=1)[0]
+    return "unknown"
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="Bid Evaluation Assistant API", version="0.1.0")
 
@@ -914,6 +923,55 @@ def create_app() -> FastAPI:
         tenant_id = _tenant_id_from_request(request)
         event = store.mark_outbox_event_published(tenant_id=tenant_id, event_id=event_id)
         return success_envelope(event, _trace_id_from_request(request))
+
+    @app.post("/api/v1/internal/outbox/relay")
+    def internal_relay_outbox_events(
+        request: Request,
+        queue_name: str = Query(default="jobs"),
+        limit: int = Query(default=100, ge=1, le=1000),
+        x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
+    ):
+        if x_internal_debug != "true":
+            raise ApiError(
+                code="AUTH_FORBIDDEN",
+                message="internal endpoint forbidden",
+                error_class="security_sensitive",
+                retryable=False,
+                http_status=403,
+            )
+        tenant_id = _tenant_id_from_request(request)
+        pending_events = store.list_outbox_events(tenant_id=tenant_id, status="pending", limit=limit)
+        message_ids: list[str] = []
+        for event in pending_events:
+            event_payload = event.get("payload", {})
+            job_id = event_payload.get("job_id", event["aggregate_id"])
+            job_type = event_payload.get("job_type", _job_type_from_event_type(event_type=event["event_type"]))
+            trace_id = str(event_payload.get("trace_id") or "")
+            if not trace_id:
+                job = store.get_job(job_id=job_id)
+                if job is not None and job.get("tenant_id") == tenant_id:
+                    trace_id = str(job.get("trace_id") or "")
+            payload = {
+                "event_id": event["event_id"],
+                "job_id": job_id,
+                "tenant_id": tenant_id,
+                "trace_id": trace_id,
+                "job_type": job_type,
+                "attempt": int(event_payload.get("attempt", 0)),
+            }
+            msg = queue_backend.enqueue(
+                tenant_id=tenant_id,
+                queue_name=queue_name,
+                payload=payload,
+            )
+            message_ids.append(msg.message_id)
+            store.mark_outbox_event_published(tenant_id=tenant_id, event_id=event["event_id"])
+        data = {
+            "published_count": len(message_ids),
+            "queued_count": len(message_ids),
+            "message_ids": message_ids,
+        }
+        return success_envelope(data, _trace_id_from_request(request))
 
     @app.post("/api/v1/internal/queue/{queue_name}/enqueue")
     def internal_enqueue_queue_message(

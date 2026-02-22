@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from app.queue_backend import InMemoryQueueBackend, create_queue_from_env
 
 
@@ -49,3 +51,55 @@ def test_queue_factory_rejects_unsupported_backend(monkeypatch):
         assert "unsupported queue backend" in str(exc)
     else:
         raise AssertionError("expected RuntimeError for unsupported queue backend")
+
+
+def test_sqlite_queue_persists_pending_messages_between_instances(tmp_path: Path):
+    db_path = tmp_path / "queue.sqlite3"
+    env = {
+        "BEA_QUEUE_BACKEND": "sqlite",
+        "BEA_QUEUE_SQLITE_PATH": str(db_path),
+    }
+    queue1 = create_queue_from_env(env)
+    queue1.enqueue(tenant_id="tenant_a", queue_name="jobs", payload={"job_id": "job_persist_1"})
+    queue1.enqueue(tenant_id="tenant_a", queue_name="jobs", payload={"job_id": "job_persist_2"})
+
+    queue2 = create_queue_from_env(env)
+    first = queue2.dequeue(tenant_id="tenant_a", queue_name="jobs")
+    second = queue2.dequeue(tenant_id="tenant_a", queue_name="jobs")
+    assert first is not None
+    assert second is not None
+    assert first.payload["job_id"] == "job_persist_1"
+    assert second.payload["job_id"] == "job_persist_2"
+
+
+def test_sqlite_queue_nack_requeue_and_ack_lifecycle(tmp_path: Path):
+    db_path = tmp_path / "queue_lifecycle.sqlite3"
+    env = {
+        "BEA_QUEUE_BACKEND": "sqlite",
+        "BEA_QUEUE_SQLITE_PATH": str(db_path),
+    }
+    queue = create_queue_from_env(env)
+    sent = queue.enqueue(tenant_id="tenant_a", queue_name="jobs", payload={"job_id": "job_retry"})
+    got = queue.dequeue(tenant_id="tenant_a", queue_name="jobs")
+    assert got is not None
+    assert got.message_id == sent.message_id
+
+    nacked = queue.nack(message_id=got.message_id, requeue=True)
+    assert nacked is not None
+    assert nacked.attempt == 1
+
+    replay = queue.dequeue(tenant_id="tenant_a", queue_name="jobs")
+    assert replay is not None
+    assert replay.message_id == got.message_id
+    assert replay.attempt == 1
+    queue.ack(message_id=replay.message_id)
+
+    queue_reloaded = create_queue_from_env(env)
+    assert queue_reloaded.pending_count(tenant_id="tenant_a", queue_name="jobs") == 0
+
+
+def test_queue_factory_supports_sqlite_backend(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("BEA_QUEUE_BACKEND", "sqlite")
+    monkeypatch.setenv("BEA_QUEUE_SQLITE_PATH", str(tmp_path / "queue_factory.sqlite3"))
+    queue = create_queue_from_env()
+    assert queue.__class__.__name__ == "SqliteQueueBackend"

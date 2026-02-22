@@ -155,6 +155,21 @@
 3. 每次回流执行都必须产出新的评估数据集版本号。
 4. 策略优化同步更新 selector 阈值、评分校准参数、工具权限审批策略。
 
+### 4.12 Internal Persistence & Queue（生产化调试）
+
+1. `GET /internal/outbox/events`
+2. `POST /internal/outbox/events/{event_id}/publish`
+3. `POST /internal/outbox/relay`
+4. `POST /internal/queue/{queue_name}/enqueue`
+5. `POST /internal/queue/{queue_name}/dequeue`
+
+说明：
+
+1. 仅内部链路联调使用，必须携带 `x-internal-debug: true`。
+2. `relay` 会将 `pending` outbox 事件转为队列消息，并标记为 `published`。
+3. 队列消息最小字段：`event_id/job_id/tenant_id/trace_id/job_type/attempt`。
+4. 队列消费保持租户隔离，跨租户不可见。
+
 ## 5. 字段级契约（关键接口示例）
 
 ### 5.1 `POST /documents/upload`
@@ -827,6 +842,71 @@
 
 1. 每次策略变更必须生成新 `strategy_version`。
 2. 高风险动作审批策略变更必须体现在 `tool_policy` 字段返回值中。
+
+### 5.19 `POST /internal/outbox/relay`
+
+请求参数：
+
+1. `queue_name`（query，可选，默认 `jobs`）
+2. `limit`（query，可选，默认 `100`，范围 `1..1000`）
+
+响应 `200`：
+
+```json
+{
+  "success": true,
+  "data": {
+    "published_count": 1,
+    "queued_count": 1,
+    "message_ids": ["msg_xxx"]
+  },
+  "meta": {
+    "trace_id": "trace_xxx"
+  }
+}
+```
+
+规则说明：
+
+1. 仅消费当前租户 `status=pending` 的 outbox 事件。
+2. 成功入队后事件必须原子标记为 `published`。
+3. 对已发布事件重复执行 relay 不得重复入队。
+
+### 5.20 `POST /internal/queue/{queue_name}/enqueue|dequeue`
+
+`enqueue` 请求体示例：
+
+```json
+{
+  "job_id": "job_xxx",
+  "tenant_id": "tenant_a",
+  "trace_id": "trace_xxx",
+  "job_type": "evaluation",
+  "attempt": 0
+}
+```
+
+`dequeue` 响应 `200`：
+
+```json
+{
+  "success": true,
+  "data": {
+    "message": {
+      "message_id": "msg_xxx",
+      "tenant_id": "tenant_a",
+      "queue_name": "jobs",
+      "attempt": 0,
+      "payload": {
+        "job_id": "job_xxx"
+      }
+    }
+  },
+  "meta": {
+    "trace_id": "trace_xxx"
+  }
+}
+```
 
 ### 5.11 `GET /evaluations/{evaluation_id}/audit-logs`
 
