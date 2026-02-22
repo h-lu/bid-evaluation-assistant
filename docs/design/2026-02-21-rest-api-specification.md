@@ -133,6 +133,8 @@
 1. `POST /internal/release/rollout/plan`
 2. `POST /internal/release/rollout/decision`
 3. `POST /internal/release/rollback/execute`
+4. `POST /internal/release/replay/e2e`
+5. `POST /internal/release/readiness/evaluate`
 
 说明：
 
@@ -142,11 +144,14 @@
 4. 回滚触发条件为“任一门禁连续超阈值（默认阈值 2 次）”。
 5. 回滚执行顺序固定为：`model_config -> retrieval_params -> workflow_version -> release_version`。
 6. 回滚执行后必须触发一次 `replay verification`。
+7. `replay/e2e` 会执行上传、解析、评估与（可选）自动恢复，产出 `passed`。
+8. `readiness/evaluate` 汇总 Gate D/E/F 与 replay 结果，给出发布准入结论。
 
 ### 4.11 Internal Ops（Gate F 运行优化）
 
-1. `POST /internal/ops/data-feedback/run`
-2. `POST /internal/ops/strategy-tuning/apply`
+1. `GET /internal/ops/metrics/summary`
+2. `POST /internal/ops/data-feedback/run`
+3. `POST /internal/ops/strategy-tuning/apply`
 
 说明：
 
@@ -154,6 +159,36 @@
 2. 数据回流会将 DLQ 样本写入反例集，并将人审改判样本写入黄金集候选。
 3. 每次回流执行都必须产出新的评估数据集版本号。
 4. 策略优化同步更新 selector 阈值、评分校准参数、工具权限审批策略。
+5. metrics summary 按租户聚合 API/Worker/Quality/Cost/SLO 指标视图。
+
+### 4.12 Internal Persistence & Queue（生产化调试）
+
+1. `GET /internal/outbox/events`
+2. `POST /internal/outbox/events/{event_id}/publish`
+3. `POST /internal/outbox/relay`
+4. `POST /internal/queue/{queue_name}/enqueue`
+5. `POST /internal/queue/{queue_name}/dequeue`
+6. `POST /internal/queue/{queue_name}/ack`
+7. `POST /internal/queue/{queue_name}/nack`
+
+说明：
+
+1. 仅内部链路联调使用，必须携带 `x-internal-debug: true`。
+2. `relay` 会将 `pending` outbox 事件转为队列消息，并标记为 `published`。
+3. 队列消息最小字段：`event_id/job_id/tenant_id/trace_id/job_type/attempt`。
+4. 队列消费保持租户隔离，跨租户不可见。
+
+### 4.13 Internal Workflow（生产化调试）
+
+1. `GET /internal/workflows/{thread_id}/checkpoints`
+2. `POST /internal/worker/queues/{queue_name}/drain-once`
+
+说明：
+
+1. 仅内部联调使用，必须携带 `x-internal-debug: true`。
+2. checkpoint 查询按 `thread_id + tenant_id` 过滤。
+3. `thread_id` 由任务创建时分配，并在 resume 任务中复用。
+4. `drain-once` 每次最多消费 `max_messages` 条消息并驱动对应 job 执行。
 
 ## 5. 字段级契约（关键接口示例）
 
@@ -261,6 +296,7 @@
     "status": "running",
     "progress_pct": 65,
     "retry_count": 1,
+    "thread_id": "thr_eval_xxx",
     "trace_id": "trace_xxx",
     "resource": {
       "type": "evaluation",
@@ -492,6 +528,7 @@
     "constraint_diff": [],
     "query_type": "relation",
     "selected_mode": "global",
+    "index_name": "lightrag:tenant_a:prj_xxx",
     "degraded": false,
     "items": [
       {
@@ -500,8 +537,10 @@
         "score_rerank": 0.89,
         "reason": "matched relation intent",
         "metadata": {
+          "tenant_id": "tenant_a",
           "project_id": "prj_xxx",
           "supplier_id": "sup_xxx",
+          "document_id": "doc_xxx",
           "doc_type": "bid",
           "page": 8,
           "bbox": [120.2, 310.0, 520.8, 365.4]
@@ -534,6 +573,7 @@
   "data": {
     "query": "投标文件中与交付周期相关的承诺",
     "selected_mode": "global",
+    "index_name": "lightrag:tenant_a:prj_xxx",
     "items": [
       {
         "chunk_id": "ck_xxx",
@@ -737,6 +777,108 @@
 2. 回滚完成后必须创建并执行一次回放验证任务。
 3. `rollback_completed_within_30m=false` 视为 Gate E 验收失败。
 
+### 5.16A `POST /internal/release/replay/e2e`
+
+请求体：
+
+```json
+{
+  "release_id": "rel_20260222_01",
+  "project_id": "prj_release",
+  "supplier_id": "sup_release",
+  "doc_type": "bid",
+  "force_hitl": true,
+  "decision": "approve"
+}
+```
+
+响应 `200`：
+
+```json
+{
+  "success": true,
+  "data": {
+    "replay_run_id": "rpy_xxx",
+    "release_id": "rel_20260222_01",
+    "tenant_id": "tenant_a",
+    "parse": {
+      "job_id": "job_parse_xxx",
+      "status": "succeeded"
+    },
+    "evaluation": {
+      "evaluation_id": "ev_xxx",
+      "job_id": "job_eval_xxx",
+      "resume_job_id": "job_resume_xxx",
+      "needs_human_review": false
+    },
+    "passed": true
+  },
+  "meta": {
+    "trace_id": "trace_xxx"
+  }
+}
+```
+
+规则说明：
+
+1. 仅内部发布准入验证使用，必须携带 `x-internal-debug: true`。
+2. `force_hitl=true` 时会尝试按 `decision` 自动提交恢复动作。
+3. `passed` 仅在 parse 成功且评估链路满足通过条件时为 `true`。
+
+### 5.16B `POST /internal/release/readiness/evaluate`
+
+请求体：
+
+```json
+{
+  "release_id": "rel_20260222_01",
+  "replay_passed": true,
+  "gate_results": {
+    "quality": true,
+    "performance": true,
+    "security": true,
+    "cost": true,
+    "rollout": true,
+    "rollback": true,
+    "ops": true
+  }
+}
+```
+
+响应 `200`：
+
+```json
+{
+  "success": true,
+  "data": {
+    "assessment_id": "ra_xxx",
+    "release_id": "rel_20260222_01",
+    "tenant_id": "tenant_a",
+    "admitted": true,
+    "failed_checks": [],
+    "replay_passed": true,
+    "gate_results": {
+      "quality": true,
+      "performance": true,
+      "security": true,
+      "cost": true,
+      "rollout": true,
+      "rollback": true,
+      "ops": true
+    }
+  },
+  "meta": {
+    "trace_id": "trace_xxx"
+  }
+}
+```
+
+规则说明：
+
+1. 仅内部发布准入流水线使用，必须携带 `x-internal-debug: true`。
+2. 任一门禁为 `false` 或 `replay_passed=false`，都必须阻断发布（`admitted=false`）。
+3. `failed_checks` 必须给出可审计的失败原因列表。
+
 ### 5.17 `POST /internal/ops/data-feedback/run`
 
 请求体：
@@ -827,6 +969,205 @@
 
 1. 每次策略变更必须生成新 `strategy_version`。
 2. 高风险动作审批策略变更必须体现在 `tool_policy` 字段返回值中。
+
+### 5.19 `POST /internal/outbox/relay`
+
+请求参数：
+
+1. `queue_name`（query，可选，默认 `jobs`）
+2. `limit`（query，可选，默认 `100`，范围 `1..1000`）
+
+响应 `200`：
+
+```json
+{
+  "success": true,
+  "data": {
+    "published_count": 1,
+    "queued_count": 1,
+    "message_ids": ["msg_xxx"]
+  },
+  "meta": {
+    "trace_id": "trace_xxx"
+  }
+}
+```
+
+规则说明：
+
+1. 仅消费当前租户 `status=pending` 的 outbox 事件。
+2. 成功入队后事件必须原子标记为 `published`。
+3. 对已发布事件重复执行 relay 不得重复入队。
+
+### 5.20 `POST /internal/queue/{queue_name}/enqueue|dequeue|ack|nack`
+
+`enqueue` 请求体示例：
+
+```json
+{
+  "job_id": "job_xxx",
+  "tenant_id": "tenant_a",
+  "trace_id": "trace_xxx",
+  "job_type": "evaluation",
+  "attempt": 0
+}
+```
+
+`dequeue` 响应 `200`：
+
+```json
+{
+  "success": true,
+  "data": {
+    "message": {
+      "message_id": "msg_xxx",
+      "tenant_id": "tenant_a",
+      "queue_name": "jobs",
+      "attempt": 0,
+      "payload": {
+        "job_id": "job_xxx"
+      }
+    }
+  },
+  "meta": {
+    "trace_id": "trace_xxx"
+  }
+}
+```
+
+`ack` 请求体示例：
+
+```json
+{
+  "message_id": "msg_xxx"
+}
+```
+
+`nack` 请求体示例：
+
+```json
+{
+  "message_id": "msg_xxx",
+  "requeue": true
+}
+```
+
+约束：
+
+1. `ack/nack` 仅允许操作本租户 inflight 消息。
+2. 跨租户操作返回 `403 + TENANT_SCOPE_VIOLATION`。
+
+### 5.21 `GET /internal/workflows/{thread_id}/checkpoints`
+
+请求参数：
+
+1. `thread_id`（path，必填）
+2. `limit`（query，可选，默认 `100`，范围 `1..1000`）
+
+响应 `200`：
+
+```json
+{
+  "success": true,
+  "data": {
+    "thread_id": "thr_eval_xxx",
+    "items": [
+      {
+        "checkpoint_id": "cp_xxx",
+        "thread_id": "thr_eval_xxx",
+        "job_id": "job_xxx",
+        "seq": 1,
+        "node": "job_started",
+        "status": "running",
+        "payload": {
+          "job_type": "parse"
+        },
+        "tenant_id": "tenant_a",
+        "created_at": "2026-02-22T10:00:00Z"
+      }
+    ],
+    "total": 1
+  },
+  "meta": {
+    "trace_id": "trace_xxx"
+  }
+}
+```
+
+### 5.22 `GET /internal/ops/metrics/summary`
+
+请求参数：
+
+1. `queue_name`（query，可选，默认 `jobs`）
+
+响应 `200`：
+
+```json
+{
+  "success": true,
+  "data": {
+    "tenant_id": "tenant_a",
+    "api": {
+      "total_jobs": 12,
+      "succeeded_jobs": 9,
+      "failed_jobs": 2,
+      "error_rate": 0.1667
+    },
+    "worker": {
+      "retrying_jobs": 1,
+      "dlq_open": 1,
+      "outbox_pending": 0,
+      "queue_name": "jobs",
+      "queue_pending": 0
+    },
+    "quality": {
+      "report_count": 3,
+      "citation_coverage_avg": 1.0
+    },
+    "cost": {
+      "dataset_version": "v1.0.1",
+      "strategy_version": "stg_v2"
+    },
+    "slo": {
+      "success_rate": 0.75
+    }
+  },
+  "meta": {
+    "trace_id": "trace_xxx"
+  }
+}
+```
+
+### 5.23 `POST /internal/worker/queues/{queue_name}/drain-once`
+
+请求参数：
+
+1. `queue_name`（path，必填）
+2. `max_messages`（query，可选，默认 `1`，范围 `1..100`）
+3. `force_fail`（query，可选，默认 `false`）
+4. `transient_fail`（query，可选，默认 `false`）
+5. `error_code`（query，可选）
+
+响应 `200`：
+
+```json
+{
+  "success": true,
+  "data": {
+    "queue_name": "jobs",
+    "processed": 1,
+    "succeeded": 1,
+    "retrying": 0,
+    "failed": 0,
+    "acked": 1,
+    "requeued": 0,
+    "message_ids": ["msg_xxx"]
+  },
+  "meta": {
+    "trace_id": "trace_xxx"
+  }
+}
+```
 
 ### 5.11 `GET /evaluations/{evaluation_id}/audit-logs`
 

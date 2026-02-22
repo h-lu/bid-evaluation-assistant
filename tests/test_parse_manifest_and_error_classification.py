@@ -34,7 +34,9 @@ def test_internal_parse_manifest_contains_input_hash_and_route(client):
     data = resp.json()["data"]
     assert data["job_id"] == job_id
     assert data["document_id"] == document_id
+    assert data["run_id"].startswith("prun_")
     assert data["selected_parser"] == "mineru"
+    assert data["parser_version"] == "v0"
     assert data["fallback_chain"] == ["docling", "ocr"]
     assert data["status"] == "queued"
     assert data["error_code"] is None

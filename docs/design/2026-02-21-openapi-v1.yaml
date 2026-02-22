@@ -609,6 +609,375 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /internal/workflows/{thread_id}/checkpoints:
+    get:
+      operationId: internalListWorkflowCheckpoints
+      summary: List workflow checkpoints for one thread
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+        - name: thread_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkflowCheckpointListResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /internal/outbox/events:
+    get:
+      operationId: internalListOutboxEvents
+      summary: List outbox events by tenant with status filter
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [pending, published]
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OutboxListResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /internal/outbox/events/{event_id}/publish:
+    post:
+      operationId: internalPublishOutboxEvent
+      summary: Mark outbox event as published
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+        - name: event_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OutboxPublishResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Outbox event not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /internal/outbox/relay:
+    post:
+      operationId: internalRelayOutboxEvents
+      summary: Relay pending outbox events into queue and mark as published
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+        - name: queue_name
+          in: query
+          required: false
+          schema:
+            type: string
+            default: jobs
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OutboxRelayResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /internal/queue/{queue_name}/enqueue:
+    post:
+      operationId: internalEnqueueQueueMessage
+      summary: Enqueue one message into named queue
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+        - name: queue_name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueEnqueueResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /internal/queue/{queue_name}/dequeue:
+    post:
+      operationId: internalDequeueQueueMessage
+      summary: Dequeue one message from named queue
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+        - name: queue_name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueDequeueResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /internal/queue/{queue_name}/ack:
+    post:
+      operationId: internalAckQueueMessage
+      summary: Ack one inflight queue message
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+        - name: queue_name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message_id]
+              properties:
+                message_id:
+                  type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueAckResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /internal/queue/{queue_name}/nack:
+    post:
+      operationId: internalNackQueueMessage
+      summary: Nack one inflight queue message and optionally requeue
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+        - name: queue_name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message_id]
+              properties:
+                message_id:
+                  type: string
+                requeue:
+                  type: boolean
+                  default: true
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueNackResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /internal/worker/queues/{queue_name}/drain-once:
+    post:
+      operationId: internalWorkerDrainQueueOnce
+      summary: Drain queue messages once and execute jobs in worker flow
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+        - name: queue_name
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: max_messages
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 1
+        - name: force_fail
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: transient_fail
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: error_code
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkerDrainResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /internal/quality-gates/evaluate:
     post:
       operationId: internalEvaluateQualityGate
@@ -861,6 +1230,111 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /internal/release/replay/e2e:
+    post:
+      operationId: internalRunReleaseReplayE2E
+      summary: Run P6 end-to-end replay for one release candidate
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReleaseReplayRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReleaseReplayResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /internal/release/readiness/evaluate:
+    post:
+      operationId: internalEvaluateReleaseReadiness
+      summary: Evaluate release admission using gates and replay evidence
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReleaseReadinessRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReleaseReadinessResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /internal/ops/metrics/summary:
+    get:
+      operationId: internalGetOpsMetricsSummary
+      summary: Get tenant-scoped ops metrics summary for observability
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+        - name: queue_name
+          in: query
+          required: false
+          schema:
+            type: string
+            default: jobs
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpsMetricsSummaryResponse'
         '403':
           description: Internal endpoint forbidden
           content:
@@ -1506,6 +1980,275 @@ components:
         meta:
           $ref: '#/components/schemas/Meta'
 
+    OutboxEvent:
+      type: object
+      required:
+        [event_id, tenant_id, event_type, aggregate_type, aggregate_id, payload, status, created_at]
+      properties:
+        event_id:
+          type: string
+        tenant_id:
+          type: string
+        event_type:
+          type: string
+        aggregate_type:
+          type: string
+        aggregate_id:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+        status:
+          type: string
+          enum: [pending, published]
+        published_at:
+          oneOf:
+            - type: 'null'
+            - type: string
+        created_at:
+          type: string
+
+    OutboxListData:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OutboxEvent'
+        total:
+          type: integer
+          minimum: 0
+
+    OutboxListResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/OutboxListData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    OutboxPublishResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/OutboxEvent'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    OutboxRelayData:
+      type: object
+      required: [published_count, queued_count, message_ids]
+      properties:
+        published_count:
+          type: integer
+          minimum: 0
+        queued_count:
+          type: integer
+          minimum: 0
+        message_ids:
+          type: array
+          items:
+            type: string
+
+    OutboxRelayResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/OutboxRelayData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    QueueMessage:
+      type: object
+      required: [message_id, tenant_id, queue_name, attempt, payload]
+      properties:
+        message_id:
+          type: string
+        tenant_id:
+          type: string
+        queue_name:
+          type: string
+        attempt:
+          type: integer
+          minimum: 0
+        payload:
+          type: object
+          additionalProperties: true
+
+    QueueEnqueueResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/QueueMessage'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    QueueDequeueData:
+      type: object
+      required: [message]
+      properties:
+        message:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/QueueMessage'
+
+    QueueDequeueResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/QueueDequeueData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    QueueAckData:
+      type: object
+      required: [queue_name, message_id, acked]
+      properties:
+        queue_name:
+          type: string
+        message_id:
+          type: string
+        acked:
+          type: boolean
+          const: true
+
+    QueueAckResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/QueueAckData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    QueueNackResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/QueueDequeueData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    WorkerDrainData:
+      type: object
+      required: [queue_name, processed, succeeded, retrying, failed, acked, requeued, message_ids]
+      properties:
+        queue_name:
+          type: string
+        processed:
+          type: integer
+          minimum: 0
+        succeeded:
+          type: integer
+          minimum: 0
+        retrying:
+          type: integer
+          minimum: 0
+        failed:
+          type: integer
+          minimum: 0
+        acked:
+          type: integer
+          minimum: 0
+        requeued:
+          type: integer
+          minimum: 0
+        message_ids:
+          type: array
+          items:
+            type: string
+
+    WorkerDrainResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/WorkerDrainData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    WorkflowCheckpoint:
+      type: object
+      required: [checkpoint_id, thread_id, job_id, seq, node, status, payload, tenant_id, created_at]
+      properties:
+        checkpoint_id:
+          type: string
+        thread_id:
+          type: string
+        job_id:
+          type: string
+        seq:
+          type: integer
+          minimum: 1
+        node:
+          type: string
+        status:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+        tenant_id:
+          type: string
+        created_at:
+          type: string
+
+    WorkflowCheckpointListData:
+      type: object
+      required: [thread_id, items, total]
+      properties:
+        thread_id:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowCheckpoint'
+        total:
+          type: integer
+          minimum: 0
+
+    WorkflowCheckpointListResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/WorkflowCheckpointListData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
     RolloutProjectSize:
       type: string
       enum: [small, medium, large]
@@ -1695,6 +2438,241 @@ components:
           const: true
         data:
           $ref: '#/components/schemas/RollbackExecuteData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    ReleaseReplayRequest:
+      type: object
+      required: [release_id, project_id, supplier_id]
+      properties:
+        release_id:
+          type: string
+        project_id:
+          type: string
+        supplier_id:
+          type: string
+        doc_type:
+          type: string
+          default: bid
+        force_hitl:
+          type: boolean
+          default: true
+        decision:
+          type: string
+          enum: [approve, reject, edit_scores]
+          default: approve
+
+    ReleaseReplayParseData:
+      type: object
+      required: [job_id, status]
+      properties:
+        job_id:
+          type: string
+        status:
+          type: string
+          enum: [queued, running, retrying, succeeded, failed]
+
+    ReleaseReplayEvaluationData:
+      type: object
+      required: [evaluation_id, job_id, resume_job_id, needs_human_review]
+      properties:
+        evaluation_id:
+          type: string
+        job_id:
+          type: string
+        resume_job_id:
+          oneOf:
+            - type: 'null'
+            - type: string
+        needs_human_review:
+          type: boolean
+
+    ReleaseReplayData:
+      type: object
+      required: [replay_run_id, release_id, tenant_id, parse, evaluation, passed]
+      properties:
+        replay_run_id:
+          type: string
+        release_id:
+          type: string
+        tenant_id:
+          type: string
+        parse:
+          $ref: '#/components/schemas/ReleaseReplayParseData'
+        evaluation:
+          $ref: '#/components/schemas/ReleaseReplayEvaluationData'
+        passed:
+          type: boolean
+
+    ReleaseReplayResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/ReleaseReplayData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    ReleaseReadinessGateResults:
+      type: object
+      required: [quality, performance, security, cost, rollout, rollback, ops]
+      properties:
+        quality:
+          type: boolean
+        performance:
+          type: boolean
+        security:
+          type: boolean
+        cost:
+          type: boolean
+        rollout:
+          type: boolean
+        rollback:
+          type: boolean
+        ops:
+          type: boolean
+
+    ReleaseReadinessRequest:
+      type: object
+      required: [release_id, replay_passed, gate_results]
+      properties:
+        release_id:
+          type: string
+        replay_passed:
+          type: boolean
+        gate_results:
+          $ref: '#/components/schemas/ReleaseReadinessGateResults'
+
+    ReleaseReadinessData:
+      type: object
+      required:
+        [assessment_id, release_id, tenant_id, admitted, failed_checks, replay_passed, gate_results]
+      properties:
+        assessment_id:
+          type: string
+        release_id:
+          type: string
+        tenant_id:
+          type: string
+        admitted:
+          type: boolean
+        failed_checks:
+          type: array
+          items:
+            type: string
+        replay_passed:
+          type: boolean
+        gate_results:
+          $ref: '#/components/schemas/ReleaseReadinessGateResults'
+
+    ReleaseReadinessResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/ReleaseReadinessData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    OpsMetricsApiSummary:
+      type: object
+      required: [total_jobs, succeeded_jobs, failed_jobs, error_rate]
+      properties:
+        total_jobs:
+          type: integer
+          minimum: 0
+        succeeded_jobs:
+          type: integer
+          minimum: 0
+        failed_jobs:
+          type: integer
+          minimum: 0
+        error_rate:
+          type: number
+          minimum: 0
+          maximum: 1
+
+    OpsMetricsWorkerSummary:
+      type: object
+      required: [retrying_jobs, dlq_open, outbox_pending, queue_name, queue_pending]
+      properties:
+        retrying_jobs:
+          type: integer
+          minimum: 0
+        dlq_open:
+          type: integer
+          minimum: 0
+        outbox_pending:
+          type: integer
+          minimum: 0
+        queue_name:
+          type: string
+        queue_pending:
+          type: integer
+          minimum: 0
+
+    OpsMetricsQualitySummary:
+      type: object
+      required: [report_count, citation_coverage_avg]
+      properties:
+        report_count:
+          type: integer
+          minimum: 0
+        citation_coverage_avg:
+          type: number
+          minimum: 0
+          maximum: 1
+
+    OpsMetricsCostSummary:
+      type: object
+      required: [dataset_version, strategy_version]
+      properties:
+        dataset_version:
+          type: string
+        strategy_version:
+          type: string
+
+    OpsMetricsSloSummary:
+      type: object
+      required: [success_rate]
+      properties:
+        success_rate:
+          type: number
+          minimum: 0
+          maximum: 1
+
+    OpsMetricsSummaryData:
+      type: object
+      required: [tenant_id, api, worker, quality, cost, slo]
+      properties:
+        tenant_id:
+          type: string
+        api:
+          $ref: '#/components/schemas/OpsMetricsApiSummary'
+        worker:
+          $ref: '#/components/schemas/OpsMetricsWorkerSummary'
+        quality:
+          $ref: '#/components/schemas/OpsMetricsQualitySummary'
+        cost:
+          $ref: '#/components/schemas/OpsMetricsCostSummary'
+        slo:
+          $ref: '#/components/schemas/OpsMetricsSloSummary'
+
+    OpsMetricsSummaryResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/OpsMetricsSummaryData'
         meta:
           $ref: '#/components/schemas/Meta'
 
@@ -2284,11 +3262,15 @@ components:
 
     RetrievalItemMetadata:
       type: object
-      required: [project_id, supplier_id, doc_type, page, bbox]
+      required: [tenant_id, project_id, supplier_id, document_id, doc_type, page, bbox]
       properties:
+        tenant_id:
+          type: string
         project_id:
           type: string
         supplier_id:
+          type: string
+        document_id:
           type: string
         doc_type:
           type: string
@@ -2331,6 +3313,7 @@ components:
           constraint_diff,
           query_type,
           selected_mode,
+          index_name,
           degraded,
           items,
           total,
@@ -2354,6 +3337,8 @@ components:
         selected_mode:
           type: string
           enum: [local, global, hybrid, mix]
+        index_name:
+          type: string
         degraded:
           type: boolean
         items:
@@ -2398,13 +3383,15 @@ components:
 
     RetrievalPreviewData:
       type: object
-      required: [query, selected_mode, items, total]
+      required: [query, selected_mode, index_name, items, total]
       properties:
         query:
           type: string
         selected_mode:
           type: string
           enum: [local, global, hybrid, mix]
+        index_name:
+          type: string
         items:
           type: array
           items:
@@ -2437,7 +3424,7 @@ components:
 
     JobStatusData:
       type: object
-      required: [job_id, job_type, status, retry_count, trace_id, resource]
+      required: [job_id, job_type, status, retry_count, thread_id, trace_id, resource]
       properties:
         job_id:
           type: string
@@ -2462,6 +3449,8 @@ components:
         retry_count:
           type: integer
           minimum: 0
+        thread_id:
+          type: string
         trace_id:
           type: string
         resource:

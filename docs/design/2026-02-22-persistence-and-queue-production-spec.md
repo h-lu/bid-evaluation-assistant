@@ -80,6 +80,10 @@
 3. `QUEUE_NAME_JOB`
 4. `IDEMPOTENCY_TTL_HOURS`
 5. `OUTBOX_POLL_INTERVAL_MS`
+6. `BEA_STORE_BACKEND`
+7. `BEA_STORE_SQLITE_PATH`
+8. `BEA_QUEUE_BACKEND`
+9. `BEA_QUEUE_SQLITE_PATH`
 
 ## 7. 测试要求
 
@@ -99,3 +103,25 @@
 1. `docs/design/2026-02-21-data-model-and-storage-spec.md`
 2. `docs/design/2026-02-21-job-system-and-retry-spec.md`
 3. `docs/design/2026-02-21-error-handling-and-dlq-spec.md`
+
+## 10. 当前实现增量（r3）
+
+1. 新增 Store 后端工厂：`BEA_STORE_BACKEND=memory|sqlite`。
+2. 新增本地持久化后端：`SqliteBackedStore`（用于开发与回归阶段持久化验证）。
+3. 新增 outbox 事件能力：`append/list/mark_published`，并接入关键 `job.created` 事件写入。
+4. 新增队列抽象：`InMemoryQueueBackend`，包含 tenant 前缀、ack/nack、重试回投语义。
+5. 新增持久化队列后端：`SqliteQueueBackend`，支持跨进程重启后的 pending 消息恢复。
+6. 新增 outbox relay 内部接口：`POST /api/v1/internal/outbox/relay`。
+7. 新增内部调试接口：
+   - `GET /api/v1/internal/outbox/events`
+   - `POST /api/v1/internal/outbox/events/{event_id}/publish`
+   - `POST /api/v1/internal/queue/{queue_name}/enqueue`
+   - `POST /api/v1/internal/queue/{queue_name}/dequeue`
+   - `POST /api/v1/internal/queue/{queue_name}/ack`
+   - `POST /api/v1/internal/queue/{queue_name}/nack`
+8. 新增回归测试：
+   - `tests/test_store_persistence_backend.py`
+   - `tests/test_outbox_events.py`
+   - `tests/test_queue_backend.py`
+   - `tests/test_internal_outbox_queue_api.py`
+9. 强化队列安全：`ack/nack` 增加 tenant 归属校验，跨租户返回 `TENANT_SCOPE_VIOLATION`。
