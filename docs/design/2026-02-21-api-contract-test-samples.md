@@ -74,7 +74,7 @@
 | `CT-016` | `GET /citations/{chunk_id}/source` | 引用不存在 | 不存在 `chunk_id` | `404` | `success=false`，错误对象完整 |
 | `CT-017` | `GET /dlq/items` | 查询 DLQ 列表 | 无 | `200` | 返回 `items[]/total` |
 | `CT-018` | `POST /dlq/items/{item_id}/requeue` | 重放 DLQ 项 | item 状态 `open` | `202` | 返回新 `job_id` 且条目变 `requeued` |
-| `CT-019` | `POST /dlq/items/{item_id}/discard` | 缺失审批字段 | `reason/reviewer_id` 为空 | `400` | `error.code=DLQ_DISCARD_REQUIRES_APPROVAL` |
+| `CT-019` | `POST /dlq/items/{item_id}/discard` | 缺失审批字段 | `reason/reviewer_id` 为空 | `400` | `error.code=APPROVAL_REQUIRED` |
 | `CT-020` | `POST /dlq/items/{item_id}/discard` | 合法丢弃 | `reason + reviewer_id` | `200` | 条目状态 `discarded` |
 | `CT-021` | `GET /jobs` | 列表查询 | 默认参数 | `200` | 返回 `items[]/total` |
 | `CT-022` | `GET /jobs?type=evaluation` | 类型过滤 | `type=evaluation` | `200` | 全部 `job_type=evaluation` |

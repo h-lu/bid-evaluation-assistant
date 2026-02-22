@@ -32,6 +32,7 @@ from app.schemas import (
     success_envelope,
 )
 from app.security_gates import evaluate_security_gate
+from app.security import JwtSecurityConfig, parse_and_validate_bearer_token, redact_sensitive
 from app.store import store
 
 try:
@@ -85,15 +86,107 @@ def _job_type_from_event_type(event_type: str) -> str:
 
 def create_app() -> FastAPI:
     app = FastAPI(title="Bid Evaluation Assistant API", version="0.1.0")
+    security_cfg = JwtSecurityConfig.from_env()
+
+    def _append_security_audit_log(
+        *,
+        request: Request,
+        action: str,
+        code: str,
+        detail: str,
+    ) -> None:
+        headers_obj = dict(request.headers.items())
+        headers_payload = redact_sensitive(headers_obj) if security_cfg.log_redaction_enabled else headers_obj
+        try:
+            store._append_audit_log(  # type: ignore[attr-defined]
+                log={
+                    "audit_id": f"audit_{uuid.uuid4().hex[:12]}",
+                    "tenant_id": _tenant_id_from_request(request),
+                    "action": action,
+                    "error_code": code,
+                    "detail": detail,
+                    "trace_id": _trace_id_from_request(request),
+                    "headers": headers_payload,
+                    "occurred_at": store._utcnow_iso(),  # type: ignore[attr-defined]
+                }
+            )
+        except Exception:
+            # Security audit failures must not break API responses.
+            return
+
+    def _require_approval(
+        *,
+        action: str,
+        request: Request,
+        reviewer_id: str,
+        reason: str,
+    ) -> None:
+        if action not in security_cfg.approval_required_actions:
+            return
+        if not reviewer_id.strip() or not reason.strip() or not _trace_id_from_request(request).strip():
+            raise ApiError(
+                code="APPROVAL_REQUIRED",
+                message=f"approval required for action: {action}",
+                error_class="business_rule",
+                retryable=False,
+                http_status=400,
+            )
 
     @app.middleware("http")
     async def add_trace_id(request: Request, call_next):
         request.state.trace_id = request.headers.get("x-trace-id", uuid.uuid4().hex)
-        request.state.tenant_id = request.headers.get("x-tenant-id", "tenant_default")
-        return await call_next(request)
+        request.state.auth_subject = "anonymous"
+        try:
+            path = request.url.path
+            header_tenant_explicit = request.headers.get("x-tenant-id")
+            if security_cfg.enabled and path.startswith("/api/v1/") and not path.startswith("/api/v1/internal/"):
+                auth_ctx = parse_and_validate_bearer_token(
+                    authorization=request.headers.get("Authorization"),
+                    cfg=security_cfg,
+                )
+                request.state.auth_subject = auth_ctx.subject
+                request.state.tenant_id = auth_ctx.tenant_id
+                if header_tenant_explicit and header_tenant_explicit != auth_ctx.tenant_id:
+                    raise ApiError(
+                        code="TENANT_SCOPE_VIOLATION",
+                        message="tenant mismatch",
+                        error_class="security_sensitive",
+                        retryable=False,
+                        http_status=403,
+                    )
+            else:
+                request.state.tenant_id = header_tenant_explicit or "tenant_default"
+            return await call_next(request)
+        except ApiError as exc:
+            _append_security_audit_log(
+                request=request,
+                action="security_blocked",
+                code=exc.code,
+                detail=exc.message,
+            )
+            return _error_response(
+                request,
+                code=exc.code,
+                message=exc.message,
+                error_class=exc.error_class,
+                retryable=exc.retryable,
+                status_code=exc.http_status,
+            )
 
     @app.exception_handler(ApiError)
     async def handle_api_error(request: Request, exc: ApiError):
+        if exc.code in {
+            "AUTH_UNAUTHORIZED",
+            "AUTH_FORBIDDEN",
+            "TENANT_SCOPE_VIOLATION",
+            "APPROVAL_REQUIRED",
+        }:
+            _append_security_audit_log(
+                request=request,
+                action="security_blocked",
+                code=exc.code,
+                detail=exc.message,
+            )
         return _error_response(
             request,
             code=exc.code,
@@ -590,6 +683,12 @@ def create_app() -> FastAPI:
                 retryable=False,
                 http_status=400,
             )
+        _require_approval(
+            action="dlq_discard",
+            request=request,
+            reviewer_id=payload.reviewer_id,
+            reason=payload.reason,
+        )
         req_payload = payload.model_dump(mode="json")
         data = store.run_idempotent(
             endpoint=f"POST:/api/v1/dlq/items/{item_id}/discard",
@@ -601,6 +700,7 @@ def create_app() -> FastAPI:
                 reason=payload.reason,
                 reviewer_id=payload.reviewer_id,
                 tenant_id=_tenant_id_from_request(request),
+                trace_id=_trace_id_from_request(request),
             ),
         )
         return success_envelope(data, _trace_id_from_request(request))
@@ -998,6 +1098,8 @@ def create_app() -> FastAPI:
         payload: StrategyTuningApplyRequest,
         request: Request,
         x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
+        x_reviewer_id: str | None = Header(default=None, alias="x-reviewer-id"),
+        x_approval_reason: str | None = Header(default=None, alias="x-approval-reason"),
     ):
         if x_internal_debug != "true":
             raise ApiError(
@@ -1007,6 +1109,12 @@ def create_app() -> FastAPI:
                 retryable=False,
                 http_status=403,
             )
+        _require_approval(
+            action="strategy_tuning_apply",
+            request=request,
+            reviewer_id=x_reviewer_id or "",
+            reason=x_approval_reason or "",
+        )
         data = store.apply_strategy_tuning(
             release_id=payload.release_id,
             selector=payload.selector.model_dump(mode="json"),

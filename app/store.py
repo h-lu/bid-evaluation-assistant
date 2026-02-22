@@ -1445,6 +1445,7 @@ class InMemoryStore:
         reason: str,
         reviewer_id: str,
         tenant_id: str,
+        trace_id: str | None = None,
     ) -> dict[str, Any]:
         item = self.get_dlq_item(dlq_id, tenant_id=tenant_id)
         if item is None:
@@ -1457,7 +1458,7 @@ class InMemoryStore:
             )
         if not reason.strip() or not reviewer_id.strip():
             raise ApiError(
-                code="DLQ_DISCARD_REQUIRES_APPROVAL",
+                code="APPROVAL_REQUIRED",
                 message="discard requires reviewer and reason",
                 error_class="business_rule",
                 retryable=False,
@@ -1476,7 +1477,7 @@ class InMemoryStore:
                 "dlq_id": dlq_id,
                 "reviewer_id": reviewer_id,
                 "reason": reason,
-                "trace_id": "",
+                "trace_id": trace_id or "",
                 "occurred_at": self._utcnow_iso(),
             }
         )
@@ -2668,12 +2669,14 @@ class SqliteBackedStore(InMemoryStore):
         reason: str,
         reviewer_id: str,
         tenant_id: str,
+        trace_id: str | None = None,
     ) -> dict[str, Any]:
         data = super().discard_dlq_item(
             dlq_id=dlq_id,
             reason=reason,
             reviewer_id=reviewer_id,
             tenant_id=tenant_id,
+            trace_id=trace_id,
         )
         self._save_state()
         return data
@@ -3529,12 +3532,14 @@ class PostgresBackedStore(InMemoryStore):
         reason: str,
         reviewer_id: str,
         tenant_id: str,
+        trace_id: str | None = None,
     ) -> dict[str, Any]:
         data = super().discard_dlq_item(
             dlq_id=dlq_id,
             reason=reason,
             reviewer_id=reviewer_id,
             tenant_id=tenant_id,
+            trace_id=trace_id,
         )
         self._save_state()
         return data

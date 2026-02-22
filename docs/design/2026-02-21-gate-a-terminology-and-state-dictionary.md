@@ -127,7 +127,7 @@ upload_received -> parse_queued -> parsing -> parsed -> indexing -> indexed
 
 1. `DLQ_ITEM_NOT_FOUND`
 2. `DLQ_REQUEUE_CONFLICT`
-3. `DLQ_DISCARD_REQUIRES_APPROVAL`
+3. `APPROVAL_REQUIRED`
 
 规则：
 
