@@ -29,6 +29,40 @@ def test_parse_document_returns_202_with_job_id(client):
     assert payload["status"] == "queued"
 
 
+def test_upload_auto_enqueues_parse_job_and_manifest(client):
+    files = {"file": ("auto-parse.pdf", BytesIO(b"%PDF-1.4 auto parse"), "application/pdf")}
+    data = {"project_id": "prj_auto", "supplier_id": "sup_auto", "doc_type": "bid"}
+    upload = client.post(
+        "/api/v1/documents/upload",
+        data=data,
+        files=files,
+        headers={"Idempotency-Key": "idem_upload_auto_parse_1"},
+    )
+    assert upload.status_code == 202
+
+    payload = upload.json()["data"]
+    document_id = payload["document_id"]
+    parse_job_id = payload["job_id"]
+    assert payload["next"].endswith(parse_job_id)
+
+    job = client.get(f"/api/v1/jobs/{parse_job_id}")
+    assert job.status_code == 200
+    assert job.json()["data"]["job_type"] == "parse"
+
+    manifest = client.get(
+        f"/api/v1/internal/parse-manifests/{parse_job_id}",
+        headers={"x-internal-debug": "true"},
+    )
+    assert manifest.status_code == 200
+    manifest_data = manifest.json()["data"]
+    assert manifest_data["document_id"] == document_id
+    assert manifest_data["status"] == "queued"
+
+    doc = client.get(f"/api/v1/documents/{document_id}")
+    assert doc.status_code == 200
+    assert doc.json()["data"]["status"] == "parse_queued"
+
+
 def test_parse_document_missing_idempotency_key_returns_400(client):
     document_id = _upload_one_document(client, key="idem_u_for_parse2")
     resp = client.post(f"/api/v1/documents/{document_id}/parse")

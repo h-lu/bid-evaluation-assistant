@@ -77,8 +77,8 @@
 
 ### 4.3 Documents
 
-1. `POST /documents/upload` -> `202 + job_id`
-2. `POST /documents/{document_id}/parse` -> `202 + job_id`
+1. `POST /documents/upload` -> `202 + parse job_id`（上传后自动投递 parse）
+2. `POST /documents/{document_id}/parse` -> `202 + job_id`（手动重投/补投）
 3. `GET /documents/{document_id}`
 4. `GET /documents/{document_id}/chunks`
 
@@ -147,6 +147,11 @@
 }
 ```
 
+说明：
+
+1. `data.job_id` 对应自动投递的 parse 任务，可直接用于 `GET /jobs/{job_id}` 查询。
+2. 上传受理后文档状态进入 `parse_queued`。
+
 错误：
 
 1. `REQ_VALIDATION_FAILED`
@@ -194,6 +199,11 @@
   }
 }
 ```
+
+规则说明：
+
+1. 评分流程先执行规则引擎硬约束判定。
+2. 当硬约束不通过时，报告返回 `criteria_results[*].hard_pass=false`，并阻断软评分（总分为 `0`，风险等级提升）。
 
 ### 5.3 `GET /jobs/{job_id}`
 

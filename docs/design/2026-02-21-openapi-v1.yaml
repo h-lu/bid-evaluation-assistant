@@ -15,7 +15,7 @@ paths:
   /documents/upload:
     post:
       operationId: uploadDocument
-      summary: Upload a document and enqueue parse/index job
+      summary: Upload a document and auto-enqueue parse/index job
       security:
         - BearerAuth: []
       parameters:
@@ -706,6 +706,7 @@ components:
           type: string
         job_id:
           type: string
+          description: Auto-enqueued parse job id
         status:
           type: string
           enum: [queued]

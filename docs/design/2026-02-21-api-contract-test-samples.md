@@ -50,6 +50,7 @@
 | `CT-005` | `POST /evaluations` | 正常评估受理 | 合法 `project_id/supplier_id/rule_pack_version` | `202` | `data.evaluation_id/job_id/status=queued` |
 | `CT-006` | `POST /evaluations` | 参数校验失败 | `top_k=0` 或缺失必填字段 | `400` | `error.code=REQ_VALIDATION_FAILED` |
 | `CT-007` | `POST /documents/{document_id}/parse` | 正常解析受理 | 合法 `document_id` + `Idempotency-Key` | `202` | `data.document_id/job_id/status=queued` |
+| `CT-048` | `POST /documents/upload` | 自动投递 parse | 合法上传后读取返回 `job_id` | `202` | `job_type=parse` 且存在 parse manifest，文档状态 `parse_queued` |
 | `CT-008` | `POST /documents/{document_id}/parse` | 缺失幂等键 | 不带 `Idempotency-Key` | `400` | `error.code=IDEMPOTENCY_MISSING` |
 | `CT-009` | `GET /jobs/{job_id}` | 查询运行中任务 | 已存在 `job_id` | `200` | `data.status` 在状态字典内 |
 | `CT-010` | `GET /jobs/{job_id}` | 查询不存在任务 | 不存在 `job_id` | `404` | `success=false`，错误对象完整 |
@@ -84,6 +85,7 @@
 | `CT-046` | `POST /retrieval/query` | 约束保持改写输出 | 任意合法 query | `200` | `rewritten_query/rewrite_reason/constraints_preserved/constraint_diff` 字段存在 |
 | `CT-037` | `GET /evaluations/{evaluation_id}/report` | 报告查询 | 合法 `evaluation_id` | `200` | 返回 `total_score/confidence/criteria_results/citations` |
 | `CT-047` | `GET /evaluations/{evaluation_id}/report` | 引用覆盖率字段 | 合法 `evaluation_id` | `200` | 返回 `citation_coverage` 且 `criteria_results[*].citations` 非空 |
+| `CT-049` | `GET /evaluations/{evaluation_id}/report` | 硬约束阻断软评分 | `include_doc_types` 不含 `bid` | `200` | `total_score=0` 且 `criteria_results[*].hard_pass=false` |
 | `CT-040` | `GET /evaluations/{evaluation_id}/report` | HITL 中断负载 | `evaluation_scope.force_hitl=true` | `200` | `needs_human_review=true` 且 `interrupt.resume_token` 存在 |
 | `CT-041` | `GET /documents/{document_id}` | 文档详情查询 | 合法 `document_id` | `200` | 返回文档元数据与状态 |
 | `CT-042` | `GET /documents/{document_id}/chunks` | 解析分块查询 | parse 成功后查询 | `200` | 返回 `chunk_id/pages/positions/heading_path/chunk_type` |
@@ -133,7 +135,7 @@
 
 1. 统一响应模型与错误对象：`CT-001/006/010/014/016/019/024/025`。
 2. 幂等策略：`CT-002/003/027/028/029`。
-3. 异步任务契约：`CT-001/005/007/009/011/013/018/021/023`。
+3. 异步任务契约：`CT-001/005/007/009/011/013/018/021/023/048`。
 4. `resume_token` 与 citation schema：`CT-013/014/015`。
 5. B-2 状态机运维动作（cancel/DLQ）：`CT-011/012/017/018/019/020/022`。
 6. 多租户隔离：`CT-024/025/026/032`。

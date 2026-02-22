@@ -184,8 +184,11 @@ class InMemoryStore:
         job_id = f"job_{uuid.uuid4().hex[:12]}"
         tenant_id = payload.get("tenant_id", "tenant_default")
         force_hitl = bool(payload.get("evaluation_scope", {}).get("force_hitl", False))
-        needs_human_review = force_hitl
-        confidence = 0.62 if force_hitl else 0.78
+        include_doc_types = payload.get("evaluation_scope", {}).get("include_doc_types", [])
+        include_doc_types_normalized = {str(x).lower() for x in include_doc_types}
+        hard_constraint_pass = "bid" in include_doc_types_normalized
+        needs_human_review = force_hitl and hard_constraint_pass
+        confidence = 0.62 if needs_human_review else (0.78 if hard_constraint_pass else 1.0)
         interrupt_payload = None
         if needs_human_review:
             resume_token = f"rt_{uuid.uuid4().hex[:12]}"
@@ -219,22 +222,26 @@ class InMemoryStore:
         self.evaluation_reports[evaluation_id] = {
             "evaluation_id": evaluation_id,
             "supplier_id": payload.get("supplier_id", ""),
-            "total_score": 88.5,
+            "total_score": 88.5 if hard_constraint_pass else 0.0,
             "confidence": confidence,
             "citation_coverage": 1.0,
-            "risk_level": "medium",
+            "risk_level": "medium" if hard_constraint_pass else "high",
             "criteria_results": [
                 {
                     "criteria_id": "delivery",
-                    "score": 18.0,
+                    "score": 18.0 if hard_constraint_pass else 0.0,
                     "max_score": 20.0,
-                    "hard_pass": True,
-                    "reason": "delivery period satisfies baseline",
-                    "citations": ["ck_eval_stub_1"],
-                    "confidence": 0.81,
+                    "hard_pass": hard_constraint_pass,
+                    "reason": (
+                        "delivery period satisfies baseline"
+                        if hard_constraint_pass
+                        else "rule engine blocked: required bid document scope missing"
+                    ),
+                    "citations": ["ck_eval_stub_1" if hard_constraint_pass else "ck_rule_block_1"],
+                    "confidence": 0.81 if hard_constraint_pass else 1.0,
                 }
             ],
-            "citations": ["ck_eval_stub_1"],
+            "citations": ["ck_eval_stub_1" if hard_constraint_pass else "ck_rule_block_1"],
             "needs_human_review": needs_human_review,
             "trace_id": payload.get("trace_id") or "",
             "tenant_id": tenant_id,
@@ -248,7 +255,6 @@ class InMemoryStore:
 
     def create_upload_job(self, payload: dict[str, Any]) -> dict[str, Any]:
         document_id = f"doc_{uuid.uuid4().hex[:12]}"
-        job_id = f"job_{uuid.uuid4().hex[:12]}"
         tenant_id = payload.get("tenant_id", "tenant_default")
         self.documents[document_id] = {
             "document_id": document_id,
@@ -262,25 +268,19 @@ class InMemoryStore:
             "status": "uploaded",
         }
         self.document_chunks[document_id] = []
-        self.jobs[job_id] = {
-            "job_id": job_id,
-            "job_type": "upload",
-            "status": "queued",
-            "retry_count": 0,
-            "tenant_id": tenant_id,
-            "trace_id": payload.get("trace_id"),
-            "resource": {
-                "type": "document",
-                "id": document_id,
+        parse_job = self.create_parse_job(
+            document_id=document_id,
+            payload={
+                "document_id": document_id,
+                "trace_id": payload.get("trace_id"),
+                "tenant_id": tenant_id,
             },
-            "payload": payload,
-            "last_error": None,
-        }
+        )
         return {
             "document_id": document_id,
-            "job_id": job_id,
-            "status": "queued",
-            "next": f"/api/v1/jobs/{job_id}",
+            "job_id": parse_job["job_id"],
+            "status": parse_job["status"],
+            "next": f"/api/v1/jobs/{parse_job['job_id']}",
         }
 
     def create_parse_job(self, *, document_id: str, payload: dict[str, Any]) -> dict[str, Any]:

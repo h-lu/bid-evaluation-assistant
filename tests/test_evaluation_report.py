@@ -76,3 +76,27 @@ def test_report_force_hitl_includes_interrupt_payload(client):
     assert interrupt["type"] == "human_review"
     assert interrupt["evaluation_id"] == evaluation_id
     assert "resume_token" in interrupt and interrupt["resume_token"].startswith("rt_")
+
+
+def test_report_hard_constraint_fail_blocks_soft_scoring(client):
+    payload = _eval_payload()
+    payload["evaluation_scope"]["include_doc_types"] = ["attachment"]
+
+    created = client.post(
+        "/api/v1/evaluations",
+        json=payload,
+        headers={"Idempotency-Key": "idem_report_rule_fail_1", "x-tenant-id": "tenant_a"},
+    )
+    assert created.status_code == 202
+    evaluation_id = created.json()["data"]["evaluation_id"]
+
+    resp = client.get(
+        f"/api/v1/evaluations/{evaluation_id}/report",
+        headers={"x-tenant-id": "tenant_a"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["total_score"] == 0.0
+    assert data["risk_level"] == "high"
+    assert data["criteria_results"][0]["hard_pass"] is False
+    assert data["criteria_results"][0]["citations"]
