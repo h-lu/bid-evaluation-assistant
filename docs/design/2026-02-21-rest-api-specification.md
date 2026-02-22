@@ -285,6 +285,11 @@
 2. `REQ_VALIDATION_FAILED`
 3. `WF_INTERRUPT_REVIEWER_REQUIRED`
 
+约束：
+
+1. `resume_token` 单次有效。
+2. `resume_token` 自签发起 24 小时内有效，超时后返回 `WF_INTERRUPT_RESUME_INVALID`。
+
 ### 5.5 `GET /citations/{chunk_id}/source`
 
 响应 `200`：
@@ -674,6 +679,13 @@
 ### 6.2 任务状态
 
 `queued -> running -> retrying -> succeeded|failed`
+
+### 5.15 `POST /dlq/items/{item_id}/requeue|discard`
+
+约束：
+
+1. `requeue/discard` 成功后必须写审计日志。
+2. 审计动作分别为 `dlq_requeue_submitted`、`dlq_discard_submitted`。
 
 附加状态：`needs_manual_decision`, `dlq_pending`, `dlq_recorded`。
 

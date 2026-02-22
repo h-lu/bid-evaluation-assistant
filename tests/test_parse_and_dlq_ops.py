@@ -159,3 +159,37 @@ def test_dlq_requeue_is_idempotent_with_same_key(client):
     assert first.status_code == 202
     assert second.status_code == 202
     assert first.json()["data"] == second.json()["data"]
+
+
+def test_dlq_requeue_and_discard_write_audit_logs(client):
+    seeded_requeue = store.seed_dlq_item(
+        job_id="job_failed_audit_1",
+        error_class="transient",
+        error_code="RAG_UPSTREAM_UNAVAILABLE",
+    )
+    requeue_id = seeded_requeue["dlq_id"]
+    requeue_resp = client.post(
+        f"/api/v1/dlq/items/{requeue_id}/requeue",
+        headers={"Idempotency-Key": "idem_dlq_audit_requeue"},
+    )
+    assert requeue_resp.status_code == 202
+    requeue_logs = [x for x in store.audit_logs if x.get("action") == "dlq_requeue_submitted"]
+    assert any(x.get("dlq_id") == requeue_id for x in requeue_logs)
+
+    seeded_discard = store.seed_dlq_item(
+        job_id="job_failed_audit_2",
+        error_class="permanent",
+        error_code="DOC_PARSE_SCHEMA_INVALID",
+    )
+    discard_id = seeded_discard["dlq_id"]
+    discard_resp = client.post(
+        f"/api/v1/dlq/items/{discard_id}/discard",
+        json={"reason": "operator verified", "reviewer_id": "u_reviewer_9"},
+        headers={"Idempotency-Key": "idem_dlq_audit_discard"},
+    )
+    assert discard_resp.status_code == 200
+    discard_logs = [x for x in store.audit_logs if x.get("action") == "dlq_discard_submitted"]
+    assert any(
+        x.get("dlq_id") == discard_id and x.get("reviewer_id") == "u_reviewer_9"
+        for x in discard_logs
+    )

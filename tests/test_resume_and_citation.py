@@ -1,3 +1,5 @@
+from datetime import UTC, datetime, timedelta
+
 from app.store import store
 
 
@@ -97,6 +99,28 @@ def test_resume_token_is_single_use(client):
     )
     assert second.status_code == 409
     assert second.json()["error"]["code"] == "WF_INTERRUPT_RESUME_INVALID"
+
+
+def test_resume_token_expires_after_24h(client):
+    evaluation_id = "ev_resume_expired"
+    token = "rt_expired_1"
+    store.register_resume_token(evaluation_id=evaluation_id, resume_token=token)
+    store.resume_tokens[evaluation_id]["issued_at"] = (
+        datetime.now(UTC) - timedelta(hours=24, seconds=1)
+    ).isoformat()
+
+    resp = client.post(
+        f"/api/v1/evaluations/{evaluation_id}/resume",
+        json={
+            "resume_token": token,
+            "decision": "approve",
+            "comment": "expired token",
+            "editor": {"reviewer_id": "u_reviewer_5"},
+        },
+        headers={"Idempotency-Key": "idem_resume_expired_1"},
+    )
+    assert resp.status_code == 409
+    assert resp.json()["error"]["code"] == "WF_INTERRUPT_RESUME_INVALID"
 
 
 def test_get_citation_source_returns_required_fields(client):

@@ -64,6 +64,7 @@
 | `CT-014` | `POST /evaluations/{evaluation_id}/resume` | token 非法/过期 | `resume_token` 无效 | `409` | `error.code=WF_INTERRUPT_RESUME_INVALID` |
 | `CT-038` | `POST /evaluations/{evaluation_id}/resume` | 缺失 reviewer | 无 `editor.reviewer_id` | `400` | `error.code=WF_INTERRUPT_REVIEWER_REQUIRED` |
 | `CT-039` | `POST /evaluations/{evaluation_id}/resume` | token 单次有效 | 同 `resume_token` 二次提交 | `409` | `error.code=WF_INTERRUPT_RESUME_INVALID` |
+| `CT-062` | `POST /evaluations/{evaluation_id}/resume` | token 24h 过期 | `issued_at` 超过 24h 的 token | `409` | `error.code=WF_INTERRUPT_RESUME_INVALID` |
 | `CT-015` | `GET /citations/{chunk_id}/source` | 引用回跳成功 | 合法 `chunk_id` | `200` | 返回 `document_id/page/bbox/text/context` |
 | `CT-016` | `GET /citations/{chunk_id}/source` | 引用不存在 | 不存在 `chunk_id` | `404` | `success=false`，错误对象完整 |
 | `CT-017` | `GET /dlq/items` | 查询 DLQ 列表 | 无 | `200` | 返回 `items[]/total` |
@@ -79,6 +80,7 @@
 | `CT-027` | `POST /dlq/items/{item_id}/requeue` | 缺失幂等键 | 不带 `Idempotency-Key` | `400` | `error.code=IDEMPOTENCY_MISSING` |
 | `CT-028` | `POST /dlq/items/{item_id}/discard` | 缺失幂等键 | 不带 `Idempotency-Key` | `400` | `error.code=IDEMPOTENCY_MISSING` |
 | `CT-029` | `POST /dlq/items/{item_id}/requeue` | 幂等重放 | 同 key + 同 body | `202` | 返回相同 `job_id` |
+| `CT-063` | `POST /dlq/items/{item_id}/requeue/discard` | DLQ 操作审计 | 成功执行 `requeue` 与 `discard` | `200/202` | 写入 `dlq_requeue_submitted/dlq_discard_submitted` 审计动作 |
 | `CT-030` | `POST /retrieval/query` | 模式选择（relation） | `query_type=relation` | `200` | `data.selected_mode=global` |
 | `CT-031` | `POST /retrieval/query` | 高风险强制 mix | `query_type=fact + high_risk=true` | `200` | `data.selected_mode=mix` |
 | `CT-032` | `POST /retrieval/query` | 租户/项目过滤 | 混合租户与项目样本 | `200` | 仅返回当前租户且 `project_id` 命中项 |

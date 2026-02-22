@@ -4,7 +4,7 @@ import json
 import re
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.errors import ApiError
@@ -17,6 +17,8 @@ class IdempotencyRecord:
 
 
 class InMemoryStore:
+    RESUME_TOKEN_TTL_HOURS = 24
+
     ALLOWED_TRANSITIONS: dict[str, set[str]] = {
         "queued": {"running"},
         "running": {"retrying", "succeeded", "needs_manual_decision", "dlq_pending"},
@@ -463,7 +465,21 @@ class InMemoryStore:
             return False
         if tenant_id is not None:
             self._assert_tenant_scope(record.get("tenant_id", "tenant_default"), tenant_id)
-        return record.get("resume_token") == resume_token and not bool(record.get("used", False))
+        if record.get("resume_token") != resume_token or bool(record.get("used", False)):
+            return False
+
+        issued_at_raw = record.get("issued_at")
+        if not isinstance(issued_at_raw, str):
+            return False
+        try:
+            issued_at = datetime.fromisoformat(issued_at_raw)
+        except ValueError:
+            return False
+        if issued_at.tzinfo is None:
+            issued_at = issued_at.replace(tzinfo=UTC)
+
+        expires_at = issued_at + timedelta(hours=self.RESUME_TOKEN_TTL_HOURS)
+        return datetime.now(UTC) <= expires_at
 
     def consume_resume_token(
         self,
@@ -752,6 +768,18 @@ class InMemoryStore:
             "last_error": None,
         }
         item["status"] = "requeued"
+        self.audit_logs.append(
+            {
+                "audit_id": f"audit_{uuid.uuid4().hex[:12]}",
+                "tenant_id": tenant_id,
+                "action": "dlq_requeue_submitted",
+                "dlq_id": dlq_id,
+                "source_job_id": item["job_id"],
+                "new_job_id": new_job_id,
+                "trace_id": trace_id or "",
+                "occurred_at": self._utcnow_iso(),
+            }
+        )
         return {
             "dlq_id": dlq_id,
             "job_id": new_job_id,
@@ -787,6 +815,18 @@ class InMemoryStore:
         item["status"] = "discarded"
         item["discard_reason"] = reason
         item["reviewer_id"] = reviewer_id
+        self.audit_logs.append(
+            {
+                "audit_id": f"audit_{uuid.uuid4().hex[:12]}",
+                "tenant_id": tenant_id,
+                "action": "dlq_discard_submitted",
+                "dlq_id": dlq_id,
+                "reviewer_id": reviewer_id,
+                "reason": reason,
+                "trace_id": "",
+                "occurred_at": self._utcnow_iso(),
+            }
+        )
         return {
             "dlq_id": dlq_id,
             "status": "discarded",
