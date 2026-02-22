@@ -1,6 +1,6 @@
 # 存储与队列生产化规范
 
-> 版本：v2026.02.22-r3  
+> 版本：v2026.02.22-r4  
 > 状态：Active  
 > 对齐：`docs/plans/2026-02-22-production-capability-plan.md`
 
@@ -176,3 +176,5 @@ pytest -q
 2. `create_store_from_env` 新增 `POSTGRES_DSN` 校验与 `BEA_STORE_POSTGRES_TABLE` 配置。
 3. 新增工厂回归：`tests/test_store_persistence_backend.py` 覆盖 postgres 分支（fake driver）。
 4. 新增 `app/db/postgres.py` 事务执行器 `PostgresTxRunner`，统一 `SET LOCAL app.current_tenant` 注入。
+5. 新增 `RedisQueueBackend`，支持 `BEA_QUEUE_BACKEND=redis` 与 tenant 前缀 key 语义。
+6. 新增回归：`tests/test_queue_backend.py` 覆盖 redis 工厂与 `enqueue/dequeue/nack/ack` 生命周期（fake driver）。

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.queue_backend import InMemoryQueueBackend, create_queue_from_env
+from app.queue_backend import InMemoryQueueBackend, RedisQueueBackend, create_queue_from_env
 
 
 def test_queue_backend_keeps_tenant_isolation():
@@ -44,7 +44,7 @@ def test_queue_factory_defaults_to_memory(monkeypatch):
 
 
 def test_queue_factory_rejects_unsupported_backend(monkeypatch):
-    monkeypatch.setenv("BEA_QUEUE_BACKEND", "redis")
+    monkeypatch.setenv("BEA_QUEUE_BACKEND", "rabbitmq")
     try:
         create_queue_from_env()
     except RuntimeError as exc:
@@ -103,6 +103,93 @@ def test_queue_factory_supports_sqlite_backend(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("BEA_QUEUE_SQLITE_PATH", str(tmp_path / "queue_factory.sqlite3"))
     queue = create_queue_from_env()
     assert queue.__class__.__name__ == "SqliteQueueBackend"
+
+
+def test_queue_factory_supports_redis_backend_with_fake_driver(monkeypatch):
+    class FakeRedisClient:
+        def __init__(self) -> None:
+            self.kv: dict[str, str] = {}
+            self.lists: dict[str, list[str]] = {}
+            self.sets: dict[str, set[str]] = {}
+
+        @classmethod
+        def from_url(cls, _dsn: str, decode_responses: bool = True):
+            assert decode_responses is True
+            return cls()
+
+        def set(self, key: str, value: str) -> None:
+            self.kv[key] = value
+
+        def get(self, key: str):
+            return self.kv.get(key)
+
+        def rpush(self, key: str, value: str) -> None:
+            self.lists.setdefault(key, []).append(value)
+
+        def lpush(self, key: str, value: str) -> None:
+            self.lists.setdefault(key, []).insert(0, value)
+
+        def lpop(self, key: str):
+            items = self.lists.get(key, [])
+            if not items:
+                return None
+            return items.pop(0)
+
+        def llen(self, key: str) -> int:
+            return len(self.lists.get(key, []))
+
+        def sadd(self, key: str, value: str) -> None:
+            self.sets.setdefault(key, set()).add(value)
+
+        def srem(self, key: str, value: str) -> None:
+            self.sets.setdefault(key, set()).discard(value)
+
+        def smembers(self, key: str):
+            return set(self.sets.get(key, set()))
+
+        def delete(self, *keys: str) -> None:
+            for key in keys:
+                self.kv.pop(key, None)
+                self.lists.pop(key, None)
+                self.sets.pop(key, None)
+
+    class FakeRedisModule:
+        class Redis:
+            @staticmethod
+            def from_url(dsn: str, decode_responses: bool = True):
+                return FakeRedisClient.from_url(dsn, decode_responses=decode_responses)
+
+    monkeypatch.setenv("BEA_QUEUE_BACKEND", "redis")
+    monkeypatch.setenv("REDIS_DSN", "redis://localhost:6379/0")
+    monkeypatch.setattr("app.queue_backend._import_redis", lambda: FakeRedisModule)
+
+    queue = create_queue_from_env()
+    assert isinstance(queue, RedisQueueBackend)
+
+    sent = queue.enqueue(tenant_id="tenant_a", queue_name="jobs", payload={"job_id": "job_redis_1"})
+    got = queue.dequeue(tenant_id="tenant_a", queue_name="jobs")
+    assert got is not None
+    assert got.message_id == sent.message_id
+
+    nacked = queue.nack(tenant_id="tenant_a", message_id=got.message_id, requeue=True)
+    assert nacked is not None
+    assert nacked.attempt == 1
+    replay = queue.dequeue(tenant_id="tenant_a", queue_name="jobs")
+    assert replay is not None
+    assert replay.attempt == 1
+    queue.ack(tenant_id="tenant_a", message_id=replay.message_id)
+    assert queue.pending_count(tenant_id="tenant_a", queue_name="jobs") == 0
+
+
+def test_queue_factory_requires_redis_dsn(monkeypatch):
+    monkeypatch.setenv("BEA_QUEUE_BACKEND", "redis")
+    monkeypatch.delenv("REDIS_DSN", raising=False)
+    try:
+        create_queue_from_env()
+    except ValueError as exc:
+        assert "REDIS_DSN" in str(exc)
+    else:
+        raise AssertionError("expected ValueError when REDIS_DSN is missing")
 
 
 def test_queue_ack_and_nack_require_same_tenant():
