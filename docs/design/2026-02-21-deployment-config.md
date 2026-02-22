@@ -114,6 +114,7 @@ Internet / Office -> | Nginx + TLS + WAF      |
 3. `CHROMA_PERSIST_DIR`
 4. `OBJECT_STORAGE_BUCKET`
 5. `WORM_RETENTION_DAYS`
+6. `BEA_REQUIRE_TRUESTACK=true`（staging/prod）
 
 ## 6. 扩缩容策略
 
@@ -162,6 +163,7 @@ Internet / Office -> | Nginx + TLS + WAF      |
 2. 生产配置不可硬编码在仓库。
 3. 发布前执行配置差异检查。
 4. 审计日志与报告归档进入受控存储。
+5. `staging/prod` 禁止静默回退到 `memory/sqlite`（通过 `BEA_REQUIRE_TRUESTACK=true` 强制约束）。
 
 ## 9. 发布流水线（Gate 驱动）
 

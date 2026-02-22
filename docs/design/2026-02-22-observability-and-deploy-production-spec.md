@@ -130,6 +130,7 @@ pytest -q tests/test_observability_metrics_api.py
 pytest -q tests/test_gate_d_other_gates.py tests/test_gate_e_rollout_and_rollback.py tests/test_gate_f_ops_optimization.py
 pytest -q tests/test_release_readiness_api.py
 pytest -q
+python3 scripts/run_slo_probe.py --url http://localhost:8000/healthz --requests 200 --concurrency 20
 ```
 
 ## 10. 验收证据模板
@@ -171,3 +172,4 @@ pytest -q
    - `P6_READINESS_REQUIRED`
 3. `ops/metrics/summary` 新增 `observability` 视图，包含 namespace、OTEL/alert 配置状态与发布关键参数。
 4. 请求链路响应头统一返回 `x-trace-id` 与 `x-request-id`，便于 API/Worker/审计跨层对齐排障。
+5. 新增 SLO 探针脚本 `scripts/run_slo_probe.py` 与运行手册 `docs/ops/2026-02-23-slo-capacity-validation-runbook.md`，用于 staging/prod 准入前延迟与错误率收口。

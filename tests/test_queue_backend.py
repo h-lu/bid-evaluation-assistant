@@ -44,6 +44,17 @@ def test_queue_factory_defaults_to_memory(monkeypatch):
     assert isinstance(q, InMemoryQueueBackend)
 
 
+def test_queue_factory_rejects_non_redis_when_true_stack_required(monkeypatch):
+    monkeypatch.setenv("BEA_REQUIRE_TRUESTACK", "true")
+    monkeypatch.setenv("BEA_QUEUE_BACKEND", "sqlite")
+    try:
+        create_queue_from_env()
+    except RuntimeError as exc:
+        assert "BEA_QUEUE_BACKEND" in str(exc)
+    else:
+        raise AssertionError("expected RuntimeError when true stack is required")
+
+
 def test_queue_factory_rejects_unsupported_backend(monkeypatch):
     monkeypatch.setenv("BEA_QUEUE_BACKEND", "rabbitmq")
     try:

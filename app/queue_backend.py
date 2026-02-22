@@ -12,6 +12,8 @@ from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from app.runtime_profile import true_stack_required
+
 
 @dataclass
 class QueueMessage:
@@ -654,6 +656,8 @@ def create_queue_from_env(
 ) -> InMemoryQueueBackend | SqliteQueueBackend | RedisQueueBackend:
     env = os.environ if environ is None else environ
     backend = env.get("BEA_QUEUE_BACKEND", "memory").strip().lower()
+    if true_stack_required(env) and backend != "redis":
+        raise RuntimeError("BEA_QUEUE_BACKEND must be redis when BEA_REQUIRE_TRUESTACK=true")
     if backend == "memory":
         return InMemoryQueueBackend()
     if backend == "sqlite":

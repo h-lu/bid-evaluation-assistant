@@ -111,6 +111,7 @@ Request -> AuthN(JWT verify) -> Context inject(tenant_id,trace_id)
 pytest -q tests/test_tenant_isolation.py tests/test_internal_outbox_queue_api.py
 pytest -q tests/test_gate_d_other_gates.py
 pytest -q
+python3 scripts/security_compliance_drill.py --audit-json ./artifacts/audit_logs_release_window.json
 ```
 
 ## 9. 验收证据模板
@@ -158,3 +159,4 @@ pytest -q
    - `app/security_scan.py`
    - `scripts/security_secret_scan.py`
    - 可直接接入 CI 阶段阻断合并。
+5. 新增安全合规演练脚本 `scripts/security_compliance_drill.py` 与运行手册 `docs/ops/2026-02-23-security-compliance-drill-runbook.md`，用于发布窗口审计完整性与双人复核覆盖率验证。

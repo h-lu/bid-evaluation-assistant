@@ -53,6 +53,17 @@ def test_store_factory_defaults_to_in_memory(monkeypatch):
     assert isinstance(store, InMemoryStore)
 
 
+def test_store_factory_rejects_non_postgres_when_true_stack_required(monkeypatch):
+    monkeypatch.setenv("BEA_REQUIRE_TRUESTACK", "true")
+    monkeypatch.setenv("BEA_STORE_BACKEND", "sqlite")
+    try:
+        create_store_from_env()
+    except RuntimeError as exc:
+        assert "BEA_STORE_BACKEND" in str(exc)
+    else:
+        raise AssertionError("expected RuntimeError when true stack is required")
+
+
 def test_store_factory_uses_sqlite_backend_when_configured(monkeypatch, tmp_path: Path):
     sqlite_path = tmp_path / "factory.sqlite3"
     monkeypatch.setenv("BEA_STORE_BACKEND", "sqlite")

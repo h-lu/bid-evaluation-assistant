@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import uuid
+from collections.abc import Mapping
 
 from fastapi import Body, FastAPI, File, Form, Header, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
@@ -34,11 +36,22 @@ from app.schemas import (
 from app.security_gates import evaluate_security_gate
 from app.security import JwtSecurityConfig, parse_and_validate_bearer_token, redact_sensitive
 from app.store import store
+from app.runtime_profile import true_stack_required
 
-try:
-    queue_backend = create_queue_from_env()
-except RuntimeError:
-    queue_backend = InMemoryQueueBackend()
+
+def _create_queue_backend_for_runtime(
+    environ: Mapping[str, str] | None = None,
+) -> InMemoryQueueBackend | object:
+    env = os.environ if environ is None else environ
+    try:
+        return create_queue_from_env(env)
+    except RuntimeError:
+        if true_stack_required(env):
+            raise
+        return InMemoryQueueBackend()
+
+
+queue_backend = _create_queue_backend_for_runtime()
 
 
 def _trace_id_from_request(request: Request) -> str:

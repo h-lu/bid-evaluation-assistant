@@ -38,6 +38,7 @@ from app.repositories.parse_manifests import InMemoryParseManifestsRepository
 from app.repositories.parse_manifests import PostgresParseManifestsRepository
 from app.repositories.workflow_checkpoints import InMemoryWorkflowCheckpointsRepository
 from app.repositories.workflow_checkpoints import PostgresWorkflowCheckpointsRepository
+from app.runtime_profile import true_stack_required
 
 
 @dataclass
@@ -3833,6 +3834,8 @@ class PostgresBackedStore(InMemoryStore):
 def create_store_from_env(environ: Mapping[str, str] | None = None) -> InMemoryStore:
     env = os.environ if environ is None else environ
     backend = env.get("BEA_STORE_BACKEND", "memory").strip().lower()
+    if true_stack_required(env) and backend != "postgres":
+        raise RuntimeError("BEA_STORE_BACKEND must be postgres when BEA_REQUIRE_TRUESTACK=true")
     if backend == "sqlite":
         db_path = env.get("BEA_STORE_SQLITE_PATH", ".local/bea-store.sqlite3")
         return SqliteBackedStore(db_path)
