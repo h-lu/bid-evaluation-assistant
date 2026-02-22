@@ -2,7 +2,7 @@
 
 > 文档基线：v2026.02.21-r3  
 > 状态：Active  
-> 仓库类型：设计与实施规范仓库（当前不含业务代码）
+> 仓库类型：设计与实现并行仓库（包含 API/Worker 与前端骨架）
 
 ## 1. 这套文档解决什么问题
 
@@ -153,6 +153,14 @@ Gate A 设计冻结
 python3 -m pip install -e '.[dev]'
 pytest -v
 uvicorn app.main:app --reload
+```
+
+前端运行（Vue3 + Vite）：
+
+```bash
+cd frontend
+npm install
+npm run dev
 ```
 
 说明：本骨架通过中间件模拟“JWT 注入租户上下文”，本地可用 `x-tenant-id` 请求头验证租户隔离行为。

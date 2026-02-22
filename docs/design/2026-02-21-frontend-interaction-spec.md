@@ -190,3 +190,18 @@
 1. ProposalLLM（点对点结构借鉴）
 2. kotaemon（citation 回跳交互借鉴）
 3. 历史融合提交：`53e3d92`, `beef3e9`
+
+## 12. 实施更新（2026-02-23）
+
+1. 新增前端最小工程：`frontend/`（Vue3 + Vite + vue-router + pinia）。
+2. 已落地路由骨架：`/dashboard /documents /evaluations /jobs /dlq`，其余路由预留占位页。
+3. 已接通核心 API：
+   - `GET /healthz`
+   - `POST /api/v1/documents/upload`
+   - `POST /api/v1/evaluations`
+   - `GET /api/v1/jobs`
+   - `GET /api/v1/jobs/{job_id}`
+   - `GET /api/v1/dlq/items`
+   - `POST /api/v1/dlq/items/{item_id}/requeue`
+   - `POST /api/v1/dlq/items/{item_id}/discard`
+4. 前端启动说明见：`frontend/README.md`。

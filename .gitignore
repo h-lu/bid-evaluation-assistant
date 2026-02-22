@@ -53,6 +53,11 @@ logs/
 .coverage
 htmlcov/
 
+# Frontend
+node_modules/
+frontend/node_modules/
+frontend/dist/
+
 # ChromaDB
 chroma_data/
 
