@@ -1,6 +1,6 @@
 # 存储与队列生产化规范
 
-> 版本：v2026.02.22-r7  
+> 版本：v2026.02.22-r8  
 > 状态：Active  
 > 对齐：`docs/plans/2026-02-22-production-capability-plan.md`
 
@@ -181,3 +181,5 @@ pytest -q
 7. 新增仓储层起步实现：`app/repositories/jobs.py`（InMemory + Postgres jobs repository）与回归 `tests/test_jobs_repository.py`。
 8. `InMemoryStore` 的 job 创建路径已改为通过 `InMemoryJobsRepository` 写入，降低后续切换成本。
 9. `PostgresBackedStore` 已同步写入 `jobs` 表，并在 `get_job_for_tenant` 优先走 `PostgresJobsRepository`。
+10. 新增 `documents/chunks` 仓储层：`app/repositories/documents.py`（InMemory + Postgres）。
+11. `PostgresBackedStore` 增加 `documents/document_chunks` 表，并同步写入文档与 chunk 数据。

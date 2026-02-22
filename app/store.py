@@ -20,6 +20,8 @@ from app.parser_adapters import (
     select_parse_route,
 )
 from app.db.postgres import PostgresTxRunner
+from app.repositories.documents import InMemoryDocumentsRepository
+from app.repositories.documents import PostgresDocumentsRepository
 from app.repositories.jobs import InMemoryJobsRepository
 from app.repositories.jobs import PostgresJobsRepository
 
@@ -47,9 +49,9 @@ class InMemoryStore:
     def __init__(self) -> None:
         self.idempotency_records: dict[tuple[str, str], IdempotencyRecord] = {}
         self.jobs: dict[str, dict[str, Any]] = {}
-        self.jobs_repository = InMemoryJobsRepository(self.jobs)
         self.documents: dict[str, dict[str, Any]] = {}
         self.document_chunks: dict[str, list[dict[str, Any]]] = {}
+        self._bind_repositories()
         self.evaluation_reports: dict[str, dict[str, Any]] = {}
         self.parse_manifests: dict[str, dict[str, Any]] = {}
         self.resume_tokens: dict[str, dict[str, Any]] = {}
@@ -73,6 +75,10 @@ class InMemoryStore:
                 "allowed_tools": ["retrieval", "evaluation", "dlq"],
             },
         }
+
+    def _bind_repositories(self) -> None:
+        self.jobs_repository = InMemoryJobsRepository(self.jobs)
+        self.documents_repository = InMemoryDocumentsRepository(self.documents, self.document_chunks)
         self._parser_registry = build_default_parser_registry(
             disabled_parsers=disabled_parsers_from_env(),
         )
@@ -131,6 +137,22 @@ class InMemoryStore:
 
     def _persist_job(self, *, job: dict[str, Any]) -> dict[str, Any]:
         return self.jobs_repository.create(job=job)
+
+    def _persist_document(self, *, document: dict[str, Any]) -> dict[str, Any]:
+        return self.documents_repository.upsert(document=document)
+
+    def _persist_document_chunks(
+        self,
+        *,
+        tenant_id: str,
+        document_id: str,
+        chunks: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        return self.documents_repository.replace_chunks(
+            tenant_id=tenant_id,
+            document_id=document_id,
+            chunks=chunks,
+        )
 
     @staticmethod
     def _select_parser(*, filename: str, doc_type: str | None) -> ParseRoute:
@@ -326,7 +348,7 @@ class InMemoryStore:
     def create_upload_job(self, payload: dict[str, Any]) -> dict[str, Any]:
         document_id = f"doc_{uuid.uuid4().hex[:12]}"
         tenant_id = payload.get("tenant_id", "tenant_default")
-        self.documents[document_id] = {
+        document = {
             "document_id": document_id,
             "tenant_id": tenant_id,
             "project_id": payload.get("project_id"),
@@ -337,7 +359,8 @@ class InMemoryStore:
             "file_size": payload.get("file_size"),
             "status": "uploaded",
         }
-        self.document_chunks[document_id] = []
+        self._persist_document(document=document)
+        self._persist_document_chunks(tenant_id=tenant_id, document_id=document_id, chunks=[])
         parse_job = self.create_parse_job(
             document_id=document_id,
             payload={
@@ -354,7 +377,7 @@ class InMemoryStore:
         }
 
     def create_parse_job(self, *, document_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-        document = self.documents.get(document_id)
+        document = self.get_document_for_tenant(document_id=document_id, tenant_id=payload.get("tenant_id", "tenant_default"))
         if document is None:
             raise ApiError(
                 code="DOC_NOT_FOUND",
@@ -409,6 +432,7 @@ class InMemoryStore:
             "error_code": None,
         }
         document["status"] = "parse_queued"
+        self._persist_document(document=document)
         self.append_outbox_event(
             tenant_id=tenant_id,
             event_type="job.created",
@@ -1735,8 +1759,11 @@ class InMemoryStore:
                     manifest["error_code"] = error_code
                     manifest["ended_at"] = self._utcnow_iso()
                 document_id = job.get("resource", {}).get("id")
-                if isinstance(document_id, str) and document_id in self.documents:
-                    self.documents[document_id]["status"] = "parse_failed"
+                if isinstance(document_id, str):
+                    document = self.get_document_for_tenant(document_id=document_id, tenant_id=tenant_id)
+                    if document is not None:
+                        document["status"] = "parse_failed"
+                        self._persist_document(document=document)
             self.append_workflow_checkpoint(
                 thread_id=thread_id,
                 job_id=job_id,
@@ -1765,10 +1792,15 @@ class InMemoryStore:
                 manifest["ended_at"] = self._utcnow_iso()
             document_id = job.get("resource", {}).get("id")
             if isinstance(document_id, str):
-                document = self.documents.get(document_id)
+                document = self.get_document_for_tenant(document_id=document_id, tenant_id=tenant_id)
                 if document is not None:
                     document["status"] = "indexed"
-                    if not self.document_chunks.get(document_id):
+                    self._persist_document(document=document)
+                    existing_chunks = self.list_document_chunks_for_tenant(
+                        document_id=document_id,
+                        tenant_id=tenant_id,
+                    )
+                    if not existing_chunks:
                         selected_parser = manifest["selected_parser"] if manifest else "mineru"
                         parser_version = manifest.get("parser_version", "v0") if manifest else "v0"
                         fallback_chain = list(manifest.get("fallback_chain", [])) if manifest else []
@@ -1783,7 +1815,11 @@ class InMemoryStore:
                             default_text="chunk generated by parse skeleton",
                         )
                         chunk["chunk_id"] = f"ck_{uuid.uuid4().hex[:12]}"
-                        self.document_chunks[document_id] = [chunk]
+                        self._persist_document_chunks(
+                            tenant_id=tenant_id,
+                            document_id=document_id,
+                            chunks=[chunk],
+                        )
                         self.register_citation_source(
                             chunk_id=chunk["chunk_id"],
                             source={
@@ -1955,6 +1991,7 @@ class SqliteBackedStore(InMemoryStore):
         strategy_config = payload.get("strategy_config")
         if isinstance(strategy_config, dict):
             self.strategy_config = strategy_config
+        self._bind_repositories()
 
     def _save_state(self) -> None:
         snapshot = self._state_snapshot()
@@ -2312,6 +2349,11 @@ class PostgresBackedStore(InMemoryStore):
         self._initialize_database()
         self._tx_runner = PostgresTxRunner(self._dsn)
         self._jobs_pg_repo = PostgresJobsRepository(tx_runner=self._tx_runner, table_name="jobs")
+        self._documents_pg_repo = PostgresDocumentsRepository(
+            tx_runner=self._tx_runner,
+            documents_table="documents",
+            chunks_table="document_chunks",
+        )
         self._load_state()
 
     def _connect(self) -> Any:
@@ -2344,6 +2386,38 @@ class PostgresBackedStore(InMemoryStore):
                     )
                     """
                 )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS documents (
+                      document_id TEXT PRIMARY KEY,
+                      tenant_id TEXT NOT NULL,
+                      project_id TEXT,
+                      supplier_id TEXT,
+                      doc_type TEXT,
+                      filename TEXT,
+                      file_sha256 TEXT,
+                      file_size BIGINT,
+                      status TEXT NOT NULL
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS document_chunks (
+                      chunk_id TEXT PRIMARY KEY,
+                      tenant_id TEXT NOT NULL,
+                      document_id TEXT NOT NULL,
+                      pages JSONB NOT NULL,
+                      positions JSONB NOT NULL,
+                      section TEXT,
+                      heading_path JSONB NOT NULL,
+                      chunk_type TEXT,
+                      parser TEXT,
+                      parser_version TEXT,
+                      text TEXT
+                    )
+                    """
+                )
             conn.commit()
 
     def _persist_job(self, *, job: dict[str, Any]) -> dict[str, Any]:
@@ -2358,6 +2432,45 @@ class PostgresBackedStore(InMemoryStore):
             self.jobs[job_id] = loaded
             return loaded
         return super().get_job_for_tenant(job_id=job_id, tenant_id=tenant_id)
+
+    def _persist_document(self, *, document: dict[str, Any]) -> dict[str, Any]:
+        saved = super()._persist_document(document=document)
+        tenant_id = str(saved.get("tenant_id") or "tenant_default")
+        self._documents_pg_repo.upsert(tenant_id=tenant_id, document=saved)
+        return saved
+
+    def _persist_document_chunks(
+        self,
+        *,
+        tenant_id: str,
+        document_id: str,
+        chunks: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        saved = super()._persist_document_chunks(
+            tenant_id=tenant_id,
+            document_id=document_id,
+            chunks=chunks,
+        )
+        self._documents_pg_repo.replace_chunks(
+            tenant_id=tenant_id,
+            document_id=document_id,
+            chunks=saved,
+        )
+        return saved
+
+    def get_document_for_tenant(self, *, document_id: str, tenant_id: str) -> dict[str, Any] | None:
+        loaded = self._documents_pg_repo.get(tenant_id=tenant_id, document_id=document_id)
+        if loaded is not None:
+            self.documents[document_id] = loaded
+            return loaded
+        return super().get_document_for_tenant(document_id=document_id, tenant_id=tenant_id)
+
+    def list_document_chunks_for_tenant(self, *, document_id: str, tenant_id: str) -> list[dict[str, Any]]:
+        loaded = self._documents_pg_repo.list_chunks(tenant_id=tenant_id, document_id=document_id)
+        if loaded:
+            self.document_chunks[document_id] = loaded
+            return loaded
+        return super().list_document_chunks_for_tenant(document_id=document_id, tenant_id=tenant_id)
 
     def _state_snapshot(self) -> dict[str, Any]:
         idempotency_records = []
@@ -2472,6 +2585,7 @@ class PostgresBackedStore(InMemoryStore):
         strategy_config = payload.get("strategy_config")
         if isinstance(strategy_config, dict):
             self.strategy_config = strategy_config
+        self._bind_repositories()
 
     def _save_state(self) -> None:
         snapshot = self._state_snapshot()
