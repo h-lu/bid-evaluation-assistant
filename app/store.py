@@ -42,6 +42,18 @@ class InMemoryStore:
         self.citation_sources: dict[str, dict[str, Any]] = {}
         self.dlq_items: dict[str, dict[str, Any]] = {}
         self.release_rollout_policies: dict[str, dict[str, Any]] = {}
+        self.counterexample_samples: dict[str, dict[str, Any]] = {}
+        self.gold_candidate_samples: dict[str, dict[str, Any]] = {}
+        self.dataset_version: str = "v1.0.0"
+        self.strategy_version_counter: int = 0
+        self.strategy_config: dict[str, Any] = {
+            "selector": {"risk_mix_threshold": 0.7, "relation_mode": "global"},
+            "score_calibration": {"confidence_scale": 1.0, "score_bias": 0.0},
+            "tool_policy": {
+                "require_double_approval_actions": ["dlq_discard"],
+                "allowed_tools": ["retrieval", "evaluation", "dlq"],
+            },
+        }
 
     def reset(self) -> None:
         self.idempotency_records.clear()
@@ -55,6 +67,18 @@ class InMemoryStore:
         self.citation_sources.clear()
         self.dlq_items.clear()
         self.release_rollout_policies.clear()
+        self.counterexample_samples.clear()
+        self.gold_candidate_samples.clear()
+        self.dataset_version = "v1.0.0"
+        self.strategy_version_counter = 0
+        self.strategy_config = {
+            "selector": {"risk_mix_threshold": 0.7, "relation_mode": "global"},
+            "score_calibration": {"confidence_scale": 1.0, "score_bias": 0.0},
+            "tool_policy": {
+                "require_double_approval_actions": ["dlq_discard"],
+                "allowed_tools": ["retrieval", "evaluation", "dlq"],
+            },
+        }
 
     @staticmethod
     def _fingerprint(payload: dict[str, Any]) -> str:
@@ -1054,6 +1078,144 @@ class InMemoryStore:
             "elapsed_minutes": 8,
             "rollback_completed_within_30m": True,
             "service_restored": replay_status == "succeeded",
+        }
+
+    @staticmethod
+    def _bump_dataset_version(version: str, bump: str) -> str:
+        match = re.fullmatch(r"v(\d+)\.(\d+)\.(\d+)", version)
+        if not match:
+            return "v1.0.0"
+        major, minor, patch = (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+        if bump == "major":
+            major += 1
+            minor = 0
+            patch = 0
+        elif bump == "minor":
+            minor += 1
+            patch = 0
+        else:
+            patch += 1
+        return f"v{major}.{minor}.{patch}"
+
+    def run_data_feedback(
+        self,
+        *,
+        release_id: str,
+        dlq_ids: list[str],
+        version_bump: str,
+        include_manual_override_candidates: bool,
+        tenant_id: str,
+        trace_id: str,
+    ) -> dict[str, Any]:
+        candidate_dlq_ids = dlq_ids or [x["dlq_id"] for x in self.list_dlq_items(tenant_id=tenant_id)]
+        counterexample_added = 0
+        for dlq_id in candidate_dlq_ids:
+            item = self.get_dlq_item(dlq_id, tenant_id=tenant_id)
+            if item is None:
+                continue
+            if dlq_id in self.counterexample_samples:
+                continue
+            self.counterexample_samples[dlq_id] = {
+                "sample_id": dlq_id,
+                "release_id": release_id,
+                "tenant_id": tenant_id,
+                "source": "dlq",
+                "job_id": item.get("job_id"),
+                "error_class": item.get("error_class"),
+                "error_code": item.get("error_code"),
+                "created_at": self._utcnow_iso(),
+            }
+            counterexample_added += 1
+
+        gold_candidates_added = 0
+        if include_manual_override_candidates:
+            for log in self.audit_logs:
+                if log.get("tenant_id") != tenant_id:
+                    continue
+                if log.get("action") != "resume_submitted":
+                    continue
+                if log.get("decision") not in {"reject", "edit_scores"}:
+                    continue
+                key = str(log.get("audit_id"))
+                if key in self.gold_candidate_samples:
+                    continue
+                self.gold_candidate_samples[key] = {
+                    "sample_id": key,
+                    "release_id": release_id,
+                    "tenant_id": tenant_id,
+                    "source": "manual_override",
+                    "evaluation_id": log.get("evaluation_id"),
+                    "decision": log.get("decision"),
+                    "created_at": self._utcnow_iso(),
+                }
+                gold_candidates_added += 1
+
+        before = self.dataset_version
+        after = self._bump_dataset_version(before, version_bump)
+        self.dataset_version = after
+        self.audit_logs.append(
+            {
+                "audit_id": f"audit_{uuid.uuid4().hex[:12]}",
+                "tenant_id": tenant_id,
+                "action": "data_feedback_run",
+                "release_id": release_id,
+                "counterexample_added": counterexample_added,
+                "gold_candidates_added": gold_candidates_added,
+                "dataset_version_before": before,
+                "dataset_version_after": after,
+                "trace_id": trace_id,
+                "occurred_at": self._utcnow_iso(),
+            }
+        )
+        return {
+            "release_id": release_id,
+            "counterexample_added": counterexample_added,
+            "gold_candidates_added": gold_candidates_added,
+            "dataset_version_before": before,
+            "dataset_version_after": after,
+        }
+
+    def apply_strategy_tuning(
+        self,
+        *,
+        release_id: str,
+        selector: dict[str, Any],
+        score_calibration: dict[str, Any],
+        tool_policy: dict[str, Any],
+        tenant_id: str,
+        trace_id: str,
+    ) -> dict[str, Any]:
+        self.strategy_config["selector"] = {
+            "risk_mix_threshold": float(selector["risk_mix_threshold"]),
+            "relation_mode": str(selector["relation_mode"]),
+        }
+        self.strategy_config["score_calibration"] = {
+            "confidence_scale": float(score_calibration["confidence_scale"]),
+            "score_bias": float(score_calibration["score_bias"]),
+        }
+        self.strategy_config["tool_policy"] = {
+            "require_double_approval_actions": list(tool_policy["require_double_approval_actions"]),
+            "allowed_tools": list(tool_policy["allowed_tools"]),
+        }
+        self.strategy_version_counter += 1
+        strategy_version = f"stg_v{self.strategy_version_counter}"
+        self.audit_logs.append(
+            {
+                "audit_id": f"audit_{uuid.uuid4().hex[:12]}",
+                "tenant_id": tenant_id,
+                "action": "strategy_tuning_applied",
+                "release_id": release_id,
+                "strategy_version": strategy_version,
+                "trace_id": trace_id,
+                "occurred_at": self._utcnow_iso(),
+            }
+        )
+        return {
+            "release_id": release_id,
+            "strategy_version": strategy_version,
+            "selector": self.strategy_config["selector"],
+            "score_calibration": self.strategy_config["score_calibration"],
+            "tool_policy": self.strategy_config["tool_policy"],
         }
 
     def run_job_once(

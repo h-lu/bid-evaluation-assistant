@@ -149,6 +149,35 @@ class RollbackExecuteRequest(BaseModel):
     breaches: list[RollbackBreach] = Field(min_length=1)
 
 
+class DataFeedbackRunRequest(BaseModel):
+    release_id: str
+    dlq_ids: list[str] = Field(default_factory=list)
+    version_bump: Literal["major", "minor", "patch"] = "patch"
+    include_manual_override_candidates: bool = True
+
+
+class StrategySelectorConfig(BaseModel):
+    risk_mix_threshold: float = Field(ge=0, le=1)
+    relation_mode: Literal["local", "global", "hybrid", "mix"]
+
+
+class StrategyScoreCalibration(BaseModel):
+    confidence_scale: float = Field(gt=0)
+    score_bias: float
+
+
+class StrategyToolPolicy(BaseModel):
+    require_double_approval_actions: list[str] = Field(default_factory=list)
+    allowed_tools: list[str] = Field(default_factory=list)
+
+
+class StrategyTuningApplyRequest(BaseModel):
+    release_id: str
+    selector: StrategySelectorConfig
+    score_calibration: StrategyScoreCalibration
+    tool_policy: StrategyToolPolicy
+
+
 def success_envelope(data: Any, trace_id: str, message: str = "ok") -> dict[str, Any]:
     return {
         "success": True,

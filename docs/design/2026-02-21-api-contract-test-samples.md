@@ -38,6 +38,8 @@
 22. `POST /api/v1/internal/release/rollout/plan`
 23. `POST /api/v1/internal/release/rollout/decision`
 24. `POST /api/v1/internal/release/rollback/execute`
+25. `POST /api/v1/internal/ops/data-feedback/run`
+26. `POST /api/v1/internal/ops/strategy-tuning/apply`
 
 ## 3. 执行约定
 
@@ -120,6 +122,9 @@
 | `CT-068` | `POST /internal/release/rollback/execute` | 回滚触发并回放 | 任一 breach 连续超阈值（默认 2 次） | `200` | 返回固定回滚顺序，且 `replay_verification.status=succeeded` |
 | `CT-069` | `POST /internal/release/rollback/execute` | 不触发回滚 | 所有 breach 未达连续阈值 | `200` | `triggered=false` 且 `replay_verification=null` |
 | `CT-070` | `POST /internal/release/(rollout|rollback)/*` | 内部接口鉴权 | 缺失 `x-internal-debug=true` | `403` | `error.code=AUTH_FORBIDDEN` |
+| `CT-071` | `POST /internal/ops/data-feedback/run` | 数据回流执行 | 提供 DLQ 样本 + 开启人审候选回流 | `200` | 反例集与黄金候选计数增加，且数据集版本号递增 |
+| `CT-072` | `POST /internal/ops/strategy-tuning/apply` | 策略优化执行 | 提供 selector/score/tool_policy 调整参数 | `200` | 返回新的 `strategy_version` 与生效参数 |
+| `CT-073` | `POST /internal/ops/(data-feedback|strategy-tuning)/*` | 内部接口鉴权 | 缺失 `x-internal-debug=true` | `403` | `error.code=AUTH_FORBIDDEN` |
 
 ## 5. 关键断言模板
 
@@ -168,6 +173,7 @@
 5. B-2 状态机运维动作（cancel/DLQ）：`CT-011/012/017/018/019/020/022`。
 6. 多租户隔离：`CT-024/025/026/032`。
 7. Gate E 灰度与回滚：`CT-064/065/066/067/068/069/070`。
+8. Gate F 运行优化：`CT-071/072/073`。
 
 ## 8. 后续自动化建议
 

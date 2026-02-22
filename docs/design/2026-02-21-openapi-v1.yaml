@@ -868,6 +868,80 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /internal/ops/data-feedback/run:
+    post:
+      operationId: internalRunDataFeedback
+      summary: Run Gate F data feedback flow and bump dataset version
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DataFeedbackRunRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataFeedbackRunResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /internal/ops/strategy-tuning/apply:
+    post:
+      operationId: internalApplyStrategyTuning
+      summary: Apply Gate F selector calibration and tool policy tuning
+      parameters:
+        - name: x-internal-debug
+          in: header
+          required: true
+          schema:
+            type: string
+            enum: ['true']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StrategyTuningApplyRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StrategyTuningApplyResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Internal endpoint forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
 components:
   securitySchemes:
     BearerAuth:
@@ -1621,6 +1695,133 @@ components:
           const: true
         data:
           $ref: '#/components/schemas/RollbackExecuteData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    DataFeedbackRunRequest:
+      type: object
+      required: [release_id, version_bump, include_manual_override_candidates]
+      properties:
+        release_id:
+          type: string
+        dlq_ids:
+          type: array
+          items:
+            type: string
+        version_bump:
+          type: string
+          enum: [major, minor, patch]
+        include_manual_override_candidates:
+          type: boolean
+
+    DataFeedbackRunData:
+      type: object
+      required:
+        [
+          release_id,
+          counterexample_added,
+          gold_candidates_added,
+          dataset_version_before,
+          dataset_version_after,
+        ]
+      properties:
+        release_id:
+          type: string
+        counterexample_added:
+          type: integer
+          minimum: 0
+        gold_candidates_added:
+          type: integer
+          minimum: 0
+        dataset_version_before:
+          type: string
+        dataset_version_after:
+          type: string
+
+    DataFeedbackRunResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/DataFeedbackRunData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    StrategySelectorConfig:
+      type: object
+      required: [risk_mix_threshold, relation_mode]
+      properties:
+        risk_mix_threshold:
+          type: number
+          minimum: 0
+          maximum: 1
+        relation_mode:
+          type: string
+          enum: [local, global, hybrid, mix]
+
+    StrategyScoreCalibration:
+      type: object
+      required: [confidence_scale, score_bias]
+      properties:
+        confidence_scale:
+          type: number
+          exclusiveMinimum: 0
+        score_bias:
+          type: number
+
+    StrategyToolPolicy:
+      type: object
+      required: [require_double_approval_actions, allowed_tools]
+      properties:
+        require_double_approval_actions:
+          type: array
+          items:
+            type: string
+        allowed_tools:
+          type: array
+          items:
+            type: string
+
+    StrategyTuningApplyRequest:
+      type: object
+      required: [release_id, selector, score_calibration, tool_policy]
+      properties:
+        release_id:
+          type: string
+        selector:
+          $ref: '#/components/schemas/StrategySelectorConfig'
+        score_calibration:
+          $ref: '#/components/schemas/StrategyScoreCalibration'
+        tool_policy:
+          $ref: '#/components/schemas/StrategyToolPolicy'
+
+    StrategyTuningApplyData:
+      type: object
+      required: [release_id, strategy_version, selector, score_calibration, tool_policy]
+      properties:
+        release_id:
+          type: string
+        strategy_version:
+          type: string
+        selector:
+          $ref: '#/components/schemas/StrategySelectorConfig'
+        score_calibration:
+          $ref: '#/components/schemas/StrategyScoreCalibration'
+        tool_policy:
+          $ref: '#/components/schemas/StrategyToolPolicy'
+
+    StrategyTuningApplyResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/StrategyTuningApplyData'
         meta:
           $ref: '#/components/schemas/Meta'
 

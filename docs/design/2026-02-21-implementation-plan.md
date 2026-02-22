@@ -266,6 +266,10 @@ Gate E 输出物：
 
 验收：连续两轮迭代指标稳定改善。
 
+Gate F 输出物：
+
+1. `docs/design/2026-02-22-gate-f-operations-optimization-checklist.md`
+
 ## 10. 轨道任务清单（可直接执行）
 
 ### T1 API 与任务系统（14项）
