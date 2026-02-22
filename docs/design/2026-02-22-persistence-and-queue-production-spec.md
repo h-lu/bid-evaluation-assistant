@@ -1,6 +1,6 @@
 # 存储与队列生产化规范
 
-> 版本：v2026.02.22-r2  
+> 版本：v2026.02.22-r3  
 > 状态：Active  
 > 对齐：`docs/plans/2026-02-22-production-capability-plan.md`
 
@@ -118,12 +118,13 @@ Worker -> Redis Queue -> Domain Executor -> PostgreSQL + Audit
 1. `POSTGRES_DSN`
 2. `POSTGRES_POOL_MIN`
 3. `POSTGRES_POOL_MAX`
-4. `REDIS_DSN`
-5. `REDIS_QUEUE_VISIBILITY_TIMEOUT_S`
-6. `IDEMPOTENCY_TTL_HOURS`
-7. `OUTBOX_POLL_INTERVAL_MS`
-8. `BEA_STORE_BACKEND`
-9. `BEA_QUEUE_BACKEND`
+4. `BEA_STORE_POSTGRES_TABLE`
+5. `REDIS_DSN`
+6. `REDIS_QUEUE_VISIBILITY_TIMEOUT_S`
+7. `IDEMPOTENCY_TTL_HOURS`
+8. `OUTBOX_POLL_INTERVAL_MS`
+9. `BEA_STORE_BACKEND`
+10. `BEA_QUEUE_BACKEND`
 
 ## 8. 测试与验证命令
 
@@ -168,3 +169,9 @@ pytest -q
 3. [ ] Redis queue 路径通过并发回归。
 4. [ ] outbox relay 幂等验证通过。
 5. [ ] 回退脚本与演练记录完成。
+
+## 13. 本轮实现更新（r2+）
+
+1. 新增 `PostgresBackedStore`，支持 `BEA_STORE_BACKEND=postgres`。
+2. `create_store_from_env` 新增 `POSTGRES_DSN` 校验与 `BEA_STORE_POSTGRES_TABLE` 配置。
+3. 新增工厂回归：`tests/test_store_persistence_backend.py` 覆盖 postgres 分支（fake driver）。

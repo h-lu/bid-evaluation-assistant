@@ -2272,12 +2272,506 @@ class SqliteBackedStore(InMemoryStore):
         return data
 
 
+def _import_psycopg() -> Any:
+    try:
+        import psycopg  # type: ignore
+    except ImportError as exc:
+        raise RuntimeError(
+            "psycopg is required for BEA_STORE_BACKEND=postgres; install psycopg[binary]"
+        ) from exc
+    return psycopg
+
+
+class PostgresBackedStore(InMemoryStore):
+    """Persistent store backend for P1 that snapshots state to PostgreSQL."""
+
+    def __init__(self, *, dsn: str, table_name: str = "bea_store_state") -> None:
+        super().__init__()
+        if not dsn.strip():
+            raise ValueError("POSTGRES_DSN must be provided for postgres store backend")
+        self._dsn = dsn.strip()
+        self._table_name = table_name.strip() or "bea_store_state"
+        self._lock = threading.RLock()
+        self._initialize_database()
+        self._load_state()
+
+    def _connect(self) -> Any:
+        psycopg = _import_psycopg()
+        return psycopg.connect(self._dsn)
+
+    def _initialize_database(self) -> None:
+        create_sql = f"""
+                CREATE TABLE IF NOT EXISTS {self._table_name} (
+                  id SMALLINT PRIMARY KEY,
+                  payload JSONB NOT NULL
+                )
+                """
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(create_sql)
+            conn.commit()
+
+    def _state_snapshot(self) -> dict[str, Any]:
+        idempotency_records = []
+        for (scope, key), record in self.idempotency_records.items():
+            idempotency_records.append(
+                {
+                    "scope": scope,
+                    "key": key,
+                    "fingerprint": record.fingerprint,
+                    "data": record.data,
+                }
+            )
+        return {
+            "schema_version": 1,
+            "idempotency_records": idempotency_records,
+            "jobs": self.jobs,
+            "documents": self.documents,
+            "document_chunks": self.document_chunks,
+            "evaluation_reports": self.evaluation_reports,
+            "parse_manifests": self.parse_manifests,
+            "resume_tokens": self.resume_tokens,
+            "audit_logs": self.audit_logs,
+            "domain_events_outbox": self.domain_events_outbox,
+            "workflow_checkpoints": self.workflow_checkpoints,
+            "citation_sources": self.citation_sources,
+            "dlq_items": self.dlq_items,
+            "release_rollout_policies": self.release_rollout_policies,
+            "release_replay_runs": self.release_replay_runs,
+            "release_readiness_assessments": self.release_readiness_assessments,
+            "counterexample_samples": self.counterexample_samples,
+            "gold_candidate_samples": self.gold_candidate_samples,
+            "dataset_version": self.dataset_version,
+            "strategy_version_counter": self.strategy_version_counter,
+            "strategy_config": self.strategy_config,
+        }
+
+    def _restore_state(self, payload: dict[str, Any]) -> None:
+        self.idempotency_records = {}
+        for row in payload.get("idempotency_records", []):
+            if not isinstance(row, dict):
+                continue
+            scope = row.get("scope")
+            key = row.get("key")
+            fingerprint = row.get("fingerprint")
+            data = row.get("data")
+            if not isinstance(scope, str) or not isinstance(key, str) or not isinstance(fingerprint, str):
+                continue
+            if not isinstance(data, dict):
+                continue
+            self.idempotency_records[(scope, key)] = IdempotencyRecord(
+                fingerprint=fingerprint,
+                data=data,
+            )
+        self.jobs = payload.get("jobs", {}) if isinstance(payload.get("jobs"), dict) else {}
+        self.documents = payload.get("documents", {}) if isinstance(payload.get("documents"), dict) else {}
+        self.document_chunks = (
+            payload.get("document_chunks", {}) if isinstance(payload.get("document_chunks"), dict) else {}
+        )
+        self.evaluation_reports = (
+            payload.get("evaluation_reports", {}) if isinstance(payload.get("evaluation_reports"), dict) else {}
+        )
+        self.parse_manifests = (
+            payload.get("parse_manifests", {}) if isinstance(payload.get("parse_manifests"), dict) else {}
+        )
+        self.resume_tokens = payload.get("resume_tokens", {}) if isinstance(payload.get("resume_tokens"), dict) else {}
+        self.audit_logs = payload.get("audit_logs", []) if isinstance(payload.get("audit_logs"), list) else []
+        self.domain_events_outbox = (
+            payload.get("domain_events_outbox", {})
+            if isinstance(payload.get("domain_events_outbox"), dict)
+            else {}
+        )
+        self.workflow_checkpoints = (
+            payload.get("workflow_checkpoints", {})
+            if isinstance(payload.get("workflow_checkpoints"), dict)
+            else {}
+        )
+        self.citation_sources = (
+            payload.get("citation_sources", {}) if isinstance(payload.get("citation_sources"), dict) else {}
+        )
+        self.dlq_items = payload.get("dlq_items", {}) if isinstance(payload.get("dlq_items"), dict) else {}
+        self.release_rollout_policies = (
+            payload.get("release_rollout_policies", {})
+            if isinstance(payload.get("release_rollout_policies"), dict)
+            else {}
+        )
+        self.release_replay_runs = (
+            payload.get("release_replay_runs", {}) if isinstance(payload.get("release_replay_runs"), dict) else {}
+        )
+        self.release_readiness_assessments = (
+            payload.get("release_readiness_assessments", {})
+            if isinstance(payload.get("release_readiness_assessments"), dict)
+            else {}
+        )
+        self.counterexample_samples = (
+            payload.get("counterexample_samples", {})
+            if isinstance(payload.get("counterexample_samples"), dict)
+            else {}
+        )
+        self.gold_candidate_samples = (
+            payload.get("gold_candidate_samples", {})
+            if isinstance(payload.get("gold_candidate_samples"), dict)
+            else {}
+        )
+        dataset_version = payload.get("dataset_version", "v1.0.0")
+        self.dataset_version = dataset_version if isinstance(dataset_version, str) else "v1.0.0"
+        strategy_version_counter = payload.get("strategy_version_counter", 0)
+        self.strategy_version_counter = (
+            int(strategy_version_counter)
+            if isinstance(strategy_version_counter, int | float | str) and str(strategy_version_counter).isdigit()
+            else 0
+        )
+        strategy_config = payload.get("strategy_config")
+        if isinstance(strategy_config, dict):
+            self.strategy_config = strategy_config
+
+    def _save_state(self) -> None:
+        snapshot = self._state_snapshot()
+        blob = json.dumps(snapshot, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
+        upsert_sql = f"""
+                    INSERT INTO {self._table_name}(id, payload)
+                    VALUES (1, %s::jsonb)
+                    ON CONFLICT(id) DO UPDATE SET payload = EXCLUDED.payload
+                    """
+        with self._lock:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(upsert_sql, (blob,))
+                conn.commit()
+
+    def _load_state(self) -> None:
+        select_sql = f"SELECT payload::text FROM {self._table_name} WHERE id = 1"
+        with self._lock:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(select_sql)
+                    row = cur.fetchone()
+        if row is None:
+            return
+        payload_raw = row[0]
+        if not isinstance(payload_raw, str):
+            return
+        try:
+            payload = json.loads(payload_raw)
+        except json.JSONDecodeError:
+            return
+        if not isinstance(payload, dict):
+            return
+        self._restore_state(payload)
+
+    def reset(self) -> None:
+        super().reset()
+        self._save_state()
+
+    def run_idempotent(
+        self,
+        *,
+        endpoint: str,
+        tenant_id: str,
+        idempotency_key: str,
+        payload: dict[str, Any],
+        execute: callable,
+    ) -> dict[str, Any]:
+        data = super().run_idempotent(
+            endpoint=endpoint,
+            tenant_id=tenant_id,
+            idempotency_key=idempotency_key,
+            payload=payload,
+            execute=execute,
+        )
+        self._save_state()
+        return data
+
+    def create_evaluation_job(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = super().create_evaluation_job(payload)
+        self._save_state()
+        return data
+
+    def create_upload_job(self, payload: dict[str, Any]) -> dict[str, Any]:
+        data = super().create_upload_job(payload)
+        self._save_state()
+        return data
+
+    def create_parse_job(self, *, document_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        data = super().create_parse_job(document_id=document_id, payload=payload)
+        self._save_state()
+        return data
+
+    def transition_job_status(
+        self,
+        *,
+        job_id: str,
+        new_status: str,
+        tenant_id: str | None = None,
+    ) -> dict[str, Any]:
+        data = super().transition_job_status(job_id=job_id, new_status=new_status, tenant_id=tenant_id)
+        self._save_state()
+        return data
+
+    def register_resume_token(
+        self,
+        *,
+        evaluation_id: str,
+        resume_token: str,
+        tenant_id: str = "tenant_default",
+        reasons: list[str] | None = None,
+    ) -> None:
+        super().register_resume_token(
+            evaluation_id=evaluation_id,
+            resume_token=resume_token,
+            tenant_id=tenant_id,
+            reasons=reasons,
+        )
+        self._save_state()
+
+    def consume_resume_token(
+        self,
+        *,
+        evaluation_id: str,
+        resume_token: str,
+        tenant_id: str,
+    ) -> bool:
+        data = super().consume_resume_token(
+            evaluation_id=evaluation_id,
+            resume_token=resume_token,
+            tenant_id=tenant_id,
+        )
+        self._save_state()
+        return data
+
+    def create_resume_job(self, *, evaluation_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        data = super().create_resume_job(evaluation_id=evaluation_id, payload=payload)
+        self._save_state()
+        return data
+
+    def append_outbox_event(
+        self,
+        *,
+        tenant_id: str,
+        event_type: str,
+        aggregate_type: str,
+        aggregate_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        data = super().append_outbox_event(
+            tenant_id=tenant_id,
+            event_type=event_type,
+            aggregate_type=aggregate_type,
+            aggregate_id=aggregate_id,
+            payload=payload,
+        )
+        self._save_state()
+        return data
+
+    def mark_outbox_event_published(self, *, tenant_id: str, event_id: str) -> dict[str, Any]:
+        data = super().mark_outbox_event_published(tenant_id=tenant_id, event_id=event_id)
+        self._save_state()
+        return data
+
+    def register_citation_source(self, *, chunk_id: str, source: dict[str, Any]) -> None:
+        super().register_citation_source(chunk_id=chunk_id, source=source)
+        self._save_state()
+
+    def seed_dlq_item(
+        self,
+        *,
+        job_id: str,
+        error_class: str,
+        error_code: str,
+        tenant_id: str = "tenant_default",
+    ) -> dict[str, Any]:
+        data = super().seed_dlq_item(
+            job_id=job_id,
+            error_class=error_class,
+            error_code=error_code,
+            tenant_id=tenant_id,
+        )
+        self._save_state()
+        return data
+
+    def requeue_dlq_item(self, *, dlq_id: str, trace_id: str | None, tenant_id: str) -> dict[str, Any]:
+        data = super().requeue_dlq_item(dlq_id=dlq_id, trace_id=trace_id, tenant_id=tenant_id)
+        self._save_state()
+        return data
+
+    def discard_dlq_item(
+        self,
+        *,
+        dlq_id: str,
+        reason: str,
+        reviewer_id: str,
+        tenant_id: str,
+    ) -> dict[str, Any]:
+        data = super().discard_dlq_item(
+            dlq_id=dlq_id,
+            reason=reason,
+            reviewer_id=reviewer_id,
+            tenant_id=tenant_id,
+        )
+        self._save_state()
+        return data
+
+    def cancel_job(self, *, job_id: str, tenant_id: str) -> dict[str, Any]:
+        data = super().cancel_job(job_id=job_id, tenant_id=tenant_id)
+        self._save_state()
+        return data
+
+    def upsert_rollout_policy(
+        self,
+        *,
+        release_id: str,
+        tenant_whitelist: list[str],
+        enabled_project_sizes: list[str],
+        high_risk_hitl_enforced: bool,
+        tenant_id: str,
+    ) -> dict[str, Any]:
+        data = super().upsert_rollout_policy(
+            release_id=release_id,
+            tenant_whitelist=tenant_whitelist,
+            enabled_project_sizes=enabled_project_sizes,
+            high_risk_hitl_enforced=high_risk_hitl_enforced,
+            tenant_id=tenant_id,
+        )
+        self._save_state()
+        return data
+
+    def execute_rollback(
+        self,
+        *,
+        release_id: str,
+        consecutive_threshold: int,
+        breaches: list[dict[str, Any]],
+        tenant_id: str,
+        trace_id: str,
+    ) -> dict[str, Any]:
+        data = super().execute_rollback(
+            release_id=release_id,
+            consecutive_threshold=consecutive_threshold,
+            breaches=breaches,
+            tenant_id=tenant_id,
+            trace_id=trace_id,
+        )
+        self._save_state()
+        return data
+
+    def run_release_replay_e2e(
+        self,
+        *,
+        release_id: str,
+        tenant_id: str,
+        trace_id: str,
+        project_id: str,
+        supplier_id: str,
+        doc_type: str = "bid",
+        force_hitl: bool = True,
+        decision: str = "approve",
+    ) -> dict[str, Any]:
+        data = super().run_release_replay_e2e(
+            release_id=release_id,
+            tenant_id=tenant_id,
+            trace_id=trace_id,
+            project_id=project_id,
+            supplier_id=supplier_id,
+            doc_type=doc_type,
+            force_hitl=force_hitl,
+            decision=decision,
+        )
+        self._save_state()
+        return data
+
+    def evaluate_release_readiness(
+        self,
+        *,
+        release_id: str,
+        tenant_id: str,
+        trace_id: str,
+        replay_passed: bool,
+        gate_results: dict[str, Any],
+    ) -> dict[str, Any]:
+        data = super().evaluate_release_readiness(
+            release_id=release_id,
+            tenant_id=tenant_id,
+            trace_id=trace_id,
+            replay_passed=replay_passed,
+            gate_results=gate_results,
+        )
+        self._save_state()
+        return data
+
+    def run_data_feedback(
+        self,
+        *,
+        release_id: str,
+        dlq_ids: list[str],
+        version_bump: str,
+        include_manual_override_candidates: bool,
+        tenant_id: str,
+        trace_id: str,
+    ) -> dict[str, Any]:
+        data = super().run_data_feedback(
+            release_id=release_id,
+            dlq_ids=dlq_ids,
+            version_bump=version_bump,
+            include_manual_override_candidates=include_manual_override_candidates,
+            tenant_id=tenant_id,
+            trace_id=trace_id,
+        )
+        self._save_state()
+        return data
+
+    def apply_strategy_tuning(
+        self,
+        *,
+        release_id: str,
+        selector: dict[str, Any],
+        score_calibration: dict[str, Any],
+        tool_policy: dict[str, Any],
+        tenant_id: str,
+        trace_id: str,
+    ) -> dict[str, Any]:
+        data = super().apply_strategy_tuning(
+            release_id=release_id,
+            selector=selector,
+            score_calibration=score_calibration,
+            tool_policy=tool_policy,
+            tenant_id=tenant_id,
+            trace_id=trace_id,
+        )
+        self._save_state()
+        return data
+
+    def run_job_once(
+        self,
+        *,
+        job_id: str,
+        tenant_id: str,
+        force_fail: bool = False,
+        transient_fail: bool = False,
+        force_error_code: str | None = None,
+    ) -> dict[str, Any]:
+        data = super().run_job_once(
+            job_id=job_id,
+            tenant_id=tenant_id,
+            force_fail=force_fail,
+            transient_fail=transient_fail,
+            force_error_code=force_error_code,
+        )
+        self._save_state()
+        return data
+
+
 def create_store_from_env(environ: Mapping[str, str] | None = None) -> InMemoryStore:
     env = os.environ if environ is None else environ
     backend = env.get("BEA_STORE_BACKEND", "memory").strip().lower()
     if backend == "sqlite":
         db_path = env.get("BEA_STORE_SQLITE_PATH", ".local/bea-store.sqlite3")
         return SqliteBackedStore(db_path)
+    if backend == "postgres":
+        dsn = env.get("POSTGRES_DSN", "").strip()
+        if not dsn:
+            raise ValueError("POSTGRES_DSN must be set when BEA_STORE_BACKEND=postgres")
+        table_name = env.get("BEA_STORE_POSTGRES_TABLE", "bea_store_state")
+        return PostgresBackedStore(dsn=dsn, table_name=table_name)
     return InMemoryStore()
 
 

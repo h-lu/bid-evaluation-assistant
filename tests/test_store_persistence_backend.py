@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.store import InMemoryStore, SqliteBackedStore, create_store_from_env
+from app.store import InMemoryStore, PostgresBackedStore, SqliteBackedStore, create_store_from_env
 
 
 def _evaluation_payload() -> dict:
@@ -68,6 +68,91 @@ def test_store_factory_uses_sqlite_backend_when_configured(monkeypatch, tmp_path
     store_reloaded = create_store_from_env()
     reloaded_job = store_reloaded.get_job_for_tenant(job_id=created["job_id"], tenant_id="tenant_store")
     assert reloaded_job is not None
+
+
+def test_store_factory_requires_postgres_dsn(monkeypatch):
+    monkeypatch.setenv("BEA_STORE_BACKEND", "postgres")
+    monkeypatch.delenv("POSTGRES_DSN", raising=False)
+    try:
+        create_store_from_env()
+    except ValueError as exc:
+        assert "POSTGRES_DSN" in str(exc)
+    else:
+        raise AssertionError("expected ValueError when POSTGRES_DSN is missing")
+
+
+def test_store_factory_uses_postgres_backend_with_fake_driver(monkeypatch):
+    shared: dict[str, str] = {}
+
+    class FakeCursor:
+        def __init__(self, state: dict[str, str]) -> None:
+            self._state = state
+            self._row = None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, query: str, params=None) -> None:
+            normalized = " ".join(query.strip().split()).lower()
+            if normalized.startswith("create table if not exists"):
+                return
+            if normalized.startswith("select payload::text from"):
+                payload = self._state.get("payload")
+                self._row = (payload,) if payload is not None else None
+                return
+            if normalized.startswith("insert into"):
+                if not params:
+                    raise AssertionError("expected payload parameter")
+                self._state["payload"] = str(params[0])
+                return
+            raise AssertionError(f"unexpected SQL: {query}")
+
+        def fetchone(self):
+            return self._row
+
+    class FakeConnection:
+        def __init__(self, state: dict[str, str]) -> None:
+            self._state = state
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def cursor(self) -> FakeCursor:
+            return FakeCursor(self._state)
+
+        def commit(self) -> None:
+            return None
+
+    class FakePsycopg:
+        def __init__(self, state: dict[str, str]) -> None:
+            self._state = state
+            self.dsns: list[str] = []
+
+        def connect(self, dsn: str) -> FakeConnection:
+            self.dsns.append(dsn)
+            return FakeConnection(self._state)
+
+    fake_psycopg = FakePsycopg(shared)
+    monkeypatch.setenv("BEA_STORE_BACKEND", "postgres")
+    monkeypatch.setenv("POSTGRES_DSN", "postgresql://test-user:test-pass@localhost:5432/bea")
+    monkeypatch.setattr("app.store._import_psycopg", lambda: fake_psycopg)
+
+    store = create_store_from_env()
+    assert isinstance(store, PostgresBackedStore)
+    payload = _evaluation_payload()
+    created = store.create_evaluation_job(payload)
+    assert created["job_id"].startswith("job_")
+
+    store_reloaded = create_store_from_env()
+    reloaded_job = store_reloaded.get_job_for_tenant(job_id=created["job_id"], tenant_id="tenant_store")
+    assert reloaded_job is not None
+    assert fake_psycopg.dsns
 
 
 def test_sqlite_store_persists_workflow_checkpoints(tmp_path: Path):
