@@ -593,6 +593,7 @@ class InMemoryStore:
         *,
         tenant_id: str,
         project_id: str,
+        supplier_id: str,
         document_id: str,
         doc_type: str,
         chunks: list[dict[str, Any]],
@@ -605,6 +606,7 @@ class InMemoryStore:
             "index_name": self._retrieval_index_name(tenant_id=tenant_id, project_id=project_id),
             "tenant_id": tenant_id,
             "project_id": project_id,
+            "supplier_id": supplier_id,
             "document_id": document_id,
             "doc_type": doc_type,
             "chunks": chunks,
@@ -3531,6 +3533,7 @@ class InMemoryStore:
                         self._maybe_index_chunks_to_lightrag(
                             tenant_id=tenant_id,
                             project_id=str(document.get("project_id") or ""),
+                            supplier_id=str(document.get("supplier_id") or ""),
                             document_id=document_id,
                             doc_type=str(document.get("doc_type") or ""),
                             chunks=persisted_chunks,
