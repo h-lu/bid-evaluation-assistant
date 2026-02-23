@@ -37,4 +37,4 @@ pytest -q tests/test_worker_runtime.py tests/test_internal_job_run.py
 
 ## 4. 结论
 
-LangGraph runtime 已接入并通过回归命令验证；兼容路径仍保留用于非真栈环境。
+LangGraph runtime 已接入并通过回归命令验证；当 `WORKFLOW_RUNTIME=langgraph` 时不再回退兼容路径。

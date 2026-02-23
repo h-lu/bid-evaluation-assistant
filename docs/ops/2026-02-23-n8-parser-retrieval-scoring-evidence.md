@@ -20,7 +20,7 @@
 1. 解析输出新增 `content_source` 并统一 bbox 归一化。
 2. parse manifest 追加 `content_source/chunk_count`（追加字段）。
 3. citation 追加 `heading_path/chunk_type/content_source`（追加字段）。
-4. HITL 触发依据 `confidence/citation_coverage/score_deviation_pct` 统一计算。
+4. HITL 触发依据 `confidence/citation_coverage/score_deviation_pct` 统一计算，并纳入红线冲突与 claim->citation 校验。
 
 ## 3. 测试命令与结果（待执行）
 

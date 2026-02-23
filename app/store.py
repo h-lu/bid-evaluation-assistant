@@ -742,6 +742,7 @@ class InMemoryStore:
         criteria_results: list[dict[str, Any]] = []
         citations_all: list[str] = []
         unsupported_claims: list[str] = []
+        redline_conflict = False
         for criteria in criteria_defs:
             if not isinstance(criteria, dict):
                 continue
@@ -772,6 +773,8 @@ class InMemoryStore:
                 }
             )
             citations_all.extend(citations)
+            if criteria.get("require_citation") and not citations:
+                unsupported_claims.append(criteria_id)
 
         for chunk_id in citations_all:
             if chunk_id not in self.citation_sources:
@@ -802,6 +805,24 @@ class InMemoryStore:
         if len(resolvable) < len(citations_all):
             for missing in (set(citations_all) - set(resolvable)):
                 unsupported_claims.append(missing)
+        if isinstance(rules, dict):
+            redlines = rules.get("redlines")
+            if isinstance(redlines, list):
+                for item in redlines:
+                    if not isinstance(item, dict):
+                        continue
+                    if item.get("violated") is True:
+                        redline_conflict = True
+                        break
+                    status = str(item.get("status") or "").strip().lower()
+                    if status in {"blocked", "violation", "failed", "conflict"}:
+                        redline_conflict = True
+                        break
+            required_doc_types = rules.get("required_doc_types")
+            if isinstance(required_doc_types, list) and required_doc_types:
+                required = {str(x).lower() for x in required_doc_types}
+                if not required.issubset(include_doc_types_normalized):
+                    redline_conflict = True
 
         total_score = sum(float(item.get("score", 0.0)) * float(item.get("weight", 1.0)) for item in criteria_results)
         max_total = sum(float(item.get("max_score", 0.0)) * float(item.get("weight", 1.0)) for item in criteria_results) or 1.0
@@ -815,7 +836,6 @@ class InMemoryStore:
         score_bias = float(score_calibration.get("score_bias", 0.0))
         confidence_avg = max(0.0, min(1.0, base_confidence * confidence_scale + score_bias))
         score_deviation_pct = abs(total_score - max_total) / max_total * 100.0
-        redline_conflict = bool(rules.get("redline_conflict", False)) if isinstance(rules, dict) else False
         needs_human_review = (
             force_hitl
             or confidence_avg < 0.65
@@ -874,6 +894,7 @@ class InMemoryStore:
             "thread_id": thread_id,
             "interrupt": interrupt_payload,
             "unsupported_claims": unsupported_claims,
+            "redline_conflict": redline_conflict,
             }
         )
         self.append_outbox_event(
@@ -1626,9 +1647,7 @@ class InMemoryStore:
 
             return "langgraph", langgraph
         except Exception as exc:
-            if true_stack_required(os.environ):
-                raise RuntimeError("langgraph runtime required but dependency is missing") from exc
-            return "compat", None
+            raise RuntimeError("langgraph runtime required but dependency is missing") from exc
 
     def _append_node_checkpoint(
         self,
