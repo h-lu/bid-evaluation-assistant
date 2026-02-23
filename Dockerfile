@@ -10,7 +10,12 @@ COPY pyproject.toml README.md /app/
 COPY app /app/app
 COPY scripts /app/scripts
 
-RUN pip install --no-cache-dir -e .
+ARG TORCH_INDEX_URL=""
+RUN if [ -n "$TORCH_INDEX_URL" ]; then \
+      PIP_EXTRA_INDEX_URL="$TORCH_INDEX_URL" pip install --no-cache-dir -e ".[s3,postgres,redis]"; \
+    else \
+      pip install --no-cache-dir -e ".[s3,postgres,redis]"; \
+    fi
 
 ENV PYTHONUNBUFFERED=1
 

@@ -36,7 +36,8 @@ services:
       dockerfile: Dockerfile
     environment:
       CHROMA_PERSIST_DIR: /data/chroma
-      EMBEDDING_MODEL_NAME: all-MiniLM-L6-v2
+      EMBEDDING_BACKEND: simple
+      EMBEDDING_DIM: "128"
     ports:
       - "8081:8081"
     command: ["uvicorn", "app.lightrag_service:app", "--host", "0.0.0.0", "--port", "8081"]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 from functools import lru_cache
 from typing import Any
@@ -9,7 +10,11 @@ from pydantic import BaseModel, Field
 
 import chromadb
 from chromadb.api import ClientAPI
-from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+
+try:
+    from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+except ImportError:  # pragma: no cover - optional dependency
+    SentenceTransformerEmbeddingFunction = None
 
 
 class IndexRequest(BaseModel):
@@ -37,8 +42,29 @@ class QueryRequest(BaseModel):
     filters: QueryFilters
 
 
+class SimpleEmbeddingFunction:
+    def __init__(self, dim: int = 128) -> None:
+        self._dim = max(8, dim)
+
+    def __call__(self, texts: list[str]) -> list[list[float]]:
+        vectors: list[list[float]] = []
+        for text in texts:
+            digest = hashlib.sha256(text.encode("utf-8")).digest()
+            raw = list(digest)
+            needed = self._dim
+            data = (raw * ((needed // len(raw)) + 1))[:needed]
+            vectors.append([x / 255.0 for x in data])
+        return vectors
+
+
 @lru_cache(maxsize=1)
-def _embedding_fn() -> SentenceTransformerEmbeddingFunction:
+def _embedding_fn():
+    backend = os.environ.get("EMBEDDING_BACKEND", "sentence-transformers").strip().lower()
+    if backend == "simple":
+        dim = int(os.environ.get("EMBEDDING_DIM", "128"))
+        return SimpleEmbeddingFunction(dim=dim)
+    if SentenceTransformerEmbeddingFunction is None:
+        raise RuntimeError("sentence-transformers is required when EMBEDDING_BACKEND is not 'simple'")
     model_name = os.environ.get("EMBEDDING_MODEL_NAME", "all-MiniLM-L6-v2")
     return SentenceTransformerEmbeddingFunction(model_name=model_name)
 
