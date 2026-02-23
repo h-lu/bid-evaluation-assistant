@@ -25,7 +25,7 @@ def _build_hs256_token(*, secret: str, claims: dict[str, object]) -> str:
 
 
 def _auth_client(monkeypatch) -> tuple[TestClient, str]:
-    shared_key = "jwt_test_key_material"
+    shared_key = "jwt_test_key_material_32bytes_min_sha256"
     monkeypatch.setenv("JWT_ISSUER", "bea.test")
     monkeypatch.setenv("JWT_AUDIENCE", "bea.api")
     monkeypatch.setenv("JWT_SHARED_SECRET", shared_key)

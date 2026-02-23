@@ -33,12 +33,12 @@ def _issue_token(*, secret: str, tenant_id: str) -> str:
 
 def test_api_write_requires_trace_id_when_strict_enabled(monkeypatch):
     monkeypatch.setenv("TRACE_ID_STRICT_REQUIRED", "true")
-    monkeypatch.setenv("JWT_SHARED_SECRET", "jwt_test_secret_trace")
+    monkeypatch.setenv("JWT_SHARED_SECRET", "jwt_test_secret_trace_32bytes_min_for_sha256")
     monkeypatch.setenv("JWT_ISSUER", "test-issuer")
     monkeypatch.setenv("JWT_AUDIENCE", "test-audience")
     monkeypatch.setenv("JWT_REQUIRED_CLAIMS", "tenant_id,sub,exp")
     client = TestClient(create_app())
-    token = _issue_token(secret="jwt_test_secret_trace", tenant_id="tenant_trace")
+    token = _issue_token(secret="jwt_test_secret_trace_32bytes_min_for_sha256", tenant_id="tenant_trace")
 
     missing = client.post(
         "/api/v1/evaluations",

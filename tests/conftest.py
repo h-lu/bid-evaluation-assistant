@@ -61,7 +61,7 @@ class AuthenticatedClient:
 def reset_store(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("BEA_OBJECT_STORAGE_BACKEND", "local")
     monkeypatch.setenv("OBJECT_STORAGE_ROOT", str(tmp_path / "object_store"))
-    monkeypatch.setenv("JWT_SHARED_SECRET", "jwt_test_secret")
+    monkeypatch.setenv("JWT_SHARED_SECRET", "jwt_test_secret_key_32bytes_min_for_sha256")
     monkeypatch.setenv("JWT_ISSUER", "test-issuer")
     monkeypatch.setenv("JWT_AUDIENCE", "test-audience")
     monkeypatch.setenv("JWT_REQUIRED_CLAIMS", "tenant_id,sub,exp")
@@ -75,4 +75,4 @@ def reset_store(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch):
 def client() -> TestClient:
     app = create_app()
     base = TestClient(app)
-    return AuthenticatedClient(base, jwt_secret="jwt_test_secret")
+    return AuthenticatedClient(base, jwt_secret="jwt_test_secret_key_32bytes_min_for_sha256")
