@@ -24,15 +24,21 @@ from app.schemas import (
     LegalHoldImposeRequest,
     LegalHoldReleaseRequest,
     PerformanceGateEvaluateRequest,
+    ProjectCreateRequest,
+    ProjectUpdateRequest,
     QualityGateEvaluateRequest,
     RollbackExecuteRequest,
     RolloutDecisionRequest,
     RolloutPlanRequest,
     RetrievalQueryRequest,
     ResumeRequest,
+    RulePackCreateRequest,
+    RulePackUpdateRequest,
     SecurityGateEvaluateRequest,
     StorageCleanupRequest,
     StrategyTuningApplyRequest,
+    SupplierCreateRequest,
+    SupplierUpdateRequest,
     error_envelope,
     success_envelope,
 )
@@ -374,6 +380,194 @@ def create_app() -> FastAPI:
         )
         return success_envelope(data, _trace_id_from_request(request))
 
+    @app.get("/api/v1/projects")
+    def list_projects(request: Request):
+        items = store.list_projects(tenant_id=_tenant_id_from_request(request))
+        return success_envelope({"items": items, "total": len(items)}, _trace_id_from_request(request))
+
+    @app.post("/api/v1/projects")
+    def create_project(
+        payload: ProjectCreateRequest,
+        request: Request,
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    ):
+        if not idempotency_key:
+            raise ApiError(
+                code="IDEMPOTENCY_MISSING",
+                message="Idempotency-Key header is required",
+                error_class="validation",
+                retryable=False,
+                http_status=400,
+            )
+        req_payload = payload.model_dump()
+        req_payload["tenant_id"] = _tenant_id_from_request(request)
+        data = store.run_idempotent(
+            endpoint="POST:/api/v1/projects",
+            tenant_id=_tenant_id_from_request(request),
+            idempotency_key=idempotency_key,
+            payload=req_payload,
+            execute=lambda: store.create_project(payload=req_payload),
+        )
+        return JSONResponse(status_code=201, content=success_envelope(data, _trace_id_from_request(request)))
+
+    @app.get("/api/v1/projects/{project_id}")
+    def get_project(project_id: str, request: Request):
+        project = store.get_project_for_tenant(project_id=project_id, tenant_id=_tenant_id_from_request(request))
+        if project is None:
+            raise ApiError(
+                code="PROJECT_NOT_FOUND",
+                message="project not found",
+                error_class="validation",
+                retryable=False,
+                http_status=404,
+            )
+        return success_envelope(project, _trace_id_from_request(request))
+
+    @app.put("/api/v1/projects/{project_id}")
+    def update_project(
+        project_id: str,
+        payload: ProjectUpdateRequest,
+        request: Request,
+    ):
+        data = store.update_project(
+            project_id=project_id,
+            tenant_id=_tenant_id_from_request(request),
+            payload=payload.model_dump(exclude_unset=True),
+        )
+        return success_envelope(data, _trace_id_from_request(request))
+
+    @app.delete("/api/v1/projects/{project_id}")
+    def delete_project(project_id: str, request: Request):
+        data = store.delete_project(project_id=project_id, tenant_id=_tenant_id_from_request(request))
+        return success_envelope(data, _trace_id_from_request(request))
+
+    @app.get("/api/v1/suppliers")
+    def list_suppliers(request: Request):
+        items = store.list_suppliers(tenant_id=_tenant_id_from_request(request))
+        return success_envelope({"items": items, "total": len(items)}, _trace_id_from_request(request))
+
+    @app.post("/api/v1/suppliers")
+    def create_supplier(
+        payload: SupplierCreateRequest,
+        request: Request,
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    ):
+        if not idempotency_key:
+            raise ApiError(
+                code="IDEMPOTENCY_MISSING",
+                message="Idempotency-Key header is required",
+                error_class="validation",
+                retryable=False,
+                http_status=400,
+            )
+        req_payload = payload.model_dump()
+        req_payload["tenant_id"] = _tenant_id_from_request(request)
+        data = store.run_idempotent(
+            endpoint="POST:/api/v1/suppliers",
+            tenant_id=_tenant_id_from_request(request),
+            idempotency_key=idempotency_key,
+            payload=req_payload,
+            execute=lambda: store.create_supplier(payload=req_payload),
+        )
+        return JSONResponse(status_code=201, content=success_envelope(data, _trace_id_from_request(request)))
+
+    @app.get("/api/v1/suppliers/{supplier_id}")
+    def get_supplier(supplier_id: str, request: Request):
+        supplier = store.get_supplier_for_tenant(
+            supplier_id=supplier_id, tenant_id=_tenant_id_from_request(request)
+        )
+        if supplier is None:
+            raise ApiError(
+                code="SUPPLIER_NOT_FOUND",
+                message="supplier not found",
+                error_class="validation",
+                retryable=False,
+                http_status=404,
+            )
+        return success_envelope(supplier, _trace_id_from_request(request))
+
+    @app.put("/api/v1/suppliers/{supplier_id}")
+    def update_supplier(
+        supplier_id: str,
+        payload: SupplierUpdateRequest,
+        request: Request,
+    ):
+        data = store.update_supplier(
+            supplier_id=supplier_id,
+            tenant_id=_tenant_id_from_request(request),
+            payload=payload.model_dump(exclude_unset=True),
+        )
+        return success_envelope(data, _trace_id_from_request(request))
+
+    @app.delete("/api/v1/suppliers/{supplier_id}")
+    def delete_supplier(supplier_id: str, request: Request):
+        data = store.delete_supplier(supplier_id=supplier_id, tenant_id=_tenant_id_from_request(request))
+        return success_envelope(data, _trace_id_from_request(request))
+
+    @app.get("/api/v1/rules")
+    def list_rule_packs(request: Request):
+        items = store.list_rule_packs(tenant_id=_tenant_id_from_request(request))
+        return success_envelope({"items": items, "total": len(items)}, _trace_id_from_request(request))
+
+    @app.post("/api/v1/rules")
+    def create_rule_pack(
+        payload: RulePackCreateRequest,
+        request: Request,
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    ):
+        if not idempotency_key:
+            raise ApiError(
+                code="IDEMPOTENCY_MISSING",
+                message="Idempotency-Key header is required",
+                error_class="validation",
+                retryable=False,
+                http_status=400,
+            )
+        req_payload = payload.model_dump()
+        req_payload["tenant_id"] = _tenant_id_from_request(request)
+        data = store.run_idempotent(
+            endpoint="POST:/api/v1/rules",
+            tenant_id=_tenant_id_from_request(request),
+            idempotency_key=idempotency_key,
+            payload=req_payload,
+            execute=lambda: store.create_rule_pack(payload=req_payload),
+        )
+        return JSONResponse(status_code=201, content=success_envelope(data, _trace_id_from_request(request)))
+
+    @app.get("/api/v1/rules/{rule_pack_version}")
+    def get_rule_pack(rule_pack_version: str, request: Request):
+        rule_pack = store.get_rule_pack_for_tenant(
+            rule_pack_version=rule_pack_version,
+            tenant_id=_tenant_id_from_request(request),
+        )
+        if rule_pack is None:
+            raise ApiError(
+                code="RULE_PACK_NOT_FOUND",
+                message="rule pack not found",
+                error_class="validation",
+                retryable=False,
+                http_status=404,
+            )
+        return success_envelope(rule_pack, _trace_id_from_request(request))
+
+    @app.put("/api/v1/rules/{rule_pack_version}")
+    def update_rule_pack(
+        rule_pack_version: str,
+        payload: RulePackUpdateRequest,
+        request: Request,
+    ):
+        data = store.update_rule_pack(
+            rule_pack_version=rule_pack_version,
+            tenant_id=_tenant_id_from_request(request),
+            payload=payload.model_dump(exclude_unset=True),
+        )
+        return success_envelope(data, _trace_id_from_request(request))
+
+    @app.delete("/api/v1/rules/{rule_pack_version}")
+    def delete_rule_pack(rule_pack_version: str, request: Request):
+        data = store.delete_rule_pack(rule_pack_version=rule_pack_version, tenant_id=_tenant_id_from_request(request))
+        return success_envelope(data, _trace_id_from_request(request))
+
     @app.post("/api/v1/documents/upload")
     async def upload_document(
         request: Request,
@@ -408,7 +602,11 @@ def create_app() -> FastAPI:
             tenant_id=_tenant_id_from_request(request),
             idempotency_key=idempotency_key,
             payload=payload,
-            execute=lambda: store.create_upload_job(payload),
+            execute=lambda: store.create_upload_job(
+                payload,
+                file_bytes=file_bytes,
+                content_type=file.content_type,
+            ),
         )
         return JSONResponse(
             status_code=202,

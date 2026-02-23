@@ -16,6 +16,7 @@ from urllib import request
 from urllib.error import URLError
 
 from app.errors import ApiError
+from app.object_storage import build_report_filename, create_object_storage_from_env
 from app.parser_adapters import (
     ParseRoute,
     build_default_parser_registry,
@@ -36,6 +37,12 @@ from app.repositories.jobs import InMemoryJobsRepository
 from app.repositories.jobs import PostgresJobsRepository
 from app.repositories.parse_manifests import InMemoryParseManifestsRepository
 from app.repositories.parse_manifests import PostgresParseManifestsRepository
+from app.repositories.projects import InMemoryProjectsRepository
+from app.repositories.projects import PostgresProjectsRepository
+from app.repositories.rule_packs import InMemoryRulePacksRepository
+from app.repositories.rule_packs import PostgresRulePacksRepository
+from app.repositories.suppliers import InMemorySuppliersRepository
+from app.repositories.suppliers import PostgresSuppliersRepository
 from app.repositories.workflow_checkpoints import InMemoryWorkflowCheckpointsRepository
 from app.repositories.workflow_checkpoints import PostgresWorkflowCheckpointsRepository
 from app.runtime_profile import true_stack_required
@@ -88,10 +95,14 @@ class InMemoryStore:
         self.release_canary_duration_min = self._env_int("RELEASE_CANARY_DURATION_MIN", default=30, minimum=1)
         self.rollback_max_minutes = self._env_int("ROLLBACK_MAX_MINUTES", default=30, minimum=1)
         self.p6_readiness_required = self._env_bool("P6_READINESS_REQUIRED", default=True)
+        self.object_storage = create_object_storage_from_env(os.environ)
         self.idempotency_records: dict[tuple[str, str], IdempotencyRecord] = {}
         self.jobs: dict[str, dict[str, Any]] = {}
         self.documents: dict[str, dict[str, Any]] = {}
         self.document_chunks: dict[str, list[dict[str, Any]]] = {}
+        self.projects: dict[str, dict[str, Any]] = {}
+        self.suppliers: dict[str, dict[str, Any]] = {}
+        self.rule_packs: dict[str, dict[str, Any]] = {}
         self.evaluation_reports: dict[str, dict[str, Any]] = {}
         self.parse_manifests: dict[str, dict[str, Any]] = {}
         self.resume_tokens: dict[str, dict[str, Any]] = {}
@@ -162,6 +173,9 @@ class InMemoryStore:
         self.jobs_repository = InMemoryJobsRepository(self.jobs)
         self.documents_repository = InMemoryDocumentsRepository(self.documents, self.document_chunks)
         self.parse_manifests_repository = InMemoryParseManifestsRepository(self.parse_manifests)
+        self.projects_repository = InMemoryProjectsRepository(self.projects)
+        self.suppliers_repository = InMemorySuppliersRepository(self.suppliers)
+        self.rule_packs_repository = InMemoryRulePacksRepository(self.rule_packs)
         self.evaluation_reports_repository = InMemoryEvaluationReportsRepository(self.evaluation_reports)
         self.audit_repository = InMemoryAuditLogsRepository(self.audit_logs)
         self.dlq_repository = InMemoryDlqItemsRepository(self.dlq_items)
@@ -172,10 +186,17 @@ class InMemoryStore:
         )
 
     def reset(self) -> None:
+        self.object_storage = create_object_storage_from_env(os.environ)
+        reset_fn = getattr(self.object_storage, "reset", None)
+        if callable(reset_fn):
+            reset_fn()
         self.idempotency_records.clear()
         self.jobs.clear()
         self.documents.clear()
         self.document_chunks.clear()
+        self.projects.clear()
+        self.suppliers.clear()
+        self.rule_packs.clear()
         self.evaluation_reports.clear()
         self.parse_manifests.clear()
         self.resume_tokens.clear()
@@ -275,7 +296,37 @@ class InMemoryStore:
         return self.parse_manifests_repository.upsert(manifest=manifest)
 
     def _persist_evaluation_report(self, *, report: dict[str, Any]) -> dict[str, Any]:
-        return self.evaluation_reports_repository.upsert(report=report)
+        archived = self._archive_report_to_object_storage(report=report)
+        return self.evaluation_reports_repository.upsert(report=archived)
+
+    def _archive_report_to_object_storage(self, *, report: dict[str, Any]) -> dict[str, Any]:
+        item = dict(report)
+        evaluation_id = str(item.get("evaluation_id") or "")
+        tenant_id = str(item.get("tenant_id") or "tenant_default")
+        if not evaluation_id:
+            return item
+        filename = build_report_filename(report_payload=item)
+        payload = dict(item)
+        payload.pop("report_uri", None)
+        blob = json.dumps(payload, ensure_ascii=True, sort_keys=True).encode("utf-8")
+        storage_uri = self.object_storage.put_object(
+            tenant_id=tenant_id,
+            object_type="report",
+            object_id=evaluation_id,
+            filename=filename,
+            content_bytes=blob,
+            content_type="application/json",
+        )
+        active_hold = self._find_active_legal_hold(
+            tenant_id=tenant_id,
+            object_type="report",
+            object_id=evaluation_id,
+        )
+        if active_hold is not None:
+            active_hold["storage_uri"] = storage_uri
+            self.object_storage.apply_legal_hold(storage_uri=storage_uri)
+        item["report_uri"] = storage_uri
+        return item
 
     @staticmethod
     def _compute_audit_hash(*, log: dict[str, Any], prev_hash: str) -> str:
@@ -755,9 +806,33 @@ class InMemoryStore:
             "status": "queued",
         }
 
-    def create_upload_job(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def create_upload_job(
+        self,
+        payload: dict[str, Any],
+        *,
+        file_bytes: bytes | None = None,
+        content_type: str | None = None,
+    ) -> dict[str, Any]:
         document_id = f"doc_{uuid.uuid4().hex[:12]}"
         tenant_id = payload.get("tenant_id", "tenant_default")
+        storage_uri = None
+        if file_bytes is not None:
+            storage_uri = self.object_storage.put_object(
+                tenant_id=tenant_id,
+                object_type="document",
+                object_id=document_id,
+                filename=str(payload.get("filename") or "upload.bin"),
+                content_bytes=file_bytes,
+                content_type=content_type or "application/octet-stream",
+            )
+            active_hold = self._find_active_legal_hold(
+                tenant_id=tenant_id,
+                object_type="document",
+                object_id=document_id,
+            )
+            if active_hold is not None:
+                active_hold["storage_uri"] = storage_uri
+                self.object_storage.apply_legal_hold(storage_uri=storage_uri)
         document = {
             "document_id": document_id,
             "tenant_id": tenant_id,
@@ -768,6 +843,7 @@ class InMemoryStore:
             "file_sha256": payload.get("file_sha256"),
             "file_size": payload.get("file_size"),
             "status": "uploaded",
+            "storage_uri": storage_uri,
         }
         self._persist_document(document=document)
         self._persist_document_chunks(tenant_id=tenant_id, document_id=document_id, chunks=[])
@@ -882,6 +958,236 @@ class InMemoryStore:
             )
         return list(self.document_chunks.get(document_id, []))
 
+    def create_project(self, *, payload: dict[str, Any]) -> dict[str, Any]:
+        tenant_id = payload.get("tenant_id", "tenant_default")
+        project_code = str(payload.get("project_code") or "").strip()
+        name = str(payload.get("name") or "").strip()
+        if not project_code or not name:
+            raise ApiError(
+                code="REQ_VALIDATION_FAILED",
+                message="project_code and name are required",
+                error_class="validation",
+                retryable=False,
+                http_status=400,
+            )
+        existing = self.projects_repository.get_by_code(tenant_id=tenant_id, project_code=project_code)
+        if existing is not None:
+            return existing
+        now = self._utcnow_iso()
+        project = {
+            "project_id": f"prj_{uuid.uuid4().hex[:12]}",
+            "tenant_id": tenant_id,
+            "project_code": project_code,
+            "name": name,
+            "ruleset_version": str(payload.get("ruleset_version") or "v1.0.0"),
+            "status": str(payload.get("status") or "active"),
+            "created_at": now,
+            "updated_at": now,
+        }
+        saved = self.projects_repository.upsert(project=project)
+        self.projects[str(saved.get("project_id") or project["project_id"])] = saved
+        return saved
+
+    def list_projects(self, *, tenant_id: str) -> list[dict[str, Any]]:
+        return self.projects_repository.list(tenant_id=tenant_id)
+
+    def get_project_for_tenant(self, *, project_id: str, tenant_id: str) -> dict[str, Any] | None:
+        return self.projects_repository.get(tenant_id=tenant_id, project_id=project_id)
+
+    def update_project(
+        self,
+        *,
+        project_id: str,
+        tenant_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        project = self.get_project_for_tenant(project_id=project_id, tenant_id=tenant_id)
+        if project is None:
+            raise ApiError(
+                code="PROJECT_NOT_FOUND",
+                message="project not found",
+                error_class="validation",
+                retryable=False,
+                http_status=404,
+            )
+        if payload.get("name") is not None:
+            project["name"] = str(payload.get("name") or "").strip() or project["name"]
+        if payload.get("ruleset_version") is not None:
+            project["ruleset_version"] = str(payload.get("ruleset_version") or "").strip() or project["ruleset_version"]
+        if payload.get("status") is not None:
+            project["status"] = str(payload.get("status") or "").strip() or project["status"]
+        project["updated_at"] = self._utcnow_iso()
+        saved = self.projects_repository.upsert(project=project)
+        self.projects[str(saved.get("project_id") or project_id)] = saved
+        return saved
+
+    def delete_project(self, *, project_id: str, tenant_id: str) -> dict[str, Any]:
+        deleted = self.projects_repository.delete(tenant_id=tenant_id, project_id=project_id)
+        if not deleted:
+            raise ApiError(
+                code="PROJECT_NOT_FOUND",
+                message="project not found",
+                error_class="validation",
+                retryable=False,
+                http_status=404,
+            )
+        self.projects.pop(project_id, None)
+        return {"project_id": project_id, "deleted": True}
+
+    def create_supplier(self, *, payload: dict[str, Any]) -> dict[str, Any]:
+        tenant_id = payload.get("tenant_id", "tenant_default")
+        supplier_code = str(payload.get("supplier_code") or "").strip()
+        name = str(payload.get("name") or "").strip()
+        if not supplier_code or not name:
+            raise ApiError(
+                code="REQ_VALIDATION_FAILED",
+                message="supplier_code and name are required",
+                error_class="validation",
+                retryable=False,
+                http_status=400,
+            )
+        existing = self.suppliers_repository.get_by_code(tenant_id=tenant_id, supplier_code=supplier_code)
+        if existing is not None:
+            return existing
+        now = self._utcnow_iso()
+        supplier = {
+            "supplier_id": f"sup_{uuid.uuid4().hex[:12]}",
+            "tenant_id": tenant_id,
+            "supplier_code": supplier_code,
+            "name": name,
+            "qualification": payload.get("qualification") or {},
+            "risk_flags": payload.get("risk_flags") or {},
+            "status": str(payload.get("status") or "active"),
+            "created_at": now,
+            "updated_at": now,
+        }
+        saved = self.suppliers_repository.upsert(supplier=supplier)
+        self.suppliers[str(saved.get("supplier_id") or supplier["supplier_id"])] = saved
+        return saved
+
+    def list_suppliers(self, *, tenant_id: str) -> list[dict[str, Any]]:
+        return self.suppliers_repository.list(tenant_id=tenant_id)
+
+    def get_supplier_for_tenant(self, *, supplier_id: str, tenant_id: str) -> dict[str, Any] | None:
+        return self.suppliers_repository.get(tenant_id=tenant_id, supplier_id=supplier_id)
+
+    def update_supplier(
+        self,
+        *,
+        supplier_id: str,
+        tenant_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        supplier = self.get_supplier_for_tenant(supplier_id=supplier_id, tenant_id=tenant_id)
+        if supplier is None:
+            raise ApiError(
+                code="SUPPLIER_NOT_FOUND",
+                message="supplier not found",
+                error_class="validation",
+                retryable=False,
+                http_status=404,
+            )
+        if payload.get("name") is not None:
+            supplier["name"] = str(payload.get("name") or "").strip() or supplier["name"]
+        if payload.get("qualification") is not None:
+            supplier["qualification"] = payload.get("qualification") or {}
+        if payload.get("risk_flags") is not None:
+            supplier["risk_flags"] = payload.get("risk_flags") or {}
+        if payload.get("status") is not None:
+            supplier["status"] = str(payload.get("status") or "").strip() or supplier["status"]
+        supplier["updated_at"] = self._utcnow_iso()
+        saved = self.suppliers_repository.upsert(supplier=supplier)
+        self.suppliers[str(saved.get("supplier_id") or supplier_id)] = saved
+        return saved
+
+    def delete_supplier(self, *, supplier_id: str, tenant_id: str) -> dict[str, Any]:
+        deleted = self.suppliers_repository.delete(tenant_id=tenant_id, supplier_id=supplier_id)
+        if not deleted:
+            raise ApiError(
+                code="SUPPLIER_NOT_FOUND",
+                message="supplier not found",
+                error_class="validation",
+                retryable=False,
+                http_status=404,
+            )
+        self.suppliers.pop(supplier_id, None)
+        return {"supplier_id": supplier_id, "deleted": True}
+
+    def create_rule_pack(self, *, payload: dict[str, Any]) -> dict[str, Any]:
+        tenant_id = payload.get("tenant_id", "tenant_default")
+        version = str(payload.get("rule_pack_version") or "").strip()
+        name = str(payload.get("name") or "").strip()
+        if not version or not name:
+            raise ApiError(
+                code="REQ_VALIDATION_FAILED",
+                message="rule_pack_version and name are required",
+                error_class="validation",
+                retryable=False,
+                http_status=400,
+            )
+        existing = self.rule_packs_repository.get(tenant_id=tenant_id, rule_pack_version=version)
+        if existing is not None:
+            return existing
+        now = self._utcnow_iso()
+        rule_pack = {
+            "rule_pack_version": version,
+            "tenant_id": tenant_id,
+            "name": name,
+            "status": str(payload.get("status") or "active"),
+            "rules": payload.get("rules") or {},
+            "created_at": now,
+            "updated_at": now,
+        }
+        saved = self.rule_packs_repository.upsert(rule_pack=rule_pack)
+        self.rule_packs[str(saved.get("rule_pack_version") or rule_pack["rule_pack_version"])] = saved
+        return saved
+
+    def list_rule_packs(self, *, tenant_id: str) -> list[dict[str, Any]]:
+        return self.rule_packs_repository.list(tenant_id=tenant_id)
+
+    def get_rule_pack_for_tenant(self, *, rule_pack_version: str, tenant_id: str) -> dict[str, Any] | None:
+        return self.rule_packs_repository.get(tenant_id=tenant_id, rule_pack_version=rule_pack_version)
+
+    def update_rule_pack(
+        self,
+        *,
+        rule_pack_version: str,
+        tenant_id: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        rule_pack = self.get_rule_pack_for_tenant(rule_pack_version=rule_pack_version, tenant_id=tenant_id)
+        if rule_pack is None:
+            raise ApiError(
+                code="RULE_PACK_NOT_FOUND",
+                message="rule pack not found",
+                error_class="validation",
+                retryable=False,
+                http_status=404,
+            )
+        if payload.get("name") is not None:
+            rule_pack["name"] = str(payload.get("name") or "").strip() or rule_pack["name"]
+        if payload.get("status") is not None:
+            rule_pack["status"] = str(payload.get("status") or "").strip() or rule_pack["status"]
+        if payload.get("rules") is not None:
+            rule_pack["rules"] = payload.get("rules") or {}
+        rule_pack["updated_at"] = self._utcnow_iso()
+        saved = self.rule_packs_repository.upsert(rule_pack=rule_pack)
+        self.rule_packs[str(saved.get("rule_pack_version") or rule_pack_version)] = saved
+        return saved
+
+    def delete_rule_pack(self, *, rule_pack_version: str, tenant_id: str) -> dict[str, Any]:
+        deleted = self.rule_packs_repository.delete(tenant_id=tenant_id, rule_pack_version=rule_pack_version)
+        if not deleted:
+            raise ApiError(
+                code="RULE_PACK_NOT_FOUND",
+                message="rule pack not found",
+                error_class="validation",
+                retryable=False,
+                http_status=404,
+            )
+        self.rule_packs.pop(rule_pack_version, None)
+        return {"rule_pack_version": rule_pack_version, "deleted": True}
+
     def get_job(self, job_id: str) -> dict[str, Any] | None:
         return self.jobs.get(job_id)
 
@@ -928,6 +1234,7 @@ class InMemoryStore:
             "needs_human_review": report["needs_human_review"],
             "trace_id": report["trace_id"],
             "interrupt": report.get("interrupt"),
+            "report_uri": report.get("report_uri"),
         }
 
     def transition_job_status(
@@ -1137,6 +1444,231 @@ class InMemoryStore:
             tenant_id=tenant_id,
             limit=limit,
         )
+
+    def _workflow_runtime_mode(self) -> tuple[str, object | None]:
+        mode = os.environ.get("WORKFLOW_RUNTIME", "langgraph").strip().lower() or "langgraph"
+        if mode != "langgraph":
+            return mode, None
+        try:
+            import langgraph  # type: ignore
+
+            return "langgraph", langgraph
+        except Exception as exc:
+            if true_stack_required(os.environ):
+                raise RuntimeError("langgraph runtime required but dependency is missing") from exc
+            return "compat", None
+
+    def _append_node_checkpoint(
+        self,
+        *,
+        thread_id: str,
+        job_id: str,
+        tenant_id: str,
+        node: str,
+        status: str = "succeeded",
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        self.append_workflow_checkpoint(
+            thread_id=thread_id,
+            job_id=job_id,
+            tenant_id=tenant_id,
+            node=node,
+            status=status,
+            payload=payload or {},
+        )
+
+    def _run_evaluation_workflow(
+        self,
+        *,
+        job: dict[str, Any],
+        tenant_id: str,
+    ) -> dict[str, Any]:
+        evaluation_id = str(job.get("resource", {}).get("id") or "")
+        thread_id = str(job.get("thread_id") or self._new_thread_id("eval"))
+        trace_id = str(job.get("trace_id") or "")
+        report: dict[str, Any] | None = None
+        if evaluation_id:
+            report = self.evaluation_reports.get(evaluation_id)
+            if report is None:
+                report = self.get_evaluation_report_for_tenant(evaluation_id=evaluation_id, tenant_id=tenant_id)
+        needs_human_review = bool(report.get("needs_human_review", False)) if isinstance(report, dict) else False
+        interrupt_payload = report.get("interrupt") if isinstance(report, dict) else None
+
+        def _base_state() -> dict[str, Any]:
+            return {
+                "identity": {
+                    "tenant_id": tenant_id,
+                    "evaluation_id": evaluation_id,
+                    "project_id": report.get("project_id") if isinstance(report, dict) else None,
+                    "supplier_id": report.get("supplier_id") if isinstance(report, dict) else None,
+                },
+                "trace": {"trace_id": trace_id, "thread_id": thread_id},
+                "review": {
+                    "requires_human_review": needs_human_review,
+                    "human_review_payload": interrupt_payload,
+                },
+                "output": {"status": "running"},
+            }
+
+        if needs_human_review:
+            self._append_node_checkpoint(
+                thread_id=thread_id,
+                job_id=str(job.get("job_id") or ""),
+                tenant_id=tenant_id,
+                node="load_context",
+            )
+            self._append_node_checkpoint(
+                thread_id=thread_id,
+                job_id=str(job.get("job_id") or ""),
+                tenant_id=tenant_id,
+                node="retrieve_evidence",
+            )
+            self._append_node_checkpoint(
+                thread_id=thread_id,
+                job_id=str(job.get("job_id") or ""),
+                tenant_id=tenant_id,
+                node="evaluate_rules",
+            )
+            self._append_node_checkpoint(
+                thread_id=thread_id,
+                job_id=str(job.get("job_id") or ""),
+                tenant_id=tenant_id,
+                node="score_with_llm",
+            )
+            self._append_node_checkpoint(
+                thread_id=thread_id,
+                job_id=str(job.get("job_id") or ""),
+                tenant_id=tenant_id,
+                node="quality_gate",
+                status="hitl",
+                payload={"decision": "hitl"},
+            )
+            self._append_node_checkpoint(
+                thread_id=thread_id,
+                job_id=str(job.get("job_id") or ""),
+                tenant_id=tenant_id,
+                node="human_review_interrupt",
+                status="needs_manual_decision",
+                payload=interrupt_payload if isinstance(interrupt_payload, dict) else {},
+            )
+            job = self.transition_job_status(
+                job_id=str(job.get("job_id") or ""),
+                new_status="needs_manual_decision",
+                tenant_id=tenant_id,
+            )
+            return {
+                "job_id": str(job.get("job_id") or ""),
+                "final_status": "needs_manual_decision",
+                "thread_id": thread_id,
+                "evaluation_id": evaluation_id,
+            }
+
+        mode, langgraph_module = self._workflow_runtime_mode()
+        state = _base_state()
+
+        def _node(name: str, payload: dict[str, Any] | None = None):
+            def _inner(current: dict[str, Any]) -> dict[str, Any]:
+                self._append_node_checkpoint(
+                    thread_id=thread_id,
+                    job_id=str(job.get("job_id") or ""),
+                    tenant_id=tenant_id,
+                    node=name,
+                    payload=payload,
+                )
+                return current
+
+            return _inner
+
+        if mode == "langgraph" and langgraph_module is not None:
+            try:
+                from langgraph.graph import END, StateGraph  # type: ignore
+
+                graph = StateGraph(dict)
+                graph.add_node("load_context", _node("load_context"))
+                graph.add_node("retrieve_evidence", _node("retrieve_evidence"))
+                graph.add_node("evaluate_rules", _node("evaluate_rules"))
+                graph.add_node("score_with_llm", _node("score_with_llm"))
+                graph.add_node("quality_gate", _node("quality_gate", {"decision": "pass"}))
+                graph.add_node("finalize_report", _node("finalize_report"))
+                graph.add_node("persist_result", _node("persist_result"))
+                graph.set_entry_point("load_context")
+                graph.add_edge("load_context", "retrieve_evidence")
+                graph.add_edge("retrieve_evidence", "evaluate_rules")
+                graph.add_edge("evaluate_rules", "score_with_llm")
+                graph.add_edge("score_with_llm", "quality_gate")
+                graph.add_edge("quality_gate", "finalize_report")
+                graph.add_edge("finalize_report", "persist_result")
+                graph.add_edge("persist_result", END)
+                compiled = graph.compile()
+                compiled.invoke(state, config={"configurable": {"thread_id": thread_id}})
+            except Exception:
+                mode = "compat"
+
+        if mode != "langgraph":
+            for node in [
+                "load_context",
+                "retrieve_evidence",
+                "evaluate_rules",
+                "score_with_llm",
+                "quality_gate",
+                "finalize_report",
+                "persist_result",
+            ]:
+                self._append_node_checkpoint(
+                    thread_id=thread_id,
+                    job_id=str(job.get("job_id") or ""),
+                    tenant_id=tenant_id,
+                    node=node,
+                )
+
+        job = self.transition_job_status(
+            job_id=str(job.get("job_id") or ""),
+            new_status="succeeded",
+            tenant_id=tenant_id,
+        )
+        return {
+            "job_id": str(job.get("job_id") or ""),
+            "final_status": "succeeded",
+            "thread_id": thread_id,
+            "evaluation_id": evaluation_id,
+        }
+
+    def _run_resume_workflow(
+        self,
+        *,
+        job: dict[str, Any],
+        tenant_id: str,
+    ) -> dict[str, Any]:
+        thread_id = str(job.get("thread_id") or self._new_thread_id("resume"))
+        job_id = str(job.get("job_id") or "")
+        self._append_node_checkpoint(
+            thread_id=thread_id,
+            job_id=job_id,
+            tenant_id=tenant_id,
+            node="resume_received",
+        )
+        self._append_node_checkpoint(
+            thread_id=thread_id,
+            job_id=job_id,
+            tenant_id=tenant_id,
+            node="finalize_report",
+        )
+        self._append_node_checkpoint(
+            thread_id=thread_id,
+            job_id=job_id,
+            tenant_id=tenant_id,
+            node="persist_result",
+        )
+        job = self.transition_job_status(
+            job_id=job_id,
+            new_status="succeeded",
+            tenant_id=tenant_id,
+        )
+        return {
+            "job_id": job_id,
+            "final_status": "succeeded",
+            "thread_id": thread_id,
+        }
 
     def append_outbox_event(
         self,
@@ -1597,6 +2129,27 @@ class InMemoryStore:
                 return hold
         return None
 
+    def _resolve_storage_uri(
+        self,
+        *,
+        tenant_id: str,
+        object_type: str,
+        object_id: str,
+    ) -> str | None:
+        if object_type == "document":
+            doc = self.get_document_for_tenant(document_id=object_id, tenant_id=tenant_id)
+            if isinstance(doc, dict):
+                uri = doc.get("storage_uri")
+                if isinstance(uri, str) and uri:
+                    return uri
+        if object_type == "report":
+            report = self.get_evaluation_report_for_tenant(evaluation_id=object_id, tenant_id=tenant_id)
+            if isinstance(report, dict):
+                uri = report.get("report_uri")
+                if isinstance(uri, str) and uri:
+                    return uri
+        return None
+
     def impose_legal_hold(
         self,
         *,
@@ -1636,7 +2189,16 @@ class InMemoryStore:
             "released_at": None,
             "release_reason": None,
             "status": "active",
+            "storage_uri": None,
         }
+        storage_uri = self._resolve_storage_uri(
+            tenant_id=tenant_id,
+            object_type=hold["object_type"],
+            object_id=hold["object_id"],
+        )
+        if storage_uri:
+            hold["storage_uri"] = storage_uri
+            self.object_storage.apply_legal_hold(storage_uri=storage_uri)
         self.legal_hold_objects[hold_id] = hold
         self._append_audit_log(
             log={
@@ -1705,6 +2267,17 @@ class InMemoryStore:
         hold["released_by_2"] = reviewer_b
         hold["released_at"] = self._utcnow_iso()
         hold["release_reason"] = reason.strip()
+        storage_uri = hold.get("storage_uri")
+        if not storage_uri:
+            storage_uri = self._resolve_storage_uri(
+                tenant_id=tenant_id,
+                object_type=str(hold.get("object_type") or ""),
+                object_id=str(hold.get("object_id") or ""),
+            )
+            if storage_uri:
+                hold["storage_uri"] = storage_uri
+        if storage_uri:
+            self.object_storage.release_legal_hold(storage_uri=storage_uri)
         self._append_audit_log(
             log={
                 "tenant_id": tenant_id,
@@ -1743,12 +2316,21 @@ class InMemoryStore:
                 retryable=False,
                 http_status=409,
             )
+        storage_uri = self._resolve_storage_uri(
+            tenant_id=tenant_id,
+            object_type=object_type,
+            object_id=object_id,
+        )
+        deleted = False
+        if storage_uri:
+            deleted = self.object_storage.delete_object(storage_uri=storage_uri)
         self._append_audit_log(
             log={
                 "tenant_id": tenant_id,
                 "action": "storage_cleanup_executed",
                 "object_type": object_type,
                 "object_id": object_id,
+                "storage_uri": storage_uri,
                 "reason": reason,
                 "trace_id": trace_id,
             }
@@ -1759,6 +2341,8 @@ class InMemoryStore:
             "object_id": object_id,
             "reason": reason,
             "cleaned": True,
+            "deleted": deleted,
+            "storage_uri": storage_uri,
         }
 
     def cancel_job(self, *, job_id: str, tenant_id: str) -> dict[str, Any]:
@@ -2584,6 +3168,40 @@ class InMemoryStore:
                 "dlq_id": dlq_item["dlq_id"],
             }
 
+        if job.get("job_type") == "evaluation":
+            result = self._run_evaluation_workflow(job=job, tenant_id=tenant_id)
+            if result.get("final_status") == "succeeded":
+                self.append_workflow_checkpoint(
+                    thread_id=str(result.get("thread_id") or thread_id),
+                    job_id=job_id,
+                    tenant_id=tenant_id,
+                    node="job_succeeded",
+                    status="succeeded",
+                    payload={"job_type": "evaluation"},
+                )
+            elif result.get("final_status") == "needs_manual_decision":
+                self.append_workflow_checkpoint(
+                    thread_id=str(result.get("thread_id") or thread_id),
+                    job_id=job_id,
+                    tenant_id=tenant_id,
+                    node="job_needs_manual_decision",
+                    status="needs_manual_decision",
+                    payload={"job_type": "evaluation"},
+                )
+            return result
+
+        if job.get("job_type") == "resume":
+            result = self._run_resume_workflow(job=job, tenant_id=tenant_id)
+            self.append_workflow_checkpoint(
+                thread_id=str(result.get("thread_id") or thread_id),
+                job_id=job_id,
+                tenant_id=tenant_id,
+                node="job_succeeded",
+                status="succeeded",
+                payload={"job_type": "resume"},
+            )
+            return result
+
         succeeded_job = self.transition_job_status(
             job_id=job_id,
             new_status="succeeded",
@@ -2715,6 +3333,9 @@ class SqliteBackedStore(InMemoryStore):
             "jobs": self.jobs,
             "documents": self.documents,
             "document_chunks": self.document_chunks,
+            "projects": self.projects,
+            "suppliers": self.suppliers,
+            "rule_packs": self.rule_packs,
             "evaluation_reports": self.evaluation_reports,
             "parse_manifests": self.parse_manifests,
             "resume_tokens": self.resume_tokens,
@@ -2758,6 +3379,9 @@ class SqliteBackedStore(InMemoryStore):
         self.document_chunks = (
             payload.get("document_chunks", {}) if isinstance(payload.get("document_chunks"), dict) else {}
         )
+        self.projects = payload.get("projects", {}) if isinstance(payload.get("projects"), dict) else {}
+        self.suppliers = payload.get("suppliers", {}) if isinstance(payload.get("suppliers"), dict) else {}
+        self.rule_packs = payload.get("rule_packs", {}) if isinstance(payload.get("rule_packs"), dict) else {}
         self.evaluation_reports = (
             payload.get("evaluation_reports", {}) if isinstance(payload.get("evaluation_reports"), dict) else {}
         )
@@ -2912,8 +3536,14 @@ class SqliteBackedStore(InMemoryStore):
         self._save_state()
         return data
 
-    def create_upload_job(self, payload: dict[str, Any]) -> dict[str, Any]:
-        data = super().create_upload_job(payload)
+    def create_upload_job(
+        self,
+        payload: dict[str, Any],
+        *,
+        file_bytes: bytes | None = None,
+        content_type: str | None = None,
+    ) -> dict[str, Any]:
+        data = super().create_upload_job(payload, file_bytes=file_bytes, content_type=content_type)
         self._save_state()
         return data
 
@@ -3322,6 +3952,18 @@ class PostgresBackedStore(InMemoryStore):
             documents_table="documents",
             chunks_table="document_chunks",
         )
+        self._projects_pg_repo = PostgresProjectsRepository(
+            tx_runner=self._tx_runner,
+            table_name="projects",
+        )
+        self._suppliers_pg_repo = PostgresSuppliersRepository(
+            tx_runner=self._tx_runner,
+            table_name="suppliers",
+        )
+        self._rule_packs_pg_repo = PostgresRulePacksRepository(
+            tx_runner=self._tx_runner,
+            table_name="rule_packs",
+        )
         self._evaluation_reports_pg_repo = PostgresEvaluationReportsRepository(
             tx_runner=self._tx_runner,
             table_name="evaluation_reports",
@@ -3342,6 +3984,9 @@ class PostgresBackedStore(InMemoryStore):
             tx_runner=self._tx_runner,
             table_name="workflow_checkpoints",
         )
+        self.projects_repository = self._projects_pg_repo
+        self.suppliers_repository = self._suppliers_pg_repo
+        self.rule_packs_repository = self._rule_packs_pg_repo
         if apply_rls:
             PostgresRlsManager(self._dsn).apply()
         self._load_state()
@@ -3387,7 +4032,50 @@ class PostgresBackedStore(InMemoryStore):
                       filename TEXT,
                       file_sha256 TEXT,
                       file_size BIGINT,
-                      status TEXT NOT NULL
+                      status TEXT NOT NULL,
+                      storage_uri TEXT
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS projects (
+                      project_id TEXT PRIMARY KEY,
+                      tenant_id TEXT NOT NULL,
+                      project_code TEXT NOT NULL,
+                      name TEXT NOT NULL,
+                      ruleset_version TEXT,
+                      status TEXT NOT NULL,
+                      created_at TEXT,
+                      updated_at TEXT
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS suppliers (
+                      supplier_id TEXT PRIMARY KEY,
+                      tenant_id TEXT NOT NULL,
+                      supplier_code TEXT NOT NULL,
+                      name TEXT NOT NULL,
+                      qualification_json JSONB,
+                      risk_flags_json JSONB,
+                      status TEXT NOT NULL,
+                      created_at TEXT,
+                      updated_at TEXT
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS rule_packs (
+                      rule_pack_version TEXT PRIMARY KEY,
+                      tenant_id TEXT NOT NULL,
+                      name TEXT NOT NULL,
+                      status TEXT NOT NULL,
+                      payload JSONB NOT NULL,
+                      created_at TEXT,
+                      updated_at TEXT
                     )
                     """
                 )
@@ -3666,6 +4354,9 @@ class PostgresBackedStore(InMemoryStore):
             "jobs": self.jobs,
             "documents": self.documents,
             "document_chunks": self.document_chunks,
+            "projects": self.projects,
+            "suppliers": self.suppliers,
+            "rule_packs": self.rule_packs,
             "evaluation_reports": self.evaluation_reports,
             "parse_manifests": self.parse_manifests,
             "resume_tokens": self.resume_tokens,
@@ -3709,6 +4400,9 @@ class PostgresBackedStore(InMemoryStore):
         self.document_chunks = (
             payload.get("document_chunks", {}) if isinstance(payload.get("document_chunks"), dict) else {}
         )
+        self.projects = payload.get("projects", {}) if isinstance(payload.get("projects"), dict) else {}
+        self.suppliers = payload.get("suppliers", {}) if isinstance(payload.get("suppliers"), dict) else {}
+        self.rule_packs = payload.get("rule_packs", {}) if isinstance(payload.get("rule_packs"), dict) else {}
         self.evaluation_reports = (
             payload.get("evaluation_reports", {}) if isinstance(payload.get("evaluation_reports"), dict) else {}
         )
@@ -3863,8 +4557,14 @@ class PostgresBackedStore(InMemoryStore):
         self._save_state()
         return data
 
-    def create_upload_job(self, payload: dict[str, Any]) -> dict[str, Any]:
-        data = super().create_upload_job(payload)
+    def create_upload_job(
+        self,
+        payload: dict[str, Any],
+        *,
+        file_bytes: bytes | None = None,
+        content_type: str | None = None,
+    ) -> dict[str, Any]:
+        data = super().create_upload_job(payload, file_bytes=file_bytes, content_type=content_type)
         self._save_state()
         return data
 

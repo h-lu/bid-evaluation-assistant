@@ -62,7 +62,7 @@
 
 ## 4. 业务资源接口
 
-### 4.1 Projects（规划，未纳入当前 v1 契约子集）
+### 4.1 Projects
 
 1. `GET /projects`
 2. `POST /projects`
@@ -70,14 +70,27 @@
 4. `PUT /projects/{project_id}`
 5. `DELETE /projects/{project_id}`
 
-### 4.2 Suppliers（规划，未纳入当前 v1 契约子集）
+### 4.2 Suppliers
 
 1. `GET /suppliers`
 2. `POST /suppliers`
 3. `GET /suppliers/{supplier_id}`
 4. `PUT /suppliers/{supplier_id}`
 
-### 4.3 Documents
+### 4.3 Rules
+
+1. `GET /rules`
+2. `POST /rules`
+3. `GET /rules/{rule_pack_version}`
+4. `PUT /rules/{rule_pack_version}`
+5. `DELETE /rules/{rule_pack_version}`
+
+说明：
+
+1. `rule_pack_version` 作为唯一标识。
+2. `rules` 为规则包 JSON。
+
+### 4.4 Documents
 
 1. `POST /documents/upload` -> `202 + parse job_id`（上传后自动投递 parse）
 2. `POST /documents/{document_id}/parse` -> `202 + job_id`（手动重投/补投）
@@ -642,7 +655,8 @@
     "citations": ["ck_xxx"],
     "needs_human_review": false,
     "trace_id": "trace_xxx",
-    "interrupt": null
+    "interrupt": null,
+    "report_uri": "object://local/bea/tenants/tenant_x/reports/ev_xxx/report.json"
   },
   "meta": {
     "trace_id": "trace_xxx"

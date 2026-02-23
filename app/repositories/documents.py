@@ -88,8 +88,8 @@ class PostgresDocumentsRepository:
         payload["tenant_id"] = tenant_id
         sql = f"""
             INSERT INTO {self._documents_table} (
-                document_id, tenant_id, project_id, supplier_id, doc_type, filename, file_sha256, file_size, status
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                document_id, tenant_id, project_id, supplier_id, doc_type, filename, file_sha256, file_size, status, storage_uri
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT(document_id) DO UPDATE
             SET tenant_id = EXCLUDED.tenant_id,
                 project_id = EXCLUDED.project_id,
@@ -98,7 +98,8 @@ class PostgresDocumentsRepository:
                 filename = EXCLUDED.filename,
                 file_sha256 = EXCLUDED.file_sha256,
                 file_size = EXCLUDED.file_size,
-                status = EXCLUDED.status
+                status = EXCLUDED.status,
+                storage_uri = EXCLUDED.storage_uri
         """
 
         def _op(conn: Any) -> dict[str, Any]:
@@ -115,6 +116,7 @@ class PostgresDocumentsRepository:
                         payload.get("file_sha256"),
                         int(payload.get("file_size") or 0),
                         payload.get("status", "uploaded"),
+                        payload.get("storage_uri"),
                     ),
                 )
             return payload
@@ -123,7 +125,7 @@ class PostgresDocumentsRepository:
 
     def get(self, *, tenant_id: str, document_id: str) -> dict[str, Any] | None:
         sql = f"""
-            SELECT document_id, tenant_id, project_id, supplier_id, doc_type, filename, file_sha256, file_size, status
+            SELECT document_id, tenant_id, project_id, supplier_id, doc_type, filename, file_sha256, file_size, status, storage_uri
             FROM {self._documents_table}
             WHERE tenant_id = %s AND document_id = %s
             LIMIT 1
@@ -145,6 +147,7 @@ class PostgresDocumentsRepository:
                 "file_sha256": row[6],
                 "file_size": int(row[7] or 0),
                 "status": row[8],
+                "storage_uri": row[9],
             }
 
         return self._tx_runner.run_in_tx(tenant_id=tenant_id, fn=_op)

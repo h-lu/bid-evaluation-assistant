@@ -18,6 +18,7 @@
 2. 幂等与 outbox：请求幂等键、事件可靠投递、消费去重。
 3. Redis 队列：enqueue/dequeue/ack/nack/retry/DLQ。
 4. DB RLS 注入：`app.current_tenant` 会话级注入与强校验。
+5. 对象存储 WORM：原始文档与报告归档、legal hold 与 cleanup 行为。
 
 ### 2.2 非目标
 
@@ -107,6 +108,19 @@ Worker -> Redis Queue -> Domain Executor -> PostgreSQL + Audit
 2. 双写观察窗口与一致性比对脚本。
 3. 回退 Runbook（命令级）。
 
+### 5.6 P1-S6：对象存储 WORM
+
+输入：对象存储规范与现有 upload/report 流程。  
+产出：对象存储适配层 + legal hold/cleanup 联动。  
+验收：上传与报告归档能在对象存储中追溯，legal hold 阻断删除。
+
+最小交付：
+
+1. 对象存储抽象与 `local/s3` 最小实现。
+2. 原始文档写入对象存储并记录 `storage_uri`。
+3. 评估报告写入对象存储并记录 `report_uri`。
+4. `legal-hold` 与 `storage/cleanup` 对象存储联动。
+
 ## 6. 数据与契约约束
 
 1. 外部 REST/OpenAPI 不新增破坏性字段。
@@ -127,6 +141,16 @@ Worker -> Redis Queue -> Domain Executor -> PostgreSQL + Audit
 10. `BEA_QUEUE_BACKEND`
 11. `POSTGRES_APPLY_RLS`
 12. `BEA_REQUIRE_TRUESTACK`
+13. `BEA_OBJECT_STORAGE_BACKEND`
+14. `OBJECT_STORAGE_BUCKET`
+15. `OBJECT_STORAGE_ROOT`
+16. `OBJECT_STORAGE_PREFIX`
+17. `OBJECT_STORAGE_WORM_MODE`
+18. `OBJECT_STORAGE_ENDPOINT`
+19. `OBJECT_STORAGE_REGION`
+20. `OBJECT_STORAGE_ACCESS_KEY`
+21. `OBJECT_STORAGE_SECRET_KEY`
+22. `OBJECT_STORAGE_FORCE_PATH_STYLE`
 
 ## 8. 测试与验证命令
 

@@ -13,7 +13,9 @@ from app.store import store
 
 
 @pytest.fixture(autouse=True)
-def reset_store():
+def reset_store(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("BEA_OBJECT_STORAGE_BACKEND", "local")
+    monkeypatch.setenv("OBJECT_STORAGE_ROOT", str(tmp_path / "object_store"))
     store.reset()
     if hasattr(queue_backend, "reset"):
         queue_backend.reset()
