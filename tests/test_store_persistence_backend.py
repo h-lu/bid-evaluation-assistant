@@ -118,6 +118,9 @@ def test_store_factory_uses_postgres_backend_with_fake_driver(monkeypatch):
                 payload = self._state.get("payload")
                 self._row = (payload,) if payload is not None else None
                 return
+            if normalized.startswith("select payload") and "from rule_packs" in normalized:
+                self._row = None
+                return
             if normalized.startswith("select job_id, tenant_id, job_type"):
                 if not params:
                     raise AssertionError("expected tenant_id and job_id")
@@ -271,6 +274,7 @@ def test_sqlite_store_persists_release_replay_and_readiness(tmp_path: Path):
         release_id="rel_store_001",
         tenant_id="tenant_store",
         trace_id="trace_store",
+        dataset_version="v1.0.0",
         replay_passed=True,
         gate_results={
             "quality": True,
@@ -421,6 +425,9 @@ def test_postgres_store_run_job_once_persists_status_between_transitions(monkeyp
             ):
                 return
             if normalized.startswith("select payload::text from"):
+                self._row = None
+                return
+            if normalized.startswith("select payload") and "from rule_packs" in normalized:
                 self._row = None
                 return
             if normalized.startswith("insert into") and "bea_store_state" in normalized:

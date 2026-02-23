@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import hashlib
+import mimetypes
 import os
+import time
 import uuid
 from collections.abc import Mapping
 
-from fastapi import Body, FastAPI, File, Form, Header, Query, Request, UploadFile
+from fastapi import Body, FastAPI, File, Form, Header, Query, Request, Response, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.cost_gates import evaluate_cost_gate
@@ -24,20 +27,27 @@ from app.schemas import (
     LegalHoldImposeRequest,
     LegalHoldReleaseRequest,
     PerformanceGateEvaluateRequest,
+    ProjectCreateRequest,
+    ProjectUpdateRequest,
     QualityGateEvaluateRequest,
     RollbackExecuteRequest,
     RolloutDecisionRequest,
     RolloutPlanRequest,
     RetrievalQueryRequest,
     ResumeRequest,
+    RulePackCreateRequest,
+    RulePackUpdateRequest,
     SecurityGateEvaluateRequest,
     StorageCleanupRequest,
     StrategyTuningApplyRequest,
+    SupplierCreateRequest,
+    SupplierUpdateRequest,
     error_envelope,
     success_envelope,
 )
 from app.security_gates import evaluate_security_gate
 from app.security import JwtSecurityConfig, parse_and_validate_bearer_token, redact_sensitive
+from app.tools_registry import execute_tool, hash_payload, list_tool_specs, require_tool
 from app.store import store
 from app.runtime_profile import true_stack_required
 
@@ -110,6 +120,16 @@ def _job_type_from_event_type(event_type: str) -> str:
 def create_app() -> FastAPI:
     app = FastAPI(title="Bid Evaluation Assistant API", version="0.1.0")
     security_cfg = JwtSecurityConfig.from_env()
+    cors_origins = os.environ.get("CORS_ALLOW_ORIGINS", "http://127.0.0.1:5173,http://localhost:5173")
+    allow_origins = [x.strip() for x in cors_origins.split(",") if x.strip()]
+    if allow_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=allow_origins,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
     def _append_security_audit_log(
         *,
@@ -135,6 +155,38 @@ def create_app() -> FastAPI:
             )
         except Exception:
             # Security audit failures must not break API responses.
+            return
+
+    def _append_tool_audit_log(
+        *,
+        request: Request,
+        tool_name: str,
+        risk_level: str,
+        input_payload: dict[str, Any],
+        result_summary: str,
+        status: str,
+        latency_ms: int,
+    ) -> None:
+        try:
+            store._append_audit_log(  # type: ignore[attr-defined]
+                log={
+                    "audit_id": f"audit_{uuid.uuid4().hex[:12]}",
+                    "tenant_id": _tenant_id_from_request(request),
+                    "action": "tool_call",
+                    "trace_id": _trace_id_from_request(request),
+                    "occurred_at": store._utcnow_iso(),  # type: ignore[attr-defined]
+                    "payload": {
+                        "tool_name": tool_name,
+                        "risk_level": risk_level,
+                        "agent_id": getattr(request.state, "auth_subject", "anonymous"),
+                        "input_hash": hash_payload(input_payload),
+                        "result_summary": result_summary,
+                        "status": status,
+                        "latency_ms": latency_ms,
+                    },
+                }
+            )
+        except Exception:
             return
 
     def _require_approval(
@@ -374,6 +426,194 @@ def create_app() -> FastAPI:
         )
         return success_envelope(data, _trace_id_from_request(request))
 
+    @app.get("/api/v1/projects")
+    def list_projects(request: Request):
+        items = store.list_projects(tenant_id=_tenant_id_from_request(request))
+        return success_envelope({"items": items, "total": len(items)}, _trace_id_from_request(request))
+
+    @app.post("/api/v1/projects")
+    def create_project(
+        payload: ProjectCreateRequest,
+        request: Request,
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    ):
+        if not idempotency_key:
+            raise ApiError(
+                code="IDEMPOTENCY_MISSING",
+                message="Idempotency-Key header is required",
+                error_class="validation",
+                retryable=False,
+                http_status=400,
+            )
+        req_payload = payload.model_dump()
+        req_payload["tenant_id"] = _tenant_id_from_request(request)
+        data = store.run_idempotent(
+            endpoint="POST:/api/v1/projects",
+            tenant_id=_tenant_id_from_request(request),
+            idempotency_key=idempotency_key,
+            payload=req_payload,
+            execute=lambda: store.create_project(payload=req_payload),
+        )
+        return JSONResponse(status_code=201, content=success_envelope(data, _trace_id_from_request(request)))
+
+    @app.get("/api/v1/projects/{project_id}")
+    def get_project(project_id: str, request: Request):
+        project = store.get_project_for_tenant(project_id=project_id, tenant_id=_tenant_id_from_request(request))
+        if project is None:
+            raise ApiError(
+                code="PROJECT_NOT_FOUND",
+                message="project not found",
+                error_class="validation",
+                retryable=False,
+                http_status=404,
+            )
+        return success_envelope(project, _trace_id_from_request(request))
+
+    @app.put("/api/v1/projects/{project_id}")
+    def update_project(
+        project_id: str,
+        payload: ProjectUpdateRequest,
+        request: Request,
+    ):
+        data = store.update_project(
+            project_id=project_id,
+            tenant_id=_tenant_id_from_request(request),
+            payload=payload.model_dump(exclude_unset=True),
+        )
+        return success_envelope(data, _trace_id_from_request(request))
+
+    @app.delete("/api/v1/projects/{project_id}")
+    def delete_project(project_id: str, request: Request):
+        data = store.delete_project(project_id=project_id, tenant_id=_tenant_id_from_request(request))
+        return success_envelope(data, _trace_id_from_request(request))
+
+    @app.get("/api/v1/suppliers")
+    def list_suppliers(request: Request):
+        items = store.list_suppliers(tenant_id=_tenant_id_from_request(request))
+        return success_envelope({"items": items, "total": len(items)}, _trace_id_from_request(request))
+
+    @app.post("/api/v1/suppliers")
+    def create_supplier(
+        payload: SupplierCreateRequest,
+        request: Request,
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    ):
+        if not idempotency_key:
+            raise ApiError(
+                code="IDEMPOTENCY_MISSING",
+                message="Idempotency-Key header is required",
+                error_class="validation",
+                retryable=False,
+                http_status=400,
+            )
+        req_payload = payload.model_dump()
+        req_payload["tenant_id"] = _tenant_id_from_request(request)
+        data = store.run_idempotent(
+            endpoint="POST:/api/v1/suppliers",
+            tenant_id=_tenant_id_from_request(request),
+            idempotency_key=idempotency_key,
+            payload=req_payload,
+            execute=lambda: store.create_supplier(payload=req_payload),
+        )
+        return JSONResponse(status_code=201, content=success_envelope(data, _trace_id_from_request(request)))
+
+    @app.get("/api/v1/suppliers/{supplier_id}")
+    def get_supplier(supplier_id: str, request: Request):
+        supplier = store.get_supplier_for_tenant(
+            supplier_id=supplier_id, tenant_id=_tenant_id_from_request(request)
+        )
+        if supplier is None:
+            raise ApiError(
+                code="SUPPLIER_NOT_FOUND",
+                message="supplier not found",
+                error_class="validation",
+                retryable=False,
+                http_status=404,
+            )
+        return success_envelope(supplier, _trace_id_from_request(request))
+
+    @app.put("/api/v1/suppliers/{supplier_id}")
+    def update_supplier(
+        supplier_id: str,
+        payload: SupplierUpdateRequest,
+        request: Request,
+    ):
+        data = store.update_supplier(
+            supplier_id=supplier_id,
+            tenant_id=_tenant_id_from_request(request),
+            payload=payload.model_dump(exclude_unset=True),
+        )
+        return success_envelope(data, _trace_id_from_request(request))
+
+    @app.delete("/api/v1/suppliers/{supplier_id}")
+    def delete_supplier(supplier_id: str, request: Request):
+        data = store.delete_supplier(supplier_id=supplier_id, tenant_id=_tenant_id_from_request(request))
+        return success_envelope(data, _trace_id_from_request(request))
+
+    @app.get("/api/v1/rules")
+    def list_rule_packs(request: Request):
+        items = store.list_rule_packs(tenant_id=_tenant_id_from_request(request))
+        return success_envelope({"items": items, "total": len(items)}, _trace_id_from_request(request))
+
+    @app.post("/api/v1/rules")
+    def create_rule_pack(
+        payload: RulePackCreateRequest,
+        request: Request,
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    ):
+        if not idempotency_key:
+            raise ApiError(
+                code="IDEMPOTENCY_MISSING",
+                message="Idempotency-Key header is required",
+                error_class="validation",
+                retryable=False,
+                http_status=400,
+            )
+        req_payload = payload.model_dump()
+        req_payload["tenant_id"] = _tenant_id_from_request(request)
+        data = store.run_idempotent(
+            endpoint="POST:/api/v1/rules",
+            tenant_id=_tenant_id_from_request(request),
+            idempotency_key=idempotency_key,
+            payload=req_payload,
+            execute=lambda: store.create_rule_pack(payload=req_payload),
+        )
+        return JSONResponse(status_code=201, content=success_envelope(data, _trace_id_from_request(request)))
+
+    @app.get("/api/v1/rules/{rule_pack_version}")
+    def get_rule_pack(rule_pack_version: str, request: Request):
+        rule_pack = store.get_rule_pack_for_tenant(
+            rule_pack_version=rule_pack_version,
+            tenant_id=_tenant_id_from_request(request),
+        )
+        if rule_pack is None:
+            raise ApiError(
+                code="RULE_PACK_NOT_FOUND",
+                message="rule pack not found",
+                error_class="validation",
+                retryable=False,
+                http_status=404,
+            )
+        return success_envelope(rule_pack, _trace_id_from_request(request))
+
+    @app.put("/api/v1/rules/{rule_pack_version}")
+    def update_rule_pack(
+        rule_pack_version: str,
+        payload: RulePackUpdateRequest,
+        request: Request,
+    ):
+        data = store.update_rule_pack(
+            rule_pack_version=rule_pack_version,
+            tenant_id=_tenant_id_from_request(request),
+            payload=payload.model_dump(exclude_unset=True),
+        )
+        return success_envelope(data, _trace_id_from_request(request))
+
+    @app.delete("/api/v1/rules/{rule_pack_version}")
+    def delete_rule_pack(rule_pack_version: str, request: Request):
+        data = store.delete_rule_pack(rule_pack_version=rule_pack_version, tenant_id=_tenant_id_from_request(request))
+        return success_envelope(data, _trace_id_from_request(request))
+
     @app.post("/api/v1/documents/upload")
     async def upload_document(
         request: Request,
@@ -408,7 +648,11 @@ def create_app() -> FastAPI:
             tenant_id=_tenant_id_from_request(request),
             idempotency_key=idempotency_key,
             payload=payload,
-            execute=lambda: store.create_upload_job(payload),
+            execute=lambda: store.create_upload_job(
+                payload,
+                file_bytes=file_bytes,
+                content_type=file.content_type,
+            ),
         )
         return JSONResponse(
             status_code=202,
@@ -471,6 +715,43 @@ def create_app() -> FastAPI:
             },
             _trace_id_from_request(request),
         )
+
+    @app.get("/api/v1/documents/{document_id}/raw")
+    def get_document_raw(document_id: str, request: Request):
+        document = store.get_document_for_tenant(
+            document_id=document_id,
+            tenant_id=_tenant_id_from_request(request),
+        )
+        if document is None:
+            raise ApiError(
+                code="DOC_NOT_FOUND",
+                message="document not found",
+                error_class="validation",
+                retryable=False,
+                http_status=404,
+            )
+        storage_uri = document.get("storage_uri")
+        if not isinstance(storage_uri, str) or not storage_uri:
+            raise ApiError(
+                code="DOC_STORAGE_URI_MISSING",
+                message="document storage uri missing",
+                error_class="validation",
+                retryable=False,
+                http_status=404,
+            )
+        try:
+            payload = store.object_storage.get_object(storage_uri=storage_uri)
+        except FileNotFoundError:
+            raise ApiError(
+                code="DOC_STORAGE_MISSING",
+                message="document object not found",
+                error_class="validation",
+                retryable=False,
+                http_status=404,
+            )
+        filename = document.get("filename") or ""
+        content_type, _ = mimetypes.guess_type(str(filename))
+        return Response(content=payload, media_type=content_type or "application/octet-stream")
 
     @app.get("/api/v1/documents/{document_id}/chunks")
     def get_document_chunks(document_id: str, request: Request):
@@ -755,19 +1036,57 @@ def create_app() -> FastAPI:
             reason=payload.reason,
         )
         req_payload = payload.model_dump(mode="json")
-        data = store.run_idempotent(
-            endpoint=f"POST:/api/v1/dlq/items/{item_id}/discard",
-            tenant_id=_tenant_id_from_request(request),
-            idempotency_key=idempotency_key,
-            payload=req_payload,
-            execute=lambda: store.discard_dlq_item(
-                dlq_id=item_id,
-                reason=payload.reason,
-                reviewer_id=payload.reviewer_id,
-                reviewer_id_2=payload.reviewer_id_2,
+        tool_spec = require_tool("dlq_discard")
+        started = time.monotonic()
+        try:
+            data = store.run_idempotent(
+                endpoint=f"POST:/api/v1/dlq/items/{item_id}/discard",
                 tenant_id=_tenant_id_from_request(request),
-                trace_id=_trace_id_from_request(request),
-            ),
+                idempotency_key=idempotency_key,
+                payload=req_payload,
+                execute=lambda: execute_tool(
+                    tool_spec,
+                    input_payload={"item_id": item_id, **req_payload},
+                    invoke=lambda: store.discard_dlq_item(
+                        dlq_id=item_id,
+                        reason=payload.reason,
+                        reviewer_id=payload.reviewer_id,
+                        reviewer_id_2=payload.reviewer_id_2,
+                        tenant_id=_tenant_id_from_request(request),
+                        trace_id=_trace_id_from_request(request),
+                    ),
+                ),
+            )
+        except ApiError as exc:
+            _append_tool_audit_log(
+                request=request,
+                tool_name=tool_spec.name,
+                risk_level=tool_spec.risk_level,
+                input_payload={"item_id": item_id, **req_payload},
+                result_summary=exc.code,
+                status="failed",
+                latency_ms=int((time.monotonic() - started) * 1000),
+            )
+            raise
+        except Exception:
+            _append_tool_audit_log(
+                request=request,
+                tool_name=tool_spec.name,
+                risk_level=tool_spec.risk_level,
+                input_payload={"item_id": item_id, **req_payload},
+                result_summary="unexpected_error",
+                status="failed",
+                latency_ms=int((time.monotonic() - started) * 1000),
+            )
+            raise
+        _append_tool_audit_log(
+            request=request,
+            tool_name=tool_spec.name,
+            risk_level=tool_spec.risk_level,
+            input_payload={"item_id": item_id, **req_payload},
+            result_summary="discarded",
+            status="success",
+            latency_ms=int((time.monotonic() - started) * 1000),
         )
         return success_envelope(data, _trace_id_from_request(request))
 
@@ -1101,12 +1420,14 @@ def create_app() -> FastAPI:
                 http_status=400,
             )
         replay_passed = bool(payload.get("replay_passed"))
+        dataset_version = str(payload.get("dataset_version") or "").strip() or None
         gate_results_obj = payload.get("gate_results", {})
         gate_results = gate_results_obj if isinstance(gate_results_obj, dict) else {}
         data = store.evaluate_release_readiness(
             release_id=release_id,
             tenant_id=_tenant_id_from_request(request),
             trace_id=_trace_id_from_request(request),
+            dataset_version=dataset_version,
             replay_passed=replay_passed,
             gate_results=gate_results,
         )
@@ -1136,16 +1457,33 @@ def create_app() -> FastAPI:
                 http_status=400,
             )
         replay_passed = bool(payload.get("replay_passed", False))
+        dataset_version = str(payload.get("dataset_version") or "").strip() or None
         gate_results_obj = payload.get("gate_results", {})
         gate_results = gate_results_obj if isinstance(gate_results_obj, dict) else {}
         data = store.execute_release_pipeline(
             release_id=release_id,
             tenant_id=_tenant_id_from_request(request),
             trace_id=_trace_id_from_request(request),
+            dataset_version=dataset_version,
             replay_passed=replay_passed,
             gate_results=gate_results,
         )
         return success_envelope(data, _trace_id_from_request(request))
+
+    @app.get("/api/v1/internal/tools/registry")
+    def internal_list_tool_registry(
+        request: Request,
+        x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
+    ):
+        if x_internal_debug != "true":
+            raise ApiError(
+                code="AUTH_FORBIDDEN",
+                message="internal endpoint forbidden",
+                error_class="security_sensitive",
+                retryable=False,
+                http_status=403,
+            )
+        return success_envelope({"items": list_tool_specs()}, _trace_id_from_request(request))
 
     @app.get("/api/v1/internal/ops/metrics/summary")
     def internal_get_ops_metrics_summary(
@@ -1218,13 +1556,57 @@ def create_app() -> FastAPI:
             reviewer_id_2=x_reviewer_id_2 or "",
             reason=x_approval_reason or "",
         )
-        data = store.apply_strategy_tuning(
-            release_id=payload.release_id,
-            selector=payload.selector.model_dump(mode="json"),
-            score_calibration=payload.score_calibration.model_dump(mode="json"),
-            tool_policy=payload.tool_policy.model_dump(mode="json"),
-            tenant_id=_tenant_id_from_request(request),
-            trace_id=_trace_id_from_request(request),
+        tool_spec = require_tool("strategy_tuning_apply")
+        req_payload = {
+            "release_id": payload.release_id,
+            "selector": payload.selector.model_dump(mode="json"),
+            "score_calibration": payload.score_calibration.model_dump(mode="json"),
+            "tool_policy": payload.tool_policy.model_dump(mode="json"),
+        }
+        started = time.monotonic()
+        try:
+            data = execute_tool(
+                tool_spec,
+                input_payload=req_payload,
+                invoke=lambda: store.apply_strategy_tuning(
+                    release_id=payload.release_id,
+                    selector=payload.selector.model_dump(mode="json"),
+                    score_calibration=payload.score_calibration.model_dump(mode="json"),
+                    tool_policy=payload.tool_policy.model_dump(mode="json"),
+                    tenant_id=_tenant_id_from_request(request),
+                    trace_id=_trace_id_from_request(request),
+                ),
+            )
+        except ApiError as exc:
+            _append_tool_audit_log(
+                request=request,
+                tool_name=tool_spec.name,
+                risk_level=tool_spec.risk_level,
+                input_payload=req_payload,
+                result_summary=exc.code,
+                status="failed",
+                latency_ms=int((time.monotonic() - started) * 1000),
+            )
+            raise
+        except Exception:
+            _append_tool_audit_log(
+                request=request,
+                tool_name=tool_spec.name,
+                risk_level=tool_spec.risk_level,
+                input_payload=req_payload,
+                result_summary="unexpected_error",
+                status="failed",
+                latency_ms=int((time.monotonic() - started) * 1000),
+            )
+            raise
+        _append_tool_audit_log(
+            request=request,
+            tool_name=tool_spec.name,
+            risk_level=tool_spec.risk_level,
+            input_payload=req_payload,
+            result_summary="strategy_applied",
+            status="success",
+            latency_ms=int((time.monotonic() - started) * 1000),
         )
         return success_envelope(data, _trace_id_from_request(request))
 
@@ -1315,13 +1697,52 @@ def create_app() -> FastAPI:
             reviewer_id_2=payload.reviewer_id_2,
             reason=payload.reason,
         )
-        data = store.release_legal_hold(
-            hold_id=hold_id,
-            tenant_id=_tenant_id_from_request(request),
-            reason=payload.reason,
-            reviewer_id=payload.reviewer_id,
-            reviewer_id_2=payload.reviewer_id_2,
-            trace_id=_trace_id_from_request(request),
+        tool_spec = require_tool("legal_hold_release")
+        req_payload = payload.model_dump(mode="json")
+        started = time.monotonic()
+        try:
+            data = execute_tool(
+                tool_spec,
+                input_payload={"hold_id": hold_id, **req_payload},
+                invoke=lambda: store.release_legal_hold(
+                    hold_id=hold_id,
+                    tenant_id=_tenant_id_from_request(request),
+                    reason=payload.reason,
+                    reviewer_id=payload.reviewer_id,
+                    reviewer_id_2=payload.reviewer_id_2,
+                    trace_id=_trace_id_from_request(request),
+                ),
+            )
+        except ApiError as exc:
+            _append_tool_audit_log(
+                request=request,
+                tool_name=tool_spec.name,
+                risk_level=tool_spec.risk_level,
+                input_payload={"hold_id": hold_id, **req_payload},
+                result_summary=exc.code,
+                status="failed",
+                latency_ms=int((time.monotonic() - started) * 1000),
+            )
+            raise
+        except Exception:
+            _append_tool_audit_log(
+                request=request,
+                tool_name=tool_spec.name,
+                risk_level=tool_spec.risk_level,
+                input_payload={"hold_id": hold_id, **req_payload},
+                result_summary="unexpected_error",
+                status="failed",
+                latency_ms=int((time.monotonic() - started) * 1000),
+            )
+            raise
+        _append_tool_audit_log(
+            request=request,
+            tool_name=tool_spec.name,
+            risk_level=tool_spec.risk_level,
+            input_payload={"hold_id": hold_id, **req_payload},
+            result_summary="released",
+            status="success",
+            latency_ms=int((time.monotonic() - started) * 1000),
         )
         return success_envelope(data, _trace_id_from_request(request))
 

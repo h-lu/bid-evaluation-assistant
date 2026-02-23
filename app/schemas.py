@@ -179,6 +179,47 @@ class StrategyTuningApplyRequest(BaseModel):
     tool_policy: StrategyToolPolicy
 
 
+class ProjectCreateRequest(BaseModel):
+    project_code: str
+    name: str
+    ruleset_version: str = "v1.0.0"
+    status: str = "active"
+
+
+class ProjectUpdateRequest(BaseModel):
+    name: str | None = None
+    ruleset_version: str | None = None
+    status: str | None = None
+
+
+class SupplierCreateRequest(BaseModel):
+    supplier_code: str
+    name: str
+    qualification: dict[str, Any] = Field(default_factory=dict)
+    risk_flags: dict[str, Any] = Field(default_factory=dict)
+    status: str = "active"
+
+
+class SupplierUpdateRequest(BaseModel):
+    name: str | None = None
+    qualification: dict[str, Any] | None = None
+    risk_flags: dict[str, Any] | None = None
+    status: str | None = None
+
+
+class RulePackCreateRequest(BaseModel):
+    rule_pack_version: str
+    name: str
+    rules: dict[str, Any] = Field(default_factory=dict)
+    status: str = "active"
+
+
+class RulePackUpdateRequest(BaseModel):
+    name: str | None = None
+    rules: dict[str, Any] | None = None
+    status: str | None = None
+
+
 class LegalHoldImposeRequest(BaseModel):
     object_type: str
     object_id: str

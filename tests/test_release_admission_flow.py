@@ -59,6 +59,7 @@ def test_release_admission_full_flow(client):
         headers=headers,
         json={
             "release_id": release_id,
+            "dataset_version": "v1.0.0",
             "replay_passed": True,
             "gate_results": _gate_results_all_pass(),
         },
@@ -71,6 +72,7 @@ def test_release_admission_full_flow(client):
         headers=headers,
         json={
             "release_id": release_id,
+            "dataset_version": "v1.0.0",
             "replay_passed": True,
             "gate_results": _gate_results_all_pass(),
         },

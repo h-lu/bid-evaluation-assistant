@@ -21,6 +21,9 @@
    - `app/store.py`
 5. worker drain 路径接入 `delay_ms`：
    - `app/main.py`
+6. 新增 LangGraph runtime 入口与兼容执行路径：
+   - `app/store.py`
+   - `pyproject.toml`
 
 ## 3. 验证命令与结果
 
@@ -36,6 +39,12 @@ pytest -q tests/test_internal_job_run.py tests/test_workflow_checkpoints.py test
 
 结果：`53 passed`
 
+```bash
+pytest -q
+```
+
+结果：`全部通过`
+
 ## 4. 结论
 
 1. P3-S1：已具备常驻 worker 运行时与脚本入口。
@@ -43,3 +52,4 @@ pytest -q tests/test_internal_job_run.py tests/test_workflow_checkpoints.py test
 3. P3-S3：resume token 单次消费 + TTL + 审计链路保持有效。
 4. P3-S4：重试路径已使用指数退避并在队列层执行延迟重投。
 5. P3-S5：worker 轮询采用 tenant burst 限制，已通过公平消费单测。
+6. LangGraph runtime 与兼容执行路径具备回归证据；真栈可通过依赖启用 LangGraph。

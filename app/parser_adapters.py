@@ -9,6 +9,7 @@ from urllib import request
 from urllib.error import URLError
 
 from app.errors import ApiError
+from app.parse_utils import normalize_bbox
 
 
 @dataclass(frozen=True)
@@ -38,7 +39,7 @@ class StubParserAdapter:
             "positions": [
                 {
                     "page": 1,
-                    "bbox": [100, 120, 520, 380],
+                    "bbox": normalize_bbox([100, 120, 520, 380]),
                     "start": 0,
                     "end": 128,
                 }
@@ -48,6 +49,7 @@ class StubParserAdapter:
             "chunk_type": "text",
             "parser": self.name,
             "parser_version": parser_version or self.version,
+            "content_source": "stub",
             "text": default_text,
         }
 
@@ -90,12 +92,14 @@ class HttpParserAdapter(StubParserAdapter):
         document_id: str,
         default_text: str,
         default_section: str,
+        content_source: str,
     ) -> dict[str, object]:
         text = str(source.get("text") or default_text)
         page = int(source.get("page") or 1)
         bbox = source.get("bbox")
         if not isinstance(bbox, list) or len(bbox) != 4:
             bbox = [100, 120, 520, 380]
+        bbox = normalize_bbox(bbox)
         heading_path = source.get("heading_path")
         if not isinstance(heading_path, list) or not heading_path:
             heading_path = ["section-1", parser]
@@ -115,6 +119,7 @@ class HttpParserAdapter(StubParserAdapter):
             "chunk_type": str(source.get("chunk_type") or "text"),
             "parser": parser,
             "parser_version": parser_version,
+            "content_source": content_source,
             "text": text,
         }
 
@@ -137,6 +142,7 @@ class HttpParserAdapter(StubParserAdapter):
                         document_id=document_id,
                         default_text=default_text,
                         default_section=f"{self.name}_parsed",
+                        content_source="chunks",
                     )
 
         content_list = payload.get("content_list")
@@ -150,6 +156,7 @@ class HttpParserAdapter(StubParserAdapter):
                         document_id=document_id,
                         default_text=default_text,
                         default_section=f"{self.name}_parsed",
+                        content_source="content_list",
                     )
 
         full_md = payload.get("full_md")
@@ -164,6 +171,7 @@ class HttpParserAdapter(StubParserAdapter):
                 document_id=document_id,
                 default_text=default_text,
                 default_section=f"{self.name}_parsed",
+                content_source="full_md",
             )
 
         raise ApiError(

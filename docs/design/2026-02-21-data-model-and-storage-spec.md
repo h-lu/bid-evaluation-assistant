@@ -46,6 +46,7 @@ tenants
 3. `projects(project_id, tenant_id, project_code, name, ruleset_version, status, created_at, updated_at)`
 4. `suppliers(supplier_id, tenant_id, supplier_code, name, qualification_json, risk_flags_json)`
 5. `project_suppliers(tenant_id, project_id, supplier_id, join_status, created_at)`
+6. `rule_packs(rule_pack_version, tenant_id, name, status, payload, created_at, updated_at)`
 
 ### 4.2 文档域
 
@@ -72,6 +73,14 @@ tenants
 1. `audit_logs(audit_id, tenant_id, actor_id, actor_role, action, resource_type, resource_id, request_id, trace_id, reason, ip, user_agent, payload_json, created_at)`
 2. `domain_events_outbox(event_id, tenant_id, event_type, aggregate_type, aggregate_id, payload_json, status, published_at, created_at)`
 3. `legal_hold_objects(hold_id, tenant_id, object_type, object_id, reason, imposed_by, imposed_at, released_by, released_at, status)`
+
+### 4.6 对象存储字段
+
+1. `documents.storage_uri`：原始文档对象存储 URI。
+2. `document_parse_runs.manifest_uri`：解析产物 manifest 的对象存储 URI。
+3. `evaluation_sessions.report_uri`：评估报告对象存储 URI。
+
+约束：URI 仅作为外部证据定位，不作为在线事务主键。
 
 ## 5. 索引与唯一约束
 

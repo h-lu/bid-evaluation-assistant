@@ -89,7 +89,7 @@ class WorkerRuntime:
 
         self.queue_backend.ack(tenant_id=tenant_id, message_id=msg.message_id)
         stats.acked += 1
-        if final_status == "succeeded":
+        if final_status in {"succeeded", "needs_manual_decision"}:
             stats.succeeded += 1
         else:
             stats.failed += 1

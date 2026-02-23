@@ -3,6 +3,7 @@ import { createRouter, createWebHistory } from "vue-router";
 import DashboardView from "./views/DashboardView.vue";
 import DlqView from "./views/DlqView.vue";
 import DocumentsView from "./views/DocumentsView.vue";
+import EvaluationReportView from "./views/EvaluationReportView.vue";
 import EvaluationsView from "./views/EvaluationsView.vue";
 import JobsView from "./views/JobsView.vue";
 import PlaceholderView from "./views/PlaceholderView.vue";
@@ -18,7 +19,7 @@ export const routes = [
   { path: "/documents/:document_id", component: PlaceholderView, props: true },
   { path: "/evaluations", component: EvaluationsView },
   { path: "/evaluations/:evaluation_id", component: PlaceholderView, props: true },
-  { path: "/evaluations/:evaluation_id/report", component: PlaceholderView, props: true },
+  { path: "/evaluations/:evaluation_id/report", component: EvaluationReportView, props: true },
   { path: "/jobs", component: JobsView },
   { path: "/jobs/:job_id", component: PlaceholderView, props: true },
   { path: "/dlq", component: DlqView },

@@ -273,6 +273,7 @@ Gate A 设计冻结
 15. `docs/design/2026-02-22-workflow-and-worker-production-spec.md`
 16. `docs/design/2026-02-22-security-and-multitenancy-production-spec.md`
 17. `docs/design/2026-02-22-observability-and-deploy-production-spec.md`
+18. `docs/design/2026-02-23-object-storage-worm-spec.md`
 
 ## 10. 一手来源（核验日期：2026-02-21）
 

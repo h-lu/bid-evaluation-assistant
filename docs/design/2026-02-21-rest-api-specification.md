@@ -62,7 +62,7 @@
 
 ## 4. 业务资源接口
 
-### 4.1 Projects（规划，未纳入当前 v1 契约子集）
+### 4.1 Projects
 
 1. `GET /projects`
 2. `POST /projects`
@@ -70,19 +70,33 @@
 4. `PUT /projects/{project_id}`
 5. `DELETE /projects/{project_id}`
 
-### 4.2 Suppliers（规划，未纳入当前 v1 契约子集）
+### 4.2 Suppliers
 
 1. `GET /suppliers`
 2. `POST /suppliers`
 3. `GET /suppliers/{supplier_id}`
 4. `PUT /suppliers/{supplier_id}`
 
-### 4.3 Documents
+### 4.3 Rules
+
+1. `GET /rules`
+2. `POST /rules`
+3. `GET /rules/{rule_pack_version}`
+4. `PUT /rules/{rule_pack_version}`
+5. `DELETE /rules/{rule_pack_version}`
+
+说明：
+
+1. `rule_pack_version` 作为唯一标识。
+2. `rules` 为规则包 JSON。
+
+### 4.4 Documents
 
 1. `POST /documents/upload` -> `202 + parse job_id`（上传后自动投递 parse）
 2. `POST /documents/{document_id}/parse` -> `202 + job_id`（手动重投/补投）
 3. `GET /documents/{document_id}`
-4. `GET /documents/{document_id}/chunks`
+4. `GET /documents/{document_id}/raw`
+5. `GET /documents/{document_id}/chunks`
 
 ### 4.4 Retrieval
 
@@ -178,7 +192,8 @@
 1. 仅内部治理流程使用，必须携带 `x-internal-debug: true`。
 2. `legal-hold/release` 必须满足双人复核与必填 reason。
 3. `storage/cleanup` 对被 hold 对象返回 `409 LEGAL_HOLD_ACTIVE`。
-4. 审计完整性校验失败返回 `409 AUDIT_INTEGRITY_BROKEN`。
+4. `storage/cleanup` 对有 retention 的对象返回 `409 RETENTION_ACTIVE`。
+5. 审计完整性校验失败返回 `409 AUDIT_INTEGRITY_BROKEN`。
 
 ### 4.13 Internal Persistence & Queue（生产化调试）
 
@@ -631,18 +646,23 @@
     "criteria_results": [
       {
         "criteria_id": "delivery",
+        "criteria_name": "交付周期",
+        "requirement_text": "交付周期不超过 30 天",
+        "response_text": "本项目承诺 28 天交付",
         "score": 18.0,
         "max_score": 20.0,
         "hard_pass": true,
         "reason": "交付周期满足要求",
         "citations": ["ck_xxx"],
+        "citations_count": 1,
         "confidence": 0.81
       }
     ],
     "citations": ["ck_xxx"],
     "needs_human_review": false,
     "trace_id": "trace_xxx",
-    "interrupt": null
+    "interrupt": null,
+    "report_uri": "object://local/bea/tenants/tenant_x/reports/ev_xxx/report.json"
   },
   "meta": {
     "trace_id": "trace_xxx"
@@ -671,7 +691,13 @@
 }
 ```
 
-### 5.14 `GET /documents/{document_id}/chunks`
+### 5.14 `GET /documents/{document_id}/raw`
+
+响应 `200`：
+
+返回原始文件内容（`Content-Type` 按文件类型推断）。
+
+### 5.15 `GET /documents/{document_id}/chunks`
 
 响应 `200`：
 
@@ -855,6 +881,7 @@
 ```json
 {
   "release_id": "rel_20260222_01",
+  "dataset_version": "v1.0.0",
   "replay_passed": true,
   "gate_results": {
     "quality": true,
@@ -877,6 +904,7 @@
     "assessment_id": "ra_xxx",
     "release_id": "rel_20260222_01",
     "tenant_id": "tenant_a",
+    "dataset_version": "v1.0.0",
     "admitted": true,
     "failed_checks": [],
     "replay_passed": true,
@@ -901,6 +929,7 @@
 1. 仅内部发布准入流水线使用，必须携带 `x-internal-debug: true`。
 2. 任一门禁为 `false` 或 `replay_passed=false`，都必须阻断发布（`admitted=false`）。
 3. `failed_checks` 必须给出可审计的失败原因列表。
+4. `dataset_version` 为空时必须阻断发布并追加 `DATASET_VERSION_REQUIRED`。
 
 ### 5.16C `POST /internal/release/pipeline/execute`
 
@@ -909,6 +938,7 @@
 ```json
 {
   "release_id": "rel_20260222_01",
+  "dataset_version": "v1.0.0",
   "replay_passed": true,
   "gate_results": {
     "quality": true,
@@ -931,6 +961,7 @@
     "pipeline_id": "pl_xxx",
     "release_id": "rel_20260222_01",
     "tenant_id": "tenant_a",
+    "dataset_version": "v1.0.0",
     "stage": "release_ready",
     "admitted": true,
     "failed_checks": [],

@@ -9,6 +9,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+import jwt
+from jwt import PyJWKClient
+
 from app.errors import ApiError
 
 
@@ -77,6 +80,8 @@ class JwtSecurityConfig:
     issuer: str
     audience: str
     shared_secret: str
+    jwks_url: str
+    alg: str
     required_claims: list[str]
     tenant_claim: str
     approval_required_actions: set[str]
@@ -90,8 +95,10 @@ class JwtSecurityConfig:
         issuer = os.environ.get("JWT_ISSUER", "").strip()
         audience = os.environ.get("JWT_AUDIENCE", "").strip()
         shared_secret = os.environ.get("JWT_SHARED_SECRET", "").strip()
+        jwks_url = os.environ.get("JWT_JWKS_URL", "").strip()
+        alg = os.environ.get("JWT_ALG", "HS256").strip().upper() or "HS256"
         required_claims = _split_csv(os.environ.get("JWT_REQUIRED_CLAIMS", "tenant_id,sub,exp"))
-        enabled = bool(issuer or audience or shared_secret)
+        enabled = bool(issuer or audience or shared_secret or jwks_url)
         approval_required_actions = set(
             _split_csv(os.environ.get("SECURITY_APPROVAL_REQUIRED_ACTIONS", "dlq_discard,legal_hold_release"))
         )
@@ -108,6 +115,8 @@ class JwtSecurityConfig:
             issuer=issuer,
             audience=audience,
             shared_secret=shared_secret,
+            jwks_url=jwks_url,
+            alg=alg,
             required_claims=required_claims,
             tenant_claim=os.environ.get("JWT_TENANT_CLAIM", "tenant_id").strip() or "tenant_id",
             approval_required_actions=approval_required_actions,
@@ -116,6 +125,17 @@ class JwtSecurityConfig:
             secret_scan_enabled=_env_bool("SECURITY_SECRET_SCAN_ENABLED", True),
             trace_id_strict_required=_env_bool("TRACE_ID_STRICT_REQUIRED", False),
         )
+
+
+_JWK_CLIENTS: dict[str, PyJWKClient] = {}
+
+
+def _get_jwk_client(jwks_url: str) -> PyJWKClient:
+    client = _JWK_CLIENTS.get(jwks_url)
+    if client is None:
+        client = PyJWKClient(jwks_url)
+        _JWK_CLIENTS[jwks_url] = client
+    return client
 
 
 def _parse_token_parts(token: str) -> tuple[dict[str, Any], dict[str, Any], str, str]:
@@ -178,9 +198,9 @@ def parse_and_validate_bearer_token(*, authorization: str | None, cfg: JwtSecuri
             retryable=False,
             http_status=401,
         )
-    header_obj, payload_obj, signing_input, signature_raw = _parse_token_parts(token)
-    alg = str(header_obj.get("alg", "")).upper()
-    if alg != "HS256":
+    header_obj, _payload_obj, _signing_input, _signature_raw = _parse_token_parts(token)
+    token_alg = str(header_obj.get("alg", "")).upper()
+    if token_alg != cfg.alg:
         raise ApiError(
             code="AUTH_UNAUTHORIZED",
             message="unsupported jwt algorithm",
@@ -188,82 +208,49 @@ def parse_and_validate_bearer_token(*, authorization: str | None, cfg: JwtSecuri
             retryable=False,
             http_status=401,
         )
-    if not cfg.shared_secret:
-        raise ApiError(
-            code="AUTH_UNAUTHORIZED",
-            message="jwt shared secret not configured",
-            error_class="security_sensitive",
-            retryable=False,
-            http_status=401,
-        )
-    expected = _b64url_encode(
-        hmac.new(
-            cfg.shared_secret.encode("utf-8"),
-            signing_input.encode("ascii"),
-            hashlib.sha256,
-        ).digest()
-    )
-    if not hmac.compare_digest(expected, signature_raw):
-        raise ApiError(
-            code="AUTH_UNAUTHORIZED",
-            message="invalid token signature",
-            error_class="security_sensitive",
-            retryable=False,
-            http_status=401,
-        )
 
-    now_ts = int(datetime.now(UTC).timestamp())
-    exp = _as_int(payload_obj.get("exp"))
-    if exp is None or exp <= now_ts:
-        raise ApiError(
-            code="AUTH_UNAUTHORIZED",
-            message="token expired",
-            error_class="security_sensitive",
-            retryable=False,
-            http_status=401,
-        )
-    nbf = _as_int(payload_obj.get("nbf"))
-    if nbf is not None and nbf > now_ts:
-        raise ApiError(
-            code="AUTH_UNAUTHORIZED",
-            message="token not yet valid",
-            error_class="security_sensitive",
-            retryable=False,
-            http_status=401,
-        )
-
-    if cfg.issuer and str(payload_obj.get("iss", "")) != cfg.issuer:
-        raise ApiError(
-            code="AUTH_UNAUTHORIZED",
-            message="jwt issuer mismatch",
-            error_class="security_sensitive",
-            retryable=False,
-            http_status=401,
-        )
+    decode_kwargs: dict[str, Any] = {
+        "algorithms": [cfg.alg],
+        "options": {"require": cfg.required_claims},
+    }
+    if cfg.issuer:
+        decode_kwargs["issuer"] = cfg.issuer
     if cfg.audience:
-        aud = payload_obj.get("aud")
-        if isinstance(aud, list):
-            aud_ok = cfg.audience in {str(x) for x in aud}
-        else:
-            aud_ok = str(aud or "") == cfg.audience
-        if not aud_ok:
-            raise ApiError(
-                code="AUTH_UNAUTHORIZED",
-                message="jwt audience mismatch",
-                error_class="security_sensitive",
-                retryable=False,
-                http_status=401,
-            )
+        decode_kwargs["audience"] = cfg.audience
 
-    for claim in cfg.required_claims:
-        if claim not in payload_obj:
-            raise ApiError(
-                code="AUTH_UNAUTHORIZED",
-                message=f"missing required claim: {claim}",
-                error_class="security_sensitive",
-                retryable=False,
-                http_status=401,
-            )
+    try:
+        if cfg.alg.startswith("RS"):
+            if not cfg.jwks_url:
+                raise ApiError(
+                    code="AUTH_UNAUTHORIZED",
+                    message="jwks url not configured",
+                    error_class="security_sensitive",
+                    retryable=False,
+                    http_status=401,
+                )
+            jwk_client = _get_jwk_client(cfg.jwks_url)
+            signing_key = jwk_client.get_signing_key_from_jwt(token).key
+            payload_obj = jwt.decode(token, signing_key, **decode_kwargs)
+        else:
+            if not cfg.shared_secret:
+                raise ApiError(
+                    code="AUTH_UNAUTHORIZED",
+                    message="jwt shared secret not configured",
+                    error_class="security_sensitive",
+                    retryable=False,
+                    http_status=401,
+                )
+            payload_obj = jwt.decode(token, cfg.shared_secret, **decode_kwargs)
+    except ApiError:
+        raise
+    except jwt.PyJWTError as exc:
+        raise ApiError(
+            code="AUTH_UNAUTHORIZED",
+            message="invalid token",
+            error_class="security_sensitive",
+            retryable=False,
+            http_status=401,
+        ) from exc
 
     tenant_id = str(payload_obj.get(cfg.tenant_claim) or "").strip()
     subject = str(payload_obj.get("sub") or "").strip()
