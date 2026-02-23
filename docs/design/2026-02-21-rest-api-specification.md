@@ -653,12 +653,24 @@
         "max_score": 20.0,
         "hard_pass": true,
         "reason": "交付周期满足要求",
-        "citations": ["ck_xxx"],
-        "citations_count": 1,
+        "citations": [
+          {
+            "chunk_id": "ck_xxx",
+            "page": 8,
+            "bbox": [120.2, 310.0, 520.8, 365.4]
+          }
+        ],
         "confidence": 0.81
       }
     ],
-    "citations": ["ck_xxx"],
+    "citations": [
+      {
+        "chunk_id": "ck_xxx",
+        "page": 8,
+        "bbox": [120.2, 310.0, 520.8, 365.4],
+        "quote": "本项目承诺 28 天内完成全部交付工作..."
+      }
+    ],
     "needs_human_review": false,
     "trace_id": "trace_xxx",
     "interrupt": null,
@@ -669,6 +681,10 @@
   }
 }
 ```
+
+> **注意**: `citations` 字段格式对齐 `retrieval-and-scoring-spec.md` §11：
+> - 报告级 `citations[]` 包含 `chunk_id/page/bbox/quote`
+> - `criteria_results[].citations[]` 包含 `chunk_id/page/bbox`（无 quote）
 
 ### 5.13 `GET /documents/{document_id}`
 
