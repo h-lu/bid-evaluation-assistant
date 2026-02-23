@@ -387,9 +387,143 @@ if validate_resume_token(resume_token):
 
 ---
 
-## 五、项目进展
+## 五、数据库设计
 
-### 5.1 整体进度
+### 5.1 设计原则
+
+> **原则：业务真值只认 PostgreSQL，向量索引只做召回不做权威存储**
+
+### 5.2 存储架构设计思路
+
+**为什么采用分层存储架构？**
+
+| 考量 | 说明 |
+|------|------|
+| **职责分离** | 业务数据与向量索引分离，避免单一存储瓶颈 |
+| **性能优化** | PostgreSQL 处理事务查询，Chroma 专注向量检索 |
+| **成本控制** | 热数据在 PostgreSQL，向量索引可独立扩展 |
+| **审计合规** | WORM 存储保证原始文件和报告不可篡改 |
+
+### 5.3 存储职责划分
+
+| 存储 | 职责 | 非职责 | 选型理由 |
+|------|------|--------|----------|
+| **PostgreSQL** | 业务真值、状态、审计、checkpoint、DLQ | 向量检索 | 成熟稳定、RLS 原生支持、JSONB 灵活 |
+| **Chroma/LightRAG** | 向量检索与召回索引 | 业务权威状态 | 轻量级、无需重型向量库、支持图增强 |
+| **Redis** | 队列、幂等键、短时缓存、分布式锁 | 永久业务记录 | 高性能、原子操作、成熟生态 |
+| **Object Storage (WORM)** | 原始文件、解析产物、报告归档 | 在线事务查询 | 审计合规、一次写入不可篡改 |
+
+### 5.4 ER 图
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                                  tenants                                     │
+│                                    │                                         │
+│                 ┌──────────────────┼──────────────────┐                     │
+│                 ▼                  ▼                  ▼                     │
+│              users              projects          rule_packs                │
+│                                   │                                          │
+│                      ┌────────────┴────────────┐                            │
+│                      ▼                         ▼                            │
+│            project_suppliers ◄──────────── suppliers                        │
+│                      │                                                      │
+│                      ▼                                                      │
+│                 documents ────────► document_parse_runs                     │
+│                      │                         │                            │
+│                      ▼                         ▼                            │
+│              document_chunks ◄─────── chunk_positions                       │
+│                      │                                                      │
+│                      ▼                                                      │
+│           evaluation_sessions ──────► evaluation_items                      │
+│                      │                         │                            │
+│                      ▼                         ▼                            │
+│            evaluation_results ◄──────── citations                           │
+│                                                                                 │
+│           ┌──────────┬──────────┬──────────┬──────────┐                    │
+│           ▼          ▼          ▼          ▼          ▼                    │
+│          jobs   workflow_   dlq_items  audit_logs  domain_events           │
+│                  checkpoints                      _outbox                    │
+│                                                                                 │
+│                              legal_hold_objects                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 5.5 ER 设计思路
+
+**域划分原则**：
+- **基础域**：租户、用户、项目、供应商、规则包
+- **文档域**：文档、解析记录、分块、位置信息
+- **评估域**：评估会话、评分项、结果、引用
+- **治理域**：任务、检查点、DLQ、审计日志
+
+**设计考量**：
+- **可追溯**：每个评分项关联 citation，citation 关联 chunk 和位置
+- **可恢复**：workflow_checkpoints 记录完整状态，支持中断恢复
+- **可审计**：audit_logs 记录所有操作，支持链式哈希验证
+- **多租户**：所有表都有 tenant_id，支持 RLS 隔离
+
+### 5.6 核心表结构
+
+#### 基础域
+
+| 表 | 主要字段 |
+|----|----------|
+| `projects` | project_id, tenant_id, project_code, name, ruleset_version |
+| `suppliers` | supplier_id, tenant_id, supplier_code, name, qualification_json |
+| `rule_packs` | rule_pack_version, tenant_id, name, status, payload |
+
+#### 文档域
+
+| 表 | 主要字段 |
+|----|----------|
+| `documents` | document_id, tenant_id, doc_type, filename, sha256, storage_uri |
+| `document_chunks` | chunk_id, document_id, chunk_index, content, heading_path |
+| `chunk_positions` | chunk_id, page_no, x0, y0, x1, y1 (bbox) |
+
+#### 评估域
+
+| 表 | 主要字段 |
+|----|----------|
+| `evaluation_sessions` | evaluation_id, tenant_id, status, total_score, confidence, report_uri |
+| `evaluation_items` | item_id, criteria_id, hard_pass, score, max_score, reason |
+| `citations` | citation_id, chunk_id, page_no, bbox_json, quote |
+
+#### 任务与治理域
+
+| 表 | 主要字段 |
+|----|----------|
+| `jobs` | job_id, job_type, status, retry_count, trace_id, payload_json |
+| `workflow_checkpoints` | checkpoint_id, thread_id, evaluation_id, state_json |
+| `dlq_items` | dlq_id, job_id, error_class, error_code, status |
+| `audit_logs` | audit_id, actor_id, action, resource_type, trace_id |
+
+### 5.7 多租户隔离 (RLS)
+
+**策略要求**：
+1. 核心业务表全部启用 RLS
+2. 连接会话必须先设置 `app.current_tenant`
+3. 无 tenant 上下文时拒绝查询
+
+**策略模板**：
+```sql
+USING (tenant_id = current_setting('app.current_tenant')::uuid)
+WITH CHECK (tenant_id = current_setting('app.current_tenant')::uuid)
+```
+
+### 5.8 索引策略
+
+| 表 | 索引 | 用途 |
+|----|------|------|
+| `documents` | (tenant_id, project_id, supplier_id, created_at DESC) | 文档列表查询 |
+| `evaluation_sessions` | (tenant_id, project_id, status, created_at DESC) | 评估列表查询 |
+| `jobs` | (tenant_id, status, created_at DESC) | 任务状态查询 |
+| `workflow_checkpoints` | (tenant_id, thread_id, updated_at DESC) | 状态恢复 |
+
+---
+
+## 六、项目进展
+
+### 6.1 整体进度
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -398,7 +532,7 @@ if validate_resume_token(resume_token):
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### 5.2 已完成工作
+### 6.2 已完成工作
 
 | 模块 | 完成度 | 说明 |
 |------|--------|------|
@@ -412,7 +546,7 @@ if validate_resume_token(resume_token):
 | **Mock LLM** | ✅ 100% | 端到端流程可运行 |
 | **测试覆盖** | ✅ 100% | 254 测试全部通过 |
 
-### 5.3 代码统计
+### 6.3 代码统计
 
 | 指标 | 数值 |
 |------|------|
@@ -423,7 +557,7 @@ if validate_resume_token(resume_token):
 | API 端点 | 66 个 |
 | 测试用例 | 254 个 |
 
-### 5.4 进行中工作
+### 6.4 进行中工作
 
 | 任务 | 状态 | 预计完成 |
 |------|------|----------|
@@ -433,9 +567,9 @@ if validate_resume_token(resume_token):
 
 ---
 
-## 六、后续计划
+## 七、后续计划
 
-### 6.1 第一阶段：核心业务逻辑（2-3 周）
+### 7.1 第一阶段：核心业务逻辑（2-3 周）
 
 ```
 Week 1: 文档解析
@@ -456,7 +590,7 @@ Week 3: LLM 集成
 └── 实现结构化输出解析
 ```
 
-### 6.2 第二阶段：端到端验证（1 周）
+### 7.2 第二阶段：端到端验证（1 周）
 
 ```
 ├── 集成测试套件
@@ -465,7 +599,7 @@ Week 3: LLM 集成
 └── 性能基准测试
 ```
 
-### 6.3 第三阶段：生产就绪（1 周）
+### 7.3 第三阶段：生产就绪（1 周）
 
 ```
 ├── 监控与告警 (Prometheus)
@@ -476,7 +610,7 @@ Week 3: LLM 集成
 
 ---
 
-## 七、风险评估
+## 八、风险评估
 
 | 风险 | 可能性 | 影响 | 缓解措施 |
 |------|--------|------|----------|
@@ -487,22 +621,22 @@ Week 3: LLM 集成
 
 ---
 
-## 八、总结
+## 九、总结
 
-### 8.1 关键成果
+### 9.1 关键成果
 
 1. **架构完整**：API、状态机、存储、安全、运维框架全部就绪
 2. **质量保障**：254 测试全部通过，CI 自动化
 3. **规范对齐**：代码与 SSOT 设计文档 100% 一致
 4. **可演示**：Mock LLM 支持端到端流程演示
 
-### 8.2 下一步重点
+### 9.2 下一步重点
 
 1. **LLM 适配层**：实现多供应商切换 + 本地部署支持
 2. **向量检索**：pgvector 实现
 3. **文档解析**：MinerU/Docling 集成
 
-### 8.3 预期里程碑
+### 9.3 预期里程碑
 
 | 时间节点 | 里程碑 |
 |----------|--------|
