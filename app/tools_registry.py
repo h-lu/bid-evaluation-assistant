@@ -33,6 +33,25 @@ def list_tools() -> list[ToolSpec]:
     return list(_REGISTRY.values())
 
 
+def list_tool_specs() -> list[dict[str, Any]]:
+    specs: list[dict[str, Any]] = []
+    for spec in list_tools():
+        specs.append(
+            {
+                "name": spec.name,
+                "description": spec.description,
+                "input_schema": spec.input_schema,
+                "output_schema": spec.output_schema,
+                "side_effect_level": spec.side_effect_level,
+                "idempotency_policy": spec.idempotency_policy,
+                "timeout_retry_policy": spec.timeout_retry_policy,
+                "owner": spec.owner,
+                "risk_level": spec.risk_level,
+            }
+        )
+    return specs
+
+
 def get_tool(name: str) -> ToolSpec:
     if name not in _REGISTRY:
         raise KeyError(f"unknown tool: {name}")

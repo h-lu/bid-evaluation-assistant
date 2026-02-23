@@ -47,7 +47,7 @@ from app.schemas import (
 )
 from app.security_gates import evaluate_security_gate
 from app.security import JwtSecurityConfig, parse_and_validate_bearer_token, redact_sensitive
-from app.tools_registry import ensure_valid_input, hash_payload, require_tool
+from app.tools_registry import ensure_valid_input, hash_payload, list_tool_specs, require_tool
 from app.store import store
 from app.runtime_profile import true_stack_required
 
@@ -1443,6 +1443,21 @@ def create_app() -> FastAPI:
             gate_results=gate_results,
         )
         return success_envelope(data, _trace_id_from_request(request))
+
+    @app.get("/api/v1/internal/tools/registry")
+    def internal_list_tool_registry(
+        request: Request,
+        x_internal_debug: str | None = Header(default=None, alias="x-internal-debug"),
+    ):
+        if x_internal_debug != "true":
+            raise ApiError(
+                code="AUTH_FORBIDDEN",
+                message="internal endpoint forbidden",
+                error_class="security_sensitive",
+                retryable=False,
+                http_status=403,
+            )
+        return success_envelope({"items": list_tool_specs()}, _trace_id_from_request(request))
 
     @app.get("/api/v1/internal/ops/metrics/summary")
     def internal_get_ops_metrics_summary(
