@@ -57,6 +57,30 @@ body {
   gap: 0.8rem;
 }
 
+.session-panel {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border-radius: 12px;
+  border: 1px dashed var(--border);
+  background: #fbfffe;
+}
+
+.session-field label {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+select {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.5rem 0.7rem;
+  background: #fff;
+  font-family: inherit;
+}
+
 .menu a {
   text-decoration: none;
   color: var(--text);
@@ -97,6 +121,17 @@ body {
 @media (min-width: 900px) {
   .grid.two-col {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .topbar {
+    grid-template-columns: 2fr 1fr;
+    align-items: center;
+  }
+
+  .session-panel {
+    justify-self: end;
+    width: 100%;
+    max-width: 360px;
   }
 }
 
@@ -141,6 +176,33 @@ button.danger {
   border-color: var(--danger);
 }
 
+button:disabled,
+input:disabled,
+textarea:disabled,
+select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.link-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  padding: 0.45rem 0.9rem;
+  border-radius: 10px;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  background: #fff;
+}
+
+.dlq-approver {
+  display: grid;
+  gap: 0.6rem;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  margin: 0.75rem 0 1rem;
+}
+
 .meta {
   color: var(--muted);
   font-size: 0.85rem;
@@ -162,4 +224,101 @@ td {
   border-bottom: 1px solid var(--border);
   padding: 0.45rem;
   text-align: left;
+}
+
+.report-layout {
+  display: grid;
+  gap: 1rem;
+}
+
+.report-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+}
+
+.report-meta {
+  display: grid;
+  gap: 0.4rem;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  margin-bottom: 1rem;
+}
+
+.criteria-table .chip {
+  margin: 0.2rem 0.3rem 0.2rem 0;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #f2f6f5;
+  cursor: pointer;
+}
+
+.evidence-card {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.evidence-meta {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.quote {
+  font-style: italic;
+  background: #f9f7f1;
+  border-left: 3px solid var(--accent);
+  padding: 0.5rem 0.75rem;
+}
+
+.pdf-pane {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.75rem;
+  background: #f8faf9;
+}
+
+.pdf-header {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-bottom: 0.6rem;
+}
+
+.pdf-canvas {
+  position: relative;
+  aspect-ratio: 3 / 4;
+  background: #ffffff;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.pdf-page {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, #ffffff 0%, #f4f7f6 100%);
+}
+
+.highlight-box {
+  position: absolute;
+  border: 2px solid #f59e0b;
+  background: rgba(245, 158, 11, 0.2);
+  box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.2) inset;
+}
+
+.review-card .review-form {
+  display: grid;
+  gap: 0.6rem;
+}
+
+@media (min-width: 1100px) {
+  .report-layout {
+    grid-template-columns: 2fr 1fr;
+  }
+
+  .evidence-card {
+    grid-row: span 2;
+  }
 }

@@ -205,3 +205,5 @@
    - `POST /api/v1/dlq/items/{item_id}/requeue`
    - `POST /api/v1/dlq/items/{item_id}/discard`
 4. 前端启动说明见：`frontend/README.md`。
+5. 新增评估报告页与证据面板，支持 citation 回跳与 bbox 高亮。
+6. 引入角色门控 UI（上传/评估/复核/DLQ 操作）。
