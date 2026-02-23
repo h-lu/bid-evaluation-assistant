@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import mimetypes
 import os
+import time
 import uuid
 from collections.abc import Mapping
 
@@ -46,6 +47,7 @@ from app.schemas import (
 )
 from app.security_gates import evaluate_security_gate
 from app.security import JwtSecurityConfig, parse_and_validate_bearer_token, redact_sensitive
+from app.tools_registry import ensure_valid_input, hash_payload, require_tool
 from app.store import store
 from app.runtime_profile import true_stack_required
 
@@ -153,6 +155,38 @@ def create_app() -> FastAPI:
             )
         except Exception:
             # Security audit failures must not break API responses.
+            return
+
+    def _append_tool_audit_log(
+        *,
+        request: Request,
+        tool_name: str,
+        risk_level: str,
+        input_payload: dict[str, Any],
+        result_summary: str,
+        status: str,
+        latency_ms: int,
+    ) -> None:
+        try:
+            store._append_audit_log(  # type: ignore[attr-defined]
+                log={
+                    "audit_id": f"audit_{uuid.uuid4().hex[:12]}",
+                    "tenant_id": _tenant_id_from_request(request),
+                    "action": "tool_call",
+                    "trace_id": _trace_id_from_request(request),
+                    "occurred_at": store._utcnow_iso(),  # type: ignore[attr-defined]
+                    "payload": {
+                        "tool_name": tool_name,
+                        "risk_level": risk_level,
+                        "agent_id": getattr(request.state, "auth_subject", "anonymous"),
+                        "input_hash": hash_payload(input_payload),
+                        "result_summary": result_summary,
+                        "status": status,
+                        "latency_ms": latency_ms,
+                    },
+                }
+            )
+        except Exception:
             return
 
     def _require_approval(
@@ -1002,6 +1036,9 @@ def create_app() -> FastAPI:
             reason=payload.reason,
         )
         req_payload = payload.model_dump(mode="json")
+        tool_spec = require_tool("dlq_discard")
+        ensure_valid_input(tool_spec, {"item_id": item_id, **req_payload})
+        started = time.monotonic()
         data = store.run_idempotent(
             endpoint=f"POST:/api/v1/dlq/items/{item_id}/discard",
             tenant_id=_tenant_id_from_request(request),
@@ -1015,6 +1052,15 @@ def create_app() -> FastAPI:
                 tenant_id=_tenant_id_from_request(request),
                 trace_id=_trace_id_from_request(request),
             ),
+        )
+        _append_tool_audit_log(
+            request=request,
+            tool_name=tool_spec.name,
+            risk_level=tool_spec.risk_level,
+            input_payload={"item_id": item_id, **req_payload},
+            result_summary="discarded",
+            status="success",
+            latency_ms=int((time.monotonic() - started) * 1000),
         )
         return success_envelope(data, _trace_id_from_request(request))
 
@@ -1562,6 +1608,10 @@ def create_app() -> FastAPI:
             reviewer_id_2=payload.reviewer_id_2,
             reason=payload.reason,
         )
+        tool_spec = require_tool("legal_hold_release")
+        req_payload = payload.model_dump(mode="json")
+        ensure_valid_input(tool_spec, {"hold_id": hold_id, **req_payload})
+        started = time.monotonic()
         data = store.release_legal_hold(
             hold_id=hold_id,
             tenant_id=_tenant_id_from_request(request),
@@ -1569,6 +1619,15 @@ def create_app() -> FastAPI:
             reviewer_id=payload.reviewer_id,
             reviewer_id_2=payload.reviewer_id_2,
             trace_id=_trace_id_from_request(request),
+        )
+        _append_tool_audit_log(
+            request=request,
+            tool_name=tool_spec.name,
+            risk_level=tool_spec.risk_level,
+            input_payload={"hold_id": hold_id, **req_payload},
+            result_summary="released",
+            status="success",
+            latency_ms=int((time.monotonic() - started) * 1000),
         )
         return success_envelope(data, _trace_id_from_request(request))
 

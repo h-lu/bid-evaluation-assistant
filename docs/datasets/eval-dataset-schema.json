@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Evaluation Dataset Sample",
+  "type": "object",
+  "properties": {
+    "sample_id": {"type": "string"},
+    "dataset_version": {"type": "string"},
+    "tenant_scope": {"type": "string"},
+    "task_type": {"type": "string"},
+    "input_payload_ref": {"type": "string"},
+    "expected_output_or_constraints": {"type": "string"},
+    "expected_citations": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "risk_label": {"type": "string"},
+    "source": {
+      "type": "string",
+      "enum": ["golden", "adversarial", "drift", "online_feedback"]
+    },
+    "created_at": {"type": "string"}
+  },
+  "required": [
+    "sample_id",
+    "dataset_version",
+    "tenant_scope",
+    "task_type",
+    "input_payload_ref",
+    "expected_output_or_constraints",
+    "expected_citations",
+    "risk_label",
+    "source",
+    "created_at"
+  ],
+  "additionalProperties": true
+}
