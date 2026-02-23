@@ -27,6 +27,7 @@ def test_internal_release_readiness_evaluate_success(client):
         headers={"x-internal-debug": "true", "x-tenant-id": "tenant_release"},
         json={
             "release_id": "rel_p6_001",
+            "dataset_version": "v1.0.0",
             "replay_passed": True,
             "gate_results": {
                 "quality": True,

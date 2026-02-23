@@ -274,6 +274,7 @@ def test_sqlite_store_persists_release_replay_and_readiness(tmp_path: Path):
         release_id="rel_store_001",
         tenant_id="tenant_store",
         trace_id="trace_store",
+        dataset_version="v1.0.0",
         replay_passed=True,
         gate_results={
             "quality": True,

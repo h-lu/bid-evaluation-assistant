@@ -51,6 +51,7 @@ def test_release_pipeline_ready_when_gates_and_replay_pass(client):
         headers={"x-internal-debug": "true", "x-tenant-id": "tenant_pipeline"},
         json={
             "release_id": "rel_p5_003",
+            "dataset_version": "v1.0.0",
             "replay_passed": True,
             "gate_results": _all_gates_true(),
         },

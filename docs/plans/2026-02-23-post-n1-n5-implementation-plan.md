@@ -120,7 +120,7 @@ SSOT 对齐要点：
 
 输入：
 1. `docs/design/2026-02-22-parser-and-retrieval-production-spec.md`。
-2. `docs/design/2026-02-21-end-to-end-unified-design.md`。
+2. `docs/plans/2026-02-21-end-to-end-unified-design.md`。
 
 产出：
 1. 解析器与检索器统一接口及参数约束。

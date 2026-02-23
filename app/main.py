@@ -47,7 +47,7 @@ from app.schemas import (
 )
 from app.security_gates import evaluate_security_gate
 from app.security import JwtSecurityConfig, parse_and_validate_bearer_token, redact_sensitive
-from app.tools_registry import ensure_valid_input, hash_payload, list_tool_specs, require_tool
+from app.tools_registry import execute_tool, hash_payload, list_tool_specs, require_tool
 from app.store import store
 from app.runtime_profile import true_stack_required
 
@@ -1037,22 +1037,48 @@ def create_app() -> FastAPI:
         )
         req_payload = payload.model_dump(mode="json")
         tool_spec = require_tool("dlq_discard")
-        ensure_valid_input(tool_spec, {"item_id": item_id, **req_payload})
         started = time.monotonic()
-        data = store.run_idempotent(
-            endpoint=f"POST:/api/v1/dlq/items/{item_id}/discard",
-            tenant_id=_tenant_id_from_request(request),
-            idempotency_key=idempotency_key,
-            payload=req_payload,
-            execute=lambda: store.discard_dlq_item(
-                dlq_id=item_id,
-                reason=payload.reason,
-                reviewer_id=payload.reviewer_id,
-                reviewer_id_2=payload.reviewer_id_2,
+        try:
+            data = store.run_idempotent(
+                endpoint=f"POST:/api/v1/dlq/items/{item_id}/discard",
                 tenant_id=_tenant_id_from_request(request),
-                trace_id=_trace_id_from_request(request),
-            ),
-        )
+                idempotency_key=idempotency_key,
+                payload=req_payload,
+                execute=lambda: execute_tool(
+                    tool_spec,
+                    input_payload={"item_id": item_id, **req_payload},
+                    invoke=lambda: store.discard_dlq_item(
+                        dlq_id=item_id,
+                        reason=payload.reason,
+                        reviewer_id=payload.reviewer_id,
+                        reviewer_id_2=payload.reviewer_id_2,
+                        tenant_id=_tenant_id_from_request(request),
+                        trace_id=_trace_id_from_request(request),
+                    ),
+                ),
+            )
+        except ApiError as exc:
+            _append_tool_audit_log(
+                request=request,
+                tool_name=tool_spec.name,
+                risk_level=tool_spec.risk_level,
+                input_payload={"item_id": item_id, **req_payload},
+                result_summary=exc.code,
+                status="failed",
+                latency_ms=int((time.monotonic() - started) * 1000),
+            )
+            raise
+        except Exception:
+            _append_tool_audit_log(
+                request=request,
+                tool_name=tool_spec.name,
+                risk_level=tool_spec.risk_level,
+                input_payload={"item_id": item_id, **req_payload},
+                result_summary="unexpected_error",
+                status="failed",
+                latency_ms=int((time.monotonic() - started) * 1000),
+            )
+            raise
         _append_tool_audit_log(
             request=request,
             tool_name=tool_spec.name,
@@ -1530,13 +1556,57 @@ def create_app() -> FastAPI:
             reviewer_id_2=x_reviewer_id_2 or "",
             reason=x_approval_reason or "",
         )
-        data = store.apply_strategy_tuning(
-            release_id=payload.release_id,
-            selector=payload.selector.model_dump(mode="json"),
-            score_calibration=payload.score_calibration.model_dump(mode="json"),
-            tool_policy=payload.tool_policy.model_dump(mode="json"),
-            tenant_id=_tenant_id_from_request(request),
-            trace_id=_trace_id_from_request(request),
+        tool_spec = require_tool("strategy_tuning_apply")
+        req_payload = {
+            "release_id": payload.release_id,
+            "selector": payload.selector.model_dump(mode="json"),
+            "score_calibration": payload.score_calibration.model_dump(mode="json"),
+            "tool_policy": payload.tool_policy.model_dump(mode="json"),
+        }
+        started = time.monotonic()
+        try:
+            data = execute_tool(
+                tool_spec,
+                input_payload=req_payload,
+                invoke=lambda: store.apply_strategy_tuning(
+                    release_id=payload.release_id,
+                    selector=payload.selector.model_dump(mode="json"),
+                    score_calibration=payload.score_calibration.model_dump(mode="json"),
+                    tool_policy=payload.tool_policy.model_dump(mode="json"),
+                    tenant_id=_tenant_id_from_request(request),
+                    trace_id=_trace_id_from_request(request),
+                ),
+            )
+        except ApiError as exc:
+            _append_tool_audit_log(
+                request=request,
+                tool_name=tool_spec.name,
+                risk_level=tool_spec.risk_level,
+                input_payload=req_payload,
+                result_summary=exc.code,
+                status="failed",
+                latency_ms=int((time.monotonic() - started) * 1000),
+            )
+            raise
+        except Exception:
+            _append_tool_audit_log(
+                request=request,
+                tool_name=tool_spec.name,
+                risk_level=tool_spec.risk_level,
+                input_payload=req_payload,
+                result_summary="unexpected_error",
+                status="failed",
+                latency_ms=int((time.monotonic() - started) * 1000),
+            )
+            raise
+        _append_tool_audit_log(
+            request=request,
+            tool_name=tool_spec.name,
+            risk_level=tool_spec.risk_level,
+            input_payload=req_payload,
+            result_summary="strategy_applied",
+            status="success",
+            latency_ms=int((time.monotonic() - started) * 1000),
         )
         return success_envelope(data, _trace_id_from_request(request))
 
@@ -1629,16 +1699,42 @@ def create_app() -> FastAPI:
         )
         tool_spec = require_tool("legal_hold_release")
         req_payload = payload.model_dump(mode="json")
-        ensure_valid_input(tool_spec, {"hold_id": hold_id, **req_payload})
         started = time.monotonic()
-        data = store.release_legal_hold(
-            hold_id=hold_id,
-            tenant_id=_tenant_id_from_request(request),
-            reason=payload.reason,
-            reviewer_id=payload.reviewer_id,
-            reviewer_id_2=payload.reviewer_id_2,
-            trace_id=_trace_id_from_request(request),
-        )
+        try:
+            data = execute_tool(
+                tool_spec,
+                input_payload={"hold_id": hold_id, **req_payload},
+                invoke=lambda: store.release_legal_hold(
+                    hold_id=hold_id,
+                    tenant_id=_tenant_id_from_request(request),
+                    reason=payload.reason,
+                    reviewer_id=payload.reviewer_id,
+                    reviewer_id_2=payload.reviewer_id_2,
+                    trace_id=_trace_id_from_request(request),
+                ),
+            )
+        except ApiError as exc:
+            _append_tool_audit_log(
+                request=request,
+                tool_name=tool_spec.name,
+                risk_level=tool_spec.risk_level,
+                input_payload={"hold_id": hold_id, **req_payload},
+                result_summary=exc.code,
+                status="failed",
+                latency_ms=int((time.monotonic() - started) * 1000),
+            )
+            raise
+        except Exception:
+            _append_tool_audit_log(
+                request=request,
+                tool_name=tool_spec.name,
+                risk_level=tool_spec.risk_level,
+                input_payload={"hold_id": hold_id, **req_payload},
+                result_summary="unexpected_error",
+                status="failed",
+                latency_ms=int((time.monotonic() - started) * 1000),
+            )
+            raise
         _append_tool_audit_log(
             request=request,
             tool_name=tool_spec.name,
