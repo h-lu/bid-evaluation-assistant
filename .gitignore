@@ -67,3 +67,6 @@ worktrees/
 
 # Artifacts
 artifacts/
+
+# Secrets
+secrets/

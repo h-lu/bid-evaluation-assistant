@@ -198,6 +198,8 @@ python3 scripts/rollback_to_sqlite.py --env .env.production
 pytest -q tests/test_gate_d_other_gates.py tests/test_gate_e_rollout_and_rollback.py tests/test_gate_f_ops_optimization.py
 ```
 
+Compose 启动与运行步骤见：`docs/ops/2026-02-23-production-compose-runbook.md`
+
 ## 11. 端到端验收（真栈）
 
 1. API 运行于真实 PG/Redis。
@@ -232,4 +234,3 @@ E2E_API_BASE_URL=http://<api-host> npm run test:e2e
 2. 提供 PostgreSQL/Redis/对象存储/向量库的 DSN 或访问方式。
 3. 指定部署平台（Compose/K8s/云托管）。
 4. 允许执行真实压测与演练。
-
