@@ -80,6 +80,11 @@
 1. `LEGAL_HOLD_ACTIVE`
 2. `RETENTION_ACTIVE`
 
+### 3.8 存储与归档
+
+1. `DOC_STORAGE_URI_MISSING`
+2. `DOC_STORAGE_MISSING`
+
 ## 4. API 错误响应规则
 
 1. 生产环境不返回堆栈。

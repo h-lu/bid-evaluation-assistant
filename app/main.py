@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import hashlib
+import mimetypes
 import os
 import uuid
 from collections.abc import Mapping
 
-from fastapi import Body, FastAPI, File, Form, Header, Query, Request, UploadFile
+from fastapi import Body, FastAPI, File, Form, Header, Query, Request, Response, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.cost_gates import evaluate_cost_gate
@@ -116,6 +118,16 @@ def _job_type_from_event_type(event_type: str) -> str:
 def create_app() -> FastAPI:
     app = FastAPI(title="Bid Evaluation Assistant API", version="0.1.0")
     security_cfg = JwtSecurityConfig.from_env()
+    cors_origins = os.environ.get("CORS_ALLOW_ORIGINS", "http://127.0.0.1:5173,http://localhost:5173")
+    allow_origins = [x.strip() for x in cors_origins.split(",") if x.strip()]
+    if allow_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=allow_origins,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
     def _append_security_audit_log(
         *,
@@ -669,6 +681,43 @@ def create_app() -> FastAPI:
             },
             _trace_id_from_request(request),
         )
+
+    @app.get("/api/v1/documents/{document_id}/raw")
+    def get_document_raw(document_id: str, request: Request):
+        document = store.get_document_for_tenant(
+            document_id=document_id,
+            tenant_id=_tenant_id_from_request(request),
+        )
+        if document is None:
+            raise ApiError(
+                code="DOC_NOT_FOUND",
+                message="document not found",
+                error_class="validation",
+                retryable=False,
+                http_status=404,
+            )
+        storage_uri = document.get("storage_uri")
+        if not isinstance(storage_uri, str) or not storage_uri:
+            raise ApiError(
+                code="DOC_STORAGE_URI_MISSING",
+                message="document storage uri missing",
+                error_class="validation",
+                retryable=False,
+                http_status=404,
+            )
+        try:
+            payload = store.object_storage.get_object(storage_uri=storage_uri)
+        except FileNotFoundError:
+            raise ApiError(
+                code="DOC_STORAGE_MISSING",
+                message="document object not found",
+                error_class="validation",
+                retryable=False,
+                http_status=404,
+            )
+        filename = document.get("filename") or ""
+        content_type, _ = mimetypes.guess_type(str(filename))
+        return Response(content=payload, media_type=content_type or "application/octet-stream")
 
     @app.get("/api/v1/documents/{document_id}/chunks")
     def get_document_chunks(document_id: str, request: Request):

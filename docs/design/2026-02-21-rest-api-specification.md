@@ -95,7 +95,8 @@
 1. `POST /documents/upload` -> `202 + parse job_id`（上传后自动投递 parse）
 2. `POST /documents/{document_id}/parse` -> `202 + job_id`（手动重投/补投）
 3. `GET /documents/{document_id}`
-4. `GET /documents/{document_id}/chunks`
+4. `GET /documents/{document_id}/raw`
+5. `GET /documents/{document_id}/chunks`
 
 ### 4.4 Retrieval
 
@@ -645,11 +646,15 @@
     "criteria_results": [
       {
         "criteria_id": "delivery",
+        "criteria_name": "交付周期",
+        "requirement_text": "交付周期不超过 30 天",
+        "response_text": "本项目承诺 28 天交付",
         "score": 18.0,
         "max_score": 20.0,
         "hard_pass": true,
         "reason": "交付周期满足要求",
         "citations": ["ck_xxx"],
+        "citations_count": 1,
         "confidence": 0.81
       }
     ],
@@ -686,7 +691,13 @@
 }
 ```
 
-### 5.14 `GET /documents/{document_id}/chunks`
+### 5.14 `GET /documents/{document_id}/raw`
+
+响应 `200`：
+
+返回原始文件内容（`Content-Type` 按文件类型推断）。
+
+### 5.15 `GET /documents/{document_id}/chunks`
 
 响应 `200`：
 
