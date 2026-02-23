@@ -853,7 +853,7 @@ class InMemoryStore:
         max_total = sum(float(item.get("max_score", 0.0)) * float(item.get("weight", 1.0)) for item in criteria_results) or 1.0
         citation_coverage = len(resolvable) / max(len(citations_all), 1)
         evidence_quality = citation_coverage
-        retrieval_agreement = citation_coverage
+        retrieval_agreement = self._calculate_retrieval_agreement(citations_all)
         model_stability = 0.85 if hard_constraint_pass else 0.7
         base_confidence = 0.4 * evidence_quality + 0.3 * retrieval_agreement + 0.3 * model_stability
         score_calibration = self.strategy_config.get("score_calibration", {})
@@ -2059,6 +2059,49 @@ class InMemoryStore:
         批量解析 chunk_id 列表为 citation 对象列表。
         """
         return [self._resolve_citation(cid, include_quote=include_quote) for cid in chunk_ids]
+
+    def _calculate_retrieval_agreement(self, chunk_ids: list[str]) -> float:
+        """
+        计算检索一致性 (retrieval_agreement)。
+
+        基于引用来源的 score_raw 分布计算：
+        - 如果所有 citation 的 score_raw 都较高且接近，认为一致性好
+        - 如果 score_raw 分散，认为一致性差
+
+        Returns:
+            float: 0.0 ~ 1.0
+        """
+        if not chunk_ids:
+            return 0.0
+
+        scores = []
+        for cid in chunk_ids:
+            source = self.citation_sources.get(cid)
+            if source and "score_raw" in source:
+                try:
+                    scores.append(float(source.get("score_raw", 0)))
+                except (TypeError, ValueError):
+                    pass
+
+        if not scores:
+            return 0.5  # 无分数数据时返回中等值
+
+        if len(scores) == 1:
+            return 1.0  # 单个结果，完全一致
+
+        # 计算分数的变异系数 (CV = std / mean)
+        mean_score = sum(scores) / len(scores)
+        if mean_score == 0:
+            return 0.5
+
+        variance = sum((s - mean_score) ** 2 for s in scores) / len(scores)
+        std_dev = variance ** 0.5
+        cv = std_dev / mean_score
+
+        # CV 越小，一致性越高
+        # CV=0 → agreement=1.0, CV>=1 → agreement=0.0
+        agreement = max(0.0, min(1.0, 1.0 - cv))
+        return agreement
 
     @staticmethod
     def _select_retrieval_mode(*, query_type: str, high_risk: bool) -> str:
