@@ -96,11 +96,14 @@ def mock_retrieve_evidence(
     # 如果没有匹配，生成通用证据
     if not matched_keywords:
         matched_keywords = [
-            ("通用", {
-                "text": f"关于 {query[:20]}... 的相关内容",
-                "page": 1,
-                "score_raw": MOCK_LLM_SCORE_BASELINE,
-            })
+            (
+                "通用",
+                {
+                    "text": f"关于 {query[:20]}... 的相关内容",
+                    "page": 1,
+                    "score_raw": MOCK_LLM_SCORE_BASELINE,
+                },
+            )
         ]
 
     # 生成确定性 chunk_id 和结果
@@ -108,15 +111,17 @@ def mock_retrieve_evidence(
         seed = f"{tenant_id or 'default'}:{supplier_id or 'default'}:{kw}:{i}"
         chunk_id = f"ck_{hashlib.sha256(seed.encode()).hexdigest()[:16]}"
 
-        results.append({
-            "chunk_id": chunk_id,
-            "page": data["page"],
-            "bbox": [100.0 + i * 10, 200.0 + i * 5, 400.0 + i * 10, 250.0 + i * 5],
-            "text": data["text"],
-            "score_raw": data["score_raw"],
-            "tenant_id": tenant_id or "tenant_default",
-            "supplier_id": supplier_id,
-        })
+        results.append(
+            {
+                "chunk_id": chunk_id,
+                "page": data["page"],
+                "bbox": [100.0 + i * 10, 200.0 + i * 5, 400.0 + i * 10, 250.0 + i * 5],
+                "text": data["text"],
+                "score_raw": data["score_raw"],
+                "tenant_id": tenant_id or "tenant_default",
+                "supplier_id": supplier_id,
+            }
+        )
 
     return results
 

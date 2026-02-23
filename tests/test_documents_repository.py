@@ -108,9 +108,7 @@ def test_postgres_documents_repository_upsert_get_replace_and_list():
     assert runner.tenants[0] == "tenant_a"
     assert "INSERT INTO documents" in statements[0][0]
 
-    current_doc_row.append(
-        ("doc_repo_1", "tenant_a", "prj_a", "sup_a", "bid", "bid.pdf", "abc", 12, "uploaded", None)
-    )
+    current_doc_row.append(("doc_repo_1", "tenant_a", "prj_a", "sup_a", "bid", "bid.pdf", "abc", 12, "uploaded", None))
     loaded = repo.get(tenant_id="tenant_a", document_id="doc_repo_1")
     assert loaded is not None
     assert loaded["document_id"] == "doc_repo_1"

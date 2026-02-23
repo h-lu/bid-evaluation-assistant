@@ -13,11 +13,7 @@ class CopyingWorkflowRepository:
         return dict(item)
 
     def list(self, *, thread_id: str, tenant_id: str, limit: int = 100) -> list[dict]:
-        return [
-            dict(x)
-            for x in self.rows.get(thread_id, [])
-            if x.get("tenant_id") == tenant_id
-        ][:limit]
+        return [dict(x) for x in self.rows.get(thread_id, []) if x.get("tenant_id") == tenant_id][:limit]
 
 
 class CopyingDlqRepository:
@@ -50,9 +46,7 @@ class CopyingAuditRepository:
 
     def list_for_evaluation(self, *, tenant_id: str, evaluation_id: str) -> list[dict]:
         return [
-            dict(x)
-            for x in self.rows
-            if x.get("tenant_id") == tenant_id and x.get("evaluation_id") == evaluation_id
+            dict(x) for x in self.rows if x.get("tenant_id") == tenant_id and x.get("evaluation_id") == evaluation_id
         ]
 
 

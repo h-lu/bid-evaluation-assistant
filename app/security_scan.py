@@ -4,7 +4,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-
 SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("openai_key", re.compile(r"sk-[A-Za-z0-9]{20,}")),
     ("aws_access_key", re.compile(r"AKIA[0-9A-Z]{16}")),

@@ -5,11 +5,10 @@ import os
 from functools import lru_cache
 from typing import Any
 
-from fastapi import FastAPI
-from pydantic import BaseModel, Field
-
 import chromadb
 from chromadb.api import ClientAPI
+from fastapi import FastAPI
+from pydantic import BaseModel, Field
 
 try:
     from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction

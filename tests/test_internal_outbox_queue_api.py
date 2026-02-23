@@ -224,6 +224,7 @@ def test_internal_queue_ack_nack_blocks_cross_tenant(client):
     assert cross_nack.status_code == 403
     assert cross_nack.json()["error"]["code"] == "TENANT_SCOPE_VIOLATION"
 
+
 def test_internal_outbox_relay_is_idempotent_per_event_and_consumer(client):
     create = client.post(
         "/api/v1/evaluations",

@@ -24,11 +24,7 @@ class InMemoryWorkflowCheckpointsRepository:
         return item
 
     def list(self, *, thread_id: str, tenant_id: str, limit: int = 100) -> list[dict[str, Any]]:
-        rows = [
-            dict(x)
-            for x in self._checkpoints.get(thread_id, [])
-            if x.get("tenant_id") == tenant_id
-        ]
+        rows = [dict(x) for x in self._checkpoints.get(thread_id, []) if x.get("tenant_id") == tenant_id]
         rows.sort(key=lambda x: int(x.get("seq", 0)))
         return rows[: max(1, min(limit, 1000))]
 

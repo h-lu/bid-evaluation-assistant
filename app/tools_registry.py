@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
 import os
 import time
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
-from typing import Any, Callable
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
+from dataclasses import dataclass
+from typing import Any
 
 from jsonschema import ValidationError, validate
 
@@ -40,7 +42,7 @@ class ToolCallPolicy:
     cb_reset_s: int
 
     @classmethod
-    def from_env(cls) -> "ToolCallPolicy":
+    def from_env(cls) -> ToolCallPolicy:
         disabled_tools = {x.strip() for x in os.environ.get("TOOL_DISABLED", "").split(",") if x.strip()}
         disabled_risk_levels = {
             x.strip() for x in os.environ.get("TOOL_DISABLED_RISK_LEVELS", "").split(",") if x.strip()

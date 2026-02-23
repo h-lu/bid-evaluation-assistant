@@ -95,10 +95,9 @@ def load_sqlite_store_payload(sqlite_path: str) -> dict[str, Any]:
 def load_postgres_store_payload(*, dsn: str, table_name: str = "bea_store_state") -> dict[str, Any]:
     table = _validate_identifier(table_name)
     psycopg = _import_psycopg()
-    with psycopg.connect(dsn) as conn:
-        with conn.cursor() as cur:
-            cur.execute(f"SELECT payload::text FROM {table} WHERE id = 1")
-            row = cur.fetchone()
+    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+        cur.execute(f"SELECT payload::text FROM {table} WHERE id = 1")
+        row = cur.fetchone()
     if row is None or not isinstance(row[0], str):
         return {}
     payload = json.loads(row[0])

@@ -1,7 +1,7 @@
 import pytest
 
-from app.mcp_a2a import enforce_mcp_baseline, validate_a2a_result
 from app.errors import ApiError
+from app.mcp_a2a import enforce_mcp_baseline, validate_a2a_result
 
 
 def test_mcp_baseline_rejects_missing_service():

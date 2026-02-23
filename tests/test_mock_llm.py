@@ -1,7 +1,5 @@
 """Tests for Mock LLM module."""
 
-import pytest
-
 from app.mock_llm import (
     MOCK_LLM_ENABLED,
     mock_classify_intent,

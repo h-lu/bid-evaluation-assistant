@@ -1,10 +1,10 @@
 import pathlib
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
+import jwt
 import pytest
 from fastapi.testclient import TestClient
-import jwt
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -15,7 +15,7 @@ from app.store import store
 
 
 def _issue_token(*, secret: str, tenant_id: str) -> str:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload = {
         "sub": f"user_{tenant_id}",
         "tenant_id": tenant_id,

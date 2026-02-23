@@ -15,7 +15,7 @@ def test_select_content_source_falls_back_to_context_list():
 
 
 def test_decode_text_with_fallback_supports_utf8_and_gb18030():
-    assert decode_text_with_fallback("中文-utf8".encode("utf-8")) == "中文-utf8"
+    assert decode_text_with_fallback("中文-utf8".encode()) == "中文-utf8"
     gb_bytes = "中文-gb".encode("gb18030")
     assert decode_text_with_fallback(gb_bytes) == "中文-gb"
 

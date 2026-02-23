@@ -8,7 +8,7 @@ import uuid
 from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -209,7 +209,7 @@ class SqliteQueueBackend:
 
     @staticmethod
     def _utcnow() -> str:
-        return datetime.now(timezone.utc).isoformat()
+        return datetime.now(UTC).isoformat()
 
     @staticmethod
     def _row_to_message(row: sqlite3.Row) -> QueueMessage:
@@ -233,11 +233,7 @@ class SqliteQueueBackend:
     ) -> QueueMessage:
         with self._lock:
             now = self._utcnow()
-            available_at_raw = (
-                available_at.astimezone(UTC).isoformat()
-                if isinstance(available_at, datetime)
-                else now
-            )
+            available_at_raw = available_at.astimezone(UTC).isoformat() if isinstance(available_at, datetime) else now
             msg = QueueMessage(
                 message_id=f"msg_{uuid.uuid4().hex[:12]}",
                 tenant_id=tenant_id,
@@ -268,52 +264,50 @@ class SqliteQueueBackend:
             return msg
 
     def dequeue(self, *, tenant_id: str, queue_name: str) -> QueueMessage | None:
-        with self._lock:
-            with self._connect() as conn:
-                conn.execute("BEGIN IMMEDIATE")
-                row = conn.execute(
-                    """
+        with self._lock, self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                """
                     SELECT message_id, tenant_id, queue_name, payload, attempt, available_at
                     FROM queue_messages
                     WHERE tenant_id = ? AND queue_name = ? AND status = 'pending' AND available_at <= ?
                     ORDER BY created_at ASC, message_id ASC
                     LIMIT 1
                     """,
-                    (tenant_id, queue_name, self._utcnow()),
-                ).fetchone()
-                if row is None:
-                    conn.commit()
-                    return None
-                conn.execute(
-                    """
+                (tenant_id, queue_name, self._utcnow()),
+            ).fetchone()
+            if row is None:
+                conn.commit()
+                return None
+            conn.execute(
+                """
                     UPDATE queue_messages
                     SET status = 'inflight', updated_at = ?
                     WHERE message_id = ?
                     """,
-                    (self._utcnow(), row["message_id"]),
-                )
-                conn.commit()
-                return self._row_to_message(row)
+                (self._utcnow(), row["message_id"]),
+            )
+            conn.commit()
+            return self._row_to_message(row)
 
     def ack(self, *, tenant_id: str, message_id: str) -> None:
-        with self._lock:
-            with self._connect() as conn:
-                row = conn.execute(
-                    """
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                """
                     SELECT tenant_id
                     FROM queue_messages
                     WHERE message_id = ? AND status = 'inflight'
                     LIMIT 1
                     """,
-                    (message_id,),
-                ).fetchone()
-                if row is None:
-                    conn.commit()
-                    return
-                if row["tenant_id"] != tenant_id:
-                    raise RuntimeError("tenant mismatch for queue message")
-                conn.execute("DELETE FROM queue_messages WHERE message_id = ?", (message_id,))
+                (message_id,),
+            ).fetchone()
+            if row is None:
                 conn.commit()
+                return
+            if row["tenant_id"] != tenant_id:
+                raise RuntimeError("tenant mismatch for queue message")
+            conn.execute("DELETE FROM queue_messages WHERE message_id = ?", (message_id,))
+            conn.commit()
 
     def nack(
         self,
@@ -323,73 +317,69 @@ class SqliteQueueBackend:
         requeue: bool = True,
         delay_ms: int = 0,
     ) -> QueueMessage | None:
-        with self._lock:
-            with self._connect() as conn:
-                conn.execute("BEGIN IMMEDIATE")
-                row = conn.execute(
-                    """
+        with self._lock, self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                """
                     SELECT message_id, tenant_id, queue_name, payload, attempt, available_at
                     FROM queue_messages
                     WHERE message_id = ? AND status = 'inflight'
                     LIMIT 1
                     """,
-                    (message_id,),
-                ).fetchone()
-                if row is None:
-                    conn.commit()
-                    return None
-                if row["tenant_id"] != tenant_id:
-                    conn.commit()
-                    raise RuntimeError("tenant mismatch for queue message")
-                next_attempt = int(row["attempt"]) + 1
-                status = "pending" if requeue else "discarded"
-                due_at = datetime.now(UTC) + timedelta(milliseconds=max(0, int(delay_ms)))
-                available_at = due_at.isoformat() if requeue else row["available_at"]
-                conn.execute(
-                    """
+                (message_id,),
+            ).fetchone()
+            if row is None:
+                conn.commit()
+                return None
+            if row["tenant_id"] != tenant_id:
+                conn.commit()
+                raise RuntimeError("tenant mismatch for queue message")
+            next_attempt = int(row["attempt"]) + 1
+            status = "pending" if requeue else "discarded"
+            due_at = datetime.now(UTC) + timedelta(milliseconds=max(0, int(delay_ms)))
+            available_at = due_at.isoformat() if requeue else row["available_at"]
+            conn.execute(
+                """
                     UPDATE queue_messages
                     SET attempt = ?, status = ?, available_at = ?, updated_at = ?
                     WHERE message_id = ?
                     """,
-                    (next_attempt, status, available_at, self._utcnow(), message_id),
-                )
-                conn.commit()
-                msg = self._row_to_message(row)
-                msg.attempt = next_attempt
-                msg.available_at = available_at
-                return msg
+                (next_attempt, status, available_at, self._utcnow(), message_id),
+            )
+            conn.commit()
+            msg = self._row_to_message(row)
+            msg.attempt = next_attempt
+            msg.available_at = available_at
+            return msg
 
     def pending_count(self, *, tenant_id: str, queue_name: str) -> int:
-        with self._lock:
-            with self._connect() as conn:
-                row = conn.execute(
-                    """
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                """
                     SELECT COUNT(1) AS cnt
                     FROM queue_messages
                     WHERE tenant_id = ? AND queue_name = ? AND status = 'pending'
                     """,
-                    (tenant_id, queue_name),
-                ).fetchone()
-                return int(row["cnt"]) if row is not None else 0
+                (tenant_id, queue_name),
+            ).fetchone()
+            return int(row["cnt"]) if row is not None else 0
 
     def reset(self) -> None:
-        with self._lock:
-            with self._connect() as conn:
-                conn.execute("DELETE FROM queue_messages")
-                conn.commit()
+        with self._lock, self._connect() as conn:
+            conn.execute("DELETE FROM queue_messages")
+            conn.commit()
 
     def list_tenants(self, *, queue_name: str) -> list[str]:
-        with self._lock:
-            with self._connect() as conn:
-                rows = conn.execute(
-                    """
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                """
                     SELECT DISTINCT tenant_id
                     FROM queue_messages
                     WHERE queue_name = ? AND status = 'pending'
                     ORDER BY tenant_id ASC
                     """,
-                    (queue_name,),
-                ).fetchall()
+                (queue_name,),
+            ).fetchall()
         return [str(row["tenant_id"]) for row in rows if row["tenant_id"]]
 
 

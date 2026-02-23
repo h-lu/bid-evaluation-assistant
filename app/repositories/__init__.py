@@ -7,13 +7,13 @@ from app.repositories.evaluation_reports import (
 )
 from app.repositories.jobs import InMemoryJobsRepository, PostgresJobsRepository
 from app.repositories.parse_manifests import InMemoryParseManifestsRepository, PostgresParseManifestsRepository
+from app.repositories.projects import InMemoryProjectsRepository, PostgresProjectsRepository
+from app.repositories.rule_packs import InMemoryRulePacksRepository, PostgresRulePacksRepository
+from app.repositories.suppliers import InMemorySuppliersRepository, PostgresSuppliersRepository
 from app.repositories.workflow_checkpoints import (
     InMemoryWorkflowCheckpointsRepository,
     PostgresWorkflowCheckpointsRepository,
 )
-from app.repositories.projects import InMemoryProjectsRepository, PostgresProjectsRepository
-from app.repositories.suppliers import InMemorySuppliersRepository, PostgresSuppliersRepository
-from app.repositories.rule_packs import InMemoryRulePacksRepository, PostgresRulePacksRepository
 
 __all__ = [
     "InMemoryAuditLogsRepository",

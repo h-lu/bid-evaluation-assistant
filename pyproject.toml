@@ -22,7 +22,9 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest>=9.0.0,<10.0.0",
+  "pytest-cov>=5.0.0,<6.0.0",
   "httpx>=0.28.0,<1.0.0",
+  "ruff>=0.8.0,<1.0.0",
 ]
 postgres = [
   "psycopg[binary]>=3.2.0,<4.0.0",
@@ -40,3 +42,51 @@ lightrag = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+
+# ============================================
+# Ruff configuration
+# ============================================
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+src = ["app", "tests"]
+
+[tool.ruff.lint]
+select = [
+  "E",      # pycodestyle errors
+  "W",      # pycodestyle warnings
+  "F",      # Pyflakes
+  "I",      # isort
+  "B",      # flake8-bugbear
+  "C4",     # flake8-comprehensions
+  "UP",     # pyupgrade
+  "SIM",    # flake8-simplify
+]
+ignore = [
+  "E501",   # line too long (handled by formatter)
+  "E402",   # module import not at top (tests need path setup first)
+  "B007",   # unused loop variable
+  "B008",   # do not perform function calls in argument defaults
+  "B904",   # raise from err (intentional in some cases)
+  "B905",   # zip without strict
+  "F401",   # unused import (some are __all__ exports)
+  "F811",   # function redefinition (intentional for class overrides)
+  "F841",   # unused variable (intentional in some cases)
+  "SIM102", # nested if statements (intentional)
+  "SIM103", # return condition directly (intentional for readability)
+  "SIM105", # contextlib.suppress (intentional try-except)
+  "SIM108", # ternary operator
+  "SIM118", # key in dict.keys() (intentional for clarity)
+  "C401",   # unnecessary generator (intentional)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402", "F401"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false

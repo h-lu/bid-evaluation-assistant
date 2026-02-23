@@ -105,9 +105,7 @@ def test_resume_token_expires_after_24h(client):
     evaluation_id = "ev_resume_expired"
     token = "rt_expired_1"
     store.register_resume_token(evaluation_id=evaluation_id, resume_token=token)
-    store.resume_tokens[evaluation_id]["issued_at"] = (
-        datetime.now(UTC) - timedelta(hours=24, seconds=1)
-    ).isoformat()
+    store.resume_tokens[evaluation_id]["issued_at"] = (datetime.now(UTC) - timedelta(hours=24, seconds=1)).isoformat()
 
     resp = client.post(
         f"/api/v1/evaluations/{evaluation_id}/resume",

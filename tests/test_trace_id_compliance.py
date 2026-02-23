@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import jwt
 from fastapi.testclient import TestClient
@@ -19,7 +19,7 @@ def _evaluation_payload() -> dict:
 
 
 def _issue_token(*, secret: str, tenant_id: str) -> str:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload = {
         "sub": f"user_{tenant_id}",
         "tenant_id": tenant_id,

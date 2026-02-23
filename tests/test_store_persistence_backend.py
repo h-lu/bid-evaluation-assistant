@@ -330,7 +330,10 @@ def test_postgres_store_uses_parse_manifest_repository_sql(monkeypatch):
                 assert isinstance(rows, dict)
                 rows[str(params[0])] = params
                 return
-            if normalized.startswith("select job_id, run_id, document_id, tenant_id") and "parse_manifests" in normalized:
+            if (
+                normalized.startswith("select job_id, run_id, document_id, tenant_id")
+                and "parse_manifests" in normalized
+            ):
                 if not params:
                     raise AssertionError("expected tenant_id and job_id")
                 tenant_id, job_id = params

@@ -6,18 +6,20 @@ import os
 import time
 import uuid
 from collections.abc import Mapping
+from typing import Any
 
 from fastapi import Body, FastAPI, File, Form, Header, Query, Request, Response, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from starlette.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.cors import CORSMiddleware
 
 from app.cost_gates import evaluate_cost_gate
 from app.errors import ApiError
 from app.performance_gates import evaluate_performance_gate
-from app.queue_backend import InMemoryQueueBackend, create_queue_from_env
 from app.quality_gates import evaluate_quality_gate
+from app.queue_backend import InMemoryQueueBackend, create_queue_from_env
+from app.runtime_profile import true_stack_required
 from app.schemas import (
     CostGateEvaluateRequest,
     CreateEvaluationRequest,
@@ -30,11 +32,11 @@ from app.schemas import (
     ProjectCreateRequest,
     ProjectUpdateRequest,
     QualityGateEvaluateRequest,
+    ResumeRequest,
+    RetrievalQueryRequest,
     RollbackExecuteRequest,
     RolloutDecisionRequest,
     RolloutPlanRequest,
-    RetrievalQueryRequest,
-    ResumeRequest,
     RulePackCreateRequest,
     RulePackUpdateRequest,
     SecurityGateEvaluateRequest,
@@ -45,11 +47,10 @@ from app.schemas import (
     error_envelope,
     success_envelope,
 )
-from app.security_gates import evaluate_security_gate
 from app.security import JwtSecurityConfig, parse_and_validate_bearer_token, redact_sensitive
-from app.tools_registry import execute_tool, hash_payload, list_tool_specs, require_tool
+from app.security_gates import evaluate_security_gate
 from app.store import store
-from app.runtime_profile import true_stack_required
+from app.tools_registry import execute_tool, hash_payload, list_tool_specs, require_tool
 
 
 def _create_queue_backend_for_runtime(
@@ -519,9 +520,7 @@ def create_app() -> FastAPI:
 
     @app.get("/api/v1/suppliers/{supplier_id}")
     def get_supplier(supplier_id: str, request: Request):
-        supplier = store.get_supplier_for_tenant(
-            supplier_id=supplier_id, tenant_id=_tenant_id_from_request(request)
-        )
+        supplier = store.get_supplier_for_tenant(supplier_id=supplier_id, tenant_id=_tenant_id_from_request(request))
         if supplier is None:
             raise ApiError(
                 code="SUPPLIER_NOT_FOUND",

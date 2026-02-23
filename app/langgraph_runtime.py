@@ -254,9 +254,7 @@ def run_evaluation_graph(*, store: Any, job: dict[str, Any], tenant_id: str) -> 
     if evaluation_id:
         report = store.evaluation_reports.get(evaluation_id)
         if report is None:
-            report = store.get_evaluation_report_for_tenant(
-                evaluation_id=evaluation_id, tenant_id=tenant_id
-            )
+            report = store.get_evaluation_report_for_tenant(evaluation_id=evaluation_id, tenant_id=tenant_id)
     needs_human_review = bool(report.get("needs_human_review", False)) if isinstance(report, dict) else False
     interrupt_payload = report.get("interrupt") if isinstance(report, dict) else None
     state = {

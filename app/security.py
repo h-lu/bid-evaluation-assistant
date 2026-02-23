@@ -1,12 +1,9 @@
 from __future__ import annotations
 
 import base64
-import hashlib
-import hmac
 import json
 import os
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Any
 
 import jwt
@@ -91,7 +88,7 @@ class JwtSecurityConfig:
     trace_id_strict_required: bool
 
     @classmethod
-    def from_env(cls) -> "JwtSecurityConfig":
+    def from_env(cls) -> JwtSecurityConfig:
         issuer = os.environ.get("JWT_ISSUER", "").strip()
         audience = os.environ.get("JWT_AUDIENCE", "").strip()
         shared_secret = os.environ.get("JWT_SHARED_SECRET", "").strip()

@@ -15,7 +15,14 @@ from typing import Any
 from urllib import request
 from urllib.error import URLError
 
+from app.db.postgres import PostgresTxRunner
+from app.db.rls import PostgresRlsManager
 from app.errors import ApiError
+from app.mock_llm import (
+    MOCK_LLM_ENABLED,
+    mock_retrieve_evidence,
+    mock_score_criteria,
+)
 from app.object_storage import build_report_filename, create_object_storage_from_env
 from app.parser_adapters import (
     ParseRoute,
@@ -23,35 +30,20 @@ from app.parser_adapters import (
     disabled_parsers_from_env,
     select_parse_route,
 )
-from app.db.postgres import PostgresTxRunner
-from app.db.rls import PostgresRlsManager
-from app.repositories.audit_logs import InMemoryAuditLogsRepository
-from app.repositories.audit_logs import PostgresAuditLogsRepository
-from app.repositories.dlq_items import InMemoryDlqItemsRepository
-from app.repositories.dlq_items import PostgresDlqItemsRepository
-from app.repositories.documents import InMemoryDocumentsRepository
-from app.repositories.documents import PostgresDocumentsRepository
-from app.repositories.evaluation_reports import InMemoryEvaluationReportsRepository
-from app.repositories.evaluation_reports import PostgresEvaluationReportsRepository
-from app.repositories.jobs import InMemoryJobsRepository
-from app.repositories.jobs import PostgresJobsRepository
-from app.repositories.parse_manifests import InMemoryParseManifestsRepository
-from app.repositories.parse_manifests import PostgresParseManifestsRepository
-from app.repositories.projects import InMemoryProjectsRepository
-from app.repositories.projects import PostgresProjectsRepository
-from app.repositories.rule_packs import InMemoryRulePacksRepository
-from app.repositories.rule_packs import PostgresRulePacksRepository
-from app.repositories.suppliers import InMemorySuppliersRepository
-from app.repositories.suppliers import PostgresSuppliersRepository
-from app.repositories.workflow_checkpoints import InMemoryWorkflowCheckpointsRepository
-from app.repositories.workflow_checkpoints import PostgresWorkflowCheckpointsRepository
-from app.runtime_profile import true_stack_required
-from app.mock_llm import (
-    MOCK_LLM_ENABLED,
-    mock_generate_explanation,
-    mock_retrieve_evidence,
-    mock_score_criteria,
+from app.repositories.audit_logs import InMemoryAuditLogsRepository, PostgresAuditLogsRepository
+from app.repositories.dlq_items import InMemoryDlqItemsRepository, PostgresDlqItemsRepository
+from app.repositories.documents import InMemoryDocumentsRepository, PostgresDocumentsRepository
+from app.repositories.evaluation_reports import InMemoryEvaluationReportsRepository, PostgresEvaluationReportsRepository
+from app.repositories.jobs import InMemoryJobsRepository, PostgresJobsRepository
+from app.repositories.parse_manifests import InMemoryParseManifestsRepository, PostgresParseManifestsRepository
+from app.repositories.projects import InMemoryProjectsRepository, PostgresProjectsRepository
+from app.repositories.rule_packs import InMemoryRulePacksRepository, PostgresRulePacksRepository
+from app.repositories.suppliers import InMemorySuppliersRepository, PostgresSuppliersRepository
+from app.repositories.workflow_checkpoints import (
+    InMemoryWorkflowCheckpointsRepository,
+    PostgresWorkflowCheckpointsRepository,
 )
+from app.runtime_profile import true_stack_required
 
 
 def _json_safe(value: Any) -> Any:
@@ -281,7 +273,7 @@ class InMemoryStore:
 
     @staticmethod
     def _retry_jitter_ms(*, job_id: str, retry_count: int) -> int:
-        seed = f"{job_id}:{retry_count}".encode("utf-8")
+        seed = f"{job_id}:{retry_count}".encode()
         digest = hashlib.sha256(seed).digest()
         return int.from_bytes(digest[:2], byteorder="big") % 301
 
@@ -353,11 +345,7 @@ class InMemoryStore:
 
     @staticmethod
     def _compute_audit_hash(*, log: dict[str, Any], prev_hash: str) -> str:
-        material = {
-            key: value
-            for key, value in log.items()
-            if key not in {"audit_hash", "prev_hash"}
-        }
+        material = {key: value for key, value in log.items() if key not in {"audit_hash", "prev_hash"}}
         material["prev_hash"] = prev_hash
         blob = json.dumps(material, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
         return hashlib.sha256(blob.encode("utf-8")).hexdigest()
@@ -787,20 +775,18 @@ class InMemoryStore:
                 )
             else:
                 # 回退到 stub
-                citation_id = (
-                    f"ck_{criteria_id}_{evaluation_id[:6]}"
-                    if hard_constraint_pass
-                    else "ck_rule_block_1"
-                )
-                evidence = [{
-                    "chunk_id": citation_id,
-                    "page": 1,
-                    "bbox": [0.0, 0.0, 1.0, 1.0],
-                    "text": "stub citation",
-                    "score_raw": 0.78,
-                    "tenant_id": tenant_id,
-                    "supplier_id": payload.get("supplier_id"),
-                }]
+                citation_id = f"ck_{criteria_id}_{evaluation_id[:6]}" if hard_constraint_pass else "ck_rule_block_1"
+                evidence = [
+                    {
+                        "chunk_id": citation_id,
+                        "page": 1,
+                        "bbox": [0.0, 0.0, 1.0, 1.0],
+                        "text": "stub citation",
+                        "score_raw": 0.78,
+                        "tenant_id": tenant_id,
+                        "supplier_id": payload.get("supplier_id"),
+                    }
+                ]
 
             criteria_evidence[criteria_id] = evidence
             for ev in evidence:
@@ -903,11 +889,9 @@ class InMemoryStore:
             if criteria.get("require_citation") and not resolved_citations:
                 unsupported_claims.append(criteria_id)
 
-        resolvable = [
-            cid for cid in citations_all_ids if self.citation_sources.get(cid) is not None
-        ]
+        resolvable = [cid for cid in citations_all_ids if self.citation_sources.get(cid) is not None]
         if len(resolvable) < len(citations_all_ids):
-            for missing in (set(citations_all_ids) - set(resolvable)):
+            for missing in set(citations_all_ids) - set(resolvable):
                 unsupported_claims.append(missing)
         if isinstance(rules, dict):
             redlines = rules.get("redlines")
@@ -981,40 +965,42 @@ class InMemoryStore:
             )
         self._persist_job(
             job={
-            "job_id": job_id,
-            "job_type": "evaluation",
-            "status": "queued",
-            "retry_count": 0,
-            "thread_id": thread_id,
-            "tenant_id": tenant_id,
-            "trace_id": payload.get("trace_id"),
-            "resource": {
-                "type": "evaluation",
-                "id": evaluation_id,
-            },
-            "payload": payload,
-            "last_error": None,
-            "errors": [],  # SSOT: errors array
+                "job_id": job_id,
+                "job_type": "evaluation",
+                "status": "queued",
+                "retry_count": 0,
+                "thread_id": thread_id,
+                "tenant_id": tenant_id,
+                "trace_id": payload.get("trace_id"),
+                "resource": {
+                    "type": "evaluation",
+                    "id": evaluation_id,
+                },
+                "payload": payload,
+                "last_error": None,
+                "errors": [],  # SSOT: errors array
             }
         )
         self._persist_evaluation_report(
             report={
-            "evaluation_id": evaluation_id,
-            "supplier_id": payload.get("supplier_id", ""),
-            "total_score": total_score if hard_constraint_pass else 0.0,
-            "confidence": confidence_avg,
-            "citation_coverage": citation_coverage,
-            "score_deviation_pct": round(score_deviation_pct, 2),
-            "risk_level": "medium" if hard_constraint_pass else "high",
-            "criteria_results": criteria_results,
-            "citations": self._resolve_citations_batch(citations_all_ids, include_quote=True),  # SSOT: citations 为对象数组
-            "needs_human_review": needs_human_review,
-            "trace_id": payload.get("trace_id") or "",
-            "tenant_id": tenant_id,
-            "thread_id": thread_id,
-            "interrupt": interrupt_payload,
-            "unsupported_claims": unsupported_claims,
-            "redline_conflict": redline_conflict,
+                "evaluation_id": evaluation_id,
+                "supplier_id": payload.get("supplier_id", ""),
+                "total_score": total_score if hard_constraint_pass else 0.0,
+                "confidence": confidence_avg,
+                "citation_coverage": citation_coverage,
+                "score_deviation_pct": round(score_deviation_pct, 2),
+                "risk_level": "medium" if hard_constraint_pass else "high",
+                "criteria_results": criteria_results,
+                "citations": self._resolve_citations_batch(
+                    citations_all_ids, include_quote=True
+                ),  # SSOT: citations 为对象数组
+                "needs_human_review": needs_human_review,
+                "trace_id": payload.get("trace_id") or "",
+                "tenant_id": tenant_id,
+                "thread_id": thread_id,
+                "interrupt": interrupt_payload,
+                "unsupported_claims": unsupported_claims,
+                "redline_conflict": redline_conflict,
             }
         )
         self.append_outbox_event(
@@ -1092,7 +1078,9 @@ class InMemoryStore:
         }
 
     def create_parse_job(self, *, document_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-        document = self.get_document_for_tenant(document_id=document_id, tenant_id=payload.get("tenant_id", "tenant_default"))
+        document = self.get_document_for_tenant(
+            document_id=document_id, tenant_id=payload.get("tenant_id", "tenant_default")
+        )
         if document is None:
             raise ApiError(
                 code="DOC_NOT_FOUND",
@@ -1107,20 +1095,20 @@ class InMemoryStore:
         thread_id = self._new_thread_id("parse")
         self._persist_job(
             job={
-            "job_id": job_id,
-            "job_type": "parse",
-            "status": "queued",
-            "retry_count": 0,
-            "thread_id": thread_id,
-            "tenant_id": tenant_id,
-            "trace_id": payload.get("trace_id"),
-            "resource": {
-                "type": "document",
-                "id": document_id,
-            },
-            "payload": payload,
-            "last_error": None,
-            "errors": [],  # SSOT: errors array
+                "job_id": job_id,
+                "job_type": "parse",
+                "status": "queued",
+                "retry_count": 0,
+                "thread_id": thread_id,
+                "tenant_id": tenant_id,
+                "trace_id": payload.get("trace_id"),
+                "resource": {
+                    "type": "document",
+                    "id": document_id,
+                },
+                "payload": payload,
+                "last_error": None,
+                "errors": [],  # SSOT: errors array
             }
         )
         route = self._select_parser(
@@ -1129,24 +1117,24 @@ class InMemoryStore:
         )
         self._persist_parse_manifest(
             manifest={
-            "run_id": f"prun_{uuid.uuid4().hex[:12]}",
-            "job_id": job_id,
-            "document_id": document_id,
-            "tenant_id": tenant_id,
-            "selected_parser": route.selected_parser,
-            "parser_version": route.parser_version,
-            "fallback_chain": route.fallback_chain,
-            "input_files": [
-                {
-                    "name": document.get("filename"),
-                    "sha256": document.get("file_sha256"),
-                    "size": int(document.get("file_size") or 0),
-                }
-            ],
-            "started_at": None,
-            "ended_at": None,
-            "status": "queued",
-            "error_code": None,
+                "run_id": f"prun_{uuid.uuid4().hex[:12]}",
+                "job_id": job_id,
+                "document_id": document_id,
+                "tenant_id": tenant_id,
+                "selected_parser": route.selected_parser,
+                "parser_version": route.parser_version,
+                "fallback_chain": route.fallback_chain,
+                "input_files": [
+                    {
+                        "name": document.get("filename"),
+                        "sha256": document.get("file_sha256"),
+                        "size": int(document.get("file_size") or 0),
+                    }
+                ],
+                "started_at": None,
+                "ended_at": None,
+                "status": "queued",
+                "error_code": None,
             }
         )
         document["status"] = "parse_queued"
@@ -1601,20 +1589,20 @@ class InMemoryStore:
             thread_id = self._new_thread_id("resume")
         self._persist_job(
             job={
-            "job_id": job_id,
-            "job_type": "resume",
-            "status": "queued",
-            "retry_count": 0,
-            "thread_id": thread_id,
-            "tenant_id": tenant_id,
-            "trace_id": payload.get("trace_id"),
-            "resource": {
-                "type": "evaluation",
-                "id": evaluation_id,
-            },
-            "payload": payload,
-            "last_error": None,
-            "errors": [],  # SSOT: errors array
+                "job_id": job_id,
+                "job_type": "resume",
+                "status": "queued",
+                "retry_count": 0,
+                "thread_id": thread_id,
+                "tenant_id": tenant_id,
+                "trace_id": payload.get("trace_id"),
+                "resource": {
+                    "type": "evaluation",
+                    "id": evaluation_id,
+                },
+                "payload": payload,
+                "last_error": None,
+                "errors": [],  # SSOT: errors array
             }
         )
         if report is not None:
@@ -1883,9 +1871,7 @@ class InMemoryStore:
         if thread_id not in self.workflow_checkpoints:
             return
         self.workflow_checkpoints[thread_id] = [
-            item
-            for item in self.workflow_checkpoints[thread_id]
-            if item.get("kind") != self.langgraph_checkpoint_kind
+            item for item in self.workflow_checkpoints[thread_id] if item.get("kind") != self.langgraph_checkpoint_kind
         ]
 
     def _next_workflow_seq(self, thread_id: str, tenant_id: str) -> int:
@@ -2302,7 +2288,7 @@ class InMemoryStore:
             return 0.5
 
         variance = sum((s - mean_score) ** 2 for s in scores) / len(scores)
-        std_dev = variance ** 0.5
+        std_dev = variance**0.5
         cv = std_dev / mean_score
 
         # CV 越小，一致性越高
@@ -2536,19 +2522,19 @@ class InMemoryStore:
         new_job_id = f"job_{uuid.uuid4().hex[:12]}"
         self._persist_job(
             job={
-            "job_id": new_job_id,
-            "job_type": "requeue",
-            "status": "queued",
-            "retry_count": 0,
-            "thread_id": self._new_thread_id("requeue"),
-            "tenant_id": tenant_id,
-            "trace_id": trace_id,
-            "resource": {
-                "type": "job",
-                "id": item["job_id"],
-            },
-            "payload": {"source_dlq_id": dlq_id},
-            "last_error": None,
+                "job_id": new_job_id,
+                "job_type": "requeue",
+                "status": "queued",
+                "retry_count": 0,
+                "thread_id": self._new_thread_id("requeue"),
+                "tenant_id": tenant_id,
+                "trace_id": trace_id,
+                "resource": {
+                    "type": "job",
+                    "id": item["job_id"],
+                },
+                "payload": {"source_dlq_id": dlq_id},
+                "last_error": None,
             }
         )
         item["status"] = "requeued"
@@ -2985,9 +2971,7 @@ class InMemoryStore:
         error_rate = (failed_jobs / total_jobs) if total_jobs else 0.0
 
         dlq_open = sum(
-            1
-            for item in self.dlq_items.values()
-            if item.get("tenant_id") == tenant_id and item.get("status") == "open"
+            1 for item in self.dlq_items.values() if item.get("tenant_id") == tenant_id and item.get("status") == "open"
         )
         outbox_pending = sum(
             1
@@ -3112,10 +3096,13 @@ class InMemoryStore:
                     resume_job_id = resumed["job_id"]
                     self.run_job_once(job_id=resume_job_id, tenant_id=tenant_id)
 
-        final_report = self.get_evaluation_report_for_tenant(
-            evaluation_id=evaluation_id,
-            tenant_id=tenant_id,
-        ) or {}
+        final_report = (
+            self.get_evaluation_report_for_tenant(
+                evaluation_id=evaluation_id,
+                tenant_id=tenant_id,
+            )
+            or {}
+        )
         needs_human_review = bool(final_report.get("needs_human_review", False))
         passed = parse_status == "succeeded" and (not force_hitl or not needs_human_review)
 
@@ -3380,22 +3367,22 @@ class InMemoryStore:
         replay_job_id = f"job_{uuid.uuid4().hex[:12]}"
         self._persist_job(
             job={
-            "job_id": replay_job_id,
-            "job_type": "replay_verification",
-            "status": "queued",
-            "retry_count": 0,
-            "thread_id": self._new_thread_id("replay"),
-            "tenant_id": tenant_id,
-            "trace_id": trace_id,
-            "resource": {
-                "type": "job",
-                "id": release_id,
-            },
-            "payload": {
-                "release_id": release_id,
-                "trigger_gate": trigger_breach.get("gate"),
-            },
-            "last_error": None,
+                "job_id": replay_job_id,
+                "job_type": "replay_verification",
+                "status": "queued",
+                "retry_count": 0,
+                "thread_id": self._new_thread_id("replay"),
+                "tenant_id": tenant_id,
+                "trace_id": trace_id,
+                "resource": {
+                    "type": "job",
+                    "id": release_id,
+                },
+                "payload": {
+                    "release_id": release_id,
+                    "trigger_gate": trigger_breach.get("gate"),
+                },
+                "last_error": None,
             }
         )
         replay_result = self.run_job_once(job_id=replay_job_id, tenant_id=tenant_id)
@@ -3980,9 +3967,7 @@ class SqliteBackedStore(InMemoryStore):
         self.resume_tokens = payload.get("resume_tokens", {}) if isinstance(payload.get("resume_tokens"), dict) else {}
         self.audit_logs = payload.get("audit_logs", []) if isinstance(payload.get("audit_logs"), list) else []
         self.domain_events_outbox = (
-            payload.get("domain_events_outbox", {})
-            if isinstance(payload.get("domain_events_outbox"), dict)
-            else {}
+            payload.get("domain_events_outbox", {}) if isinstance(payload.get("domain_events_outbox"), dict) else {}
         )
         self.outbox_delivery_records = (
             payload.get("outbox_delivery_records", {})
@@ -3990,18 +3975,14 @@ class SqliteBackedStore(InMemoryStore):
             else {}
         )
         self.workflow_checkpoints = (
-            payload.get("workflow_checkpoints", {})
-            if isinstance(payload.get("workflow_checkpoints"), dict)
-            else {}
+            payload.get("workflow_checkpoints", {}) if isinstance(payload.get("workflow_checkpoints"), dict) else {}
         )
         self.citation_sources = (
             payload.get("citation_sources", {}) if isinstance(payload.get("citation_sources"), dict) else {}
         )
         self.dlq_items = payload.get("dlq_items", {}) if isinstance(payload.get("dlq_items"), dict) else {}
         self.legal_hold_objects = (
-            payload.get("legal_hold_objects", {})
-            if isinstance(payload.get("legal_hold_objects"), dict)
-            else {}
+            payload.get("legal_hold_objects", {}) if isinstance(payload.get("legal_hold_objects"), dict) else {}
         )
         self.release_rollout_policies = (
             payload.get("release_rollout_policies", {})
@@ -4017,14 +3998,10 @@ class SqliteBackedStore(InMemoryStore):
             else {}
         )
         self.counterexample_samples = (
-            payload.get("counterexample_samples", {})
-            if isinstance(payload.get("counterexample_samples"), dict)
-            else {}
+            payload.get("counterexample_samples", {}) if isinstance(payload.get("counterexample_samples"), dict) else {}
         )
         self.gold_candidate_samples = (
-            payload.get("gold_candidate_samples", {})
-            if isinstance(payload.get("gold_candidate_samples"), dict)
-            else {}
+            payload.get("gold_candidate_samples", {}) if isinstance(payload.get("gold_candidate_samples"), dict) else {}
         )
         dataset_version = payload.get("dataset_version", "v1.0.0")
         self.dataset_version = dataset_version if isinstance(dataset_version, str) else "v1.0.0"
@@ -4049,22 +4026,20 @@ class SqliteBackedStore(InMemoryStore):
     def _save_state(self) -> None:
         snapshot = self._state_snapshot()
         blob = json.dumps(snapshot, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
-        with self._lock:
-            with self._connect() as conn:
-                conn.execute(
-                    """
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                """
                     INSERT INTO store_state(id, payload)
                     VALUES (1, ?)
                     ON CONFLICT(id) DO UPDATE SET payload = excluded.payload
                     """,
-                    (blob,),
-                )
-                conn.commit()
+                (blob,),
+            )
+            conn.commit()
 
     def _load_state(self) -> None:
-        with self._lock:
-            with self._connect() as conn:
-                row = conn.execute("SELECT payload FROM store_state WHERE id = 1").fetchone()
+        with self._lock, self._connect() as conn:
+            row = conn.execute("SELECT payload FROM store_state WHERE id = 1").fetchone()
         if row is None:
             return
         payload_raw = row[0]
@@ -4515,9 +4490,7 @@ def _import_psycopg() -> Any:
     try:
         import psycopg  # type: ignore
     except ImportError as exc:
-        raise RuntimeError(
-            "psycopg is required for BEA_STORE_BACKEND=postgres; install psycopg[binary]"
-        ) from exc
+        raise RuntimeError("psycopg is required for BEA_STORE_BACKEND=postgres; install psycopg[binary]") from exc
     return psycopg
 
 
@@ -5025,9 +4998,7 @@ class PostgresBackedStore(InMemoryStore):
         self.resume_tokens = payload.get("resume_tokens", {}) if isinstance(payload.get("resume_tokens"), dict) else {}
         self.audit_logs = payload.get("audit_logs", []) if isinstance(payload.get("audit_logs"), list) else []
         self.domain_events_outbox = (
-            payload.get("domain_events_outbox", {})
-            if isinstance(payload.get("domain_events_outbox"), dict)
-            else {}
+            payload.get("domain_events_outbox", {}) if isinstance(payload.get("domain_events_outbox"), dict) else {}
         )
         self.outbox_delivery_records = (
             payload.get("outbox_delivery_records", {})
@@ -5035,18 +5006,14 @@ class PostgresBackedStore(InMemoryStore):
             else {}
         )
         self.workflow_checkpoints = (
-            payload.get("workflow_checkpoints", {})
-            if isinstance(payload.get("workflow_checkpoints"), dict)
-            else {}
+            payload.get("workflow_checkpoints", {}) if isinstance(payload.get("workflow_checkpoints"), dict) else {}
         )
         self.citation_sources = (
             payload.get("citation_sources", {}) if isinstance(payload.get("citation_sources"), dict) else {}
         )
         self.dlq_items = payload.get("dlq_items", {}) if isinstance(payload.get("dlq_items"), dict) else {}
         self.legal_hold_objects = (
-            payload.get("legal_hold_objects", {})
-            if isinstance(payload.get("legal_hold_objects"), dict)
-            else {}
+            payload.get("legal_hold_objects", {}) if isinstance(payload.get("legal_hold_objects"), dict) else {}
         )
         self.release_rollout_policies = (
             payload.get("release_rollout_policies", {})
@@ -5062,14 +5029,10 @@ class PostgresBackedStore(InMemoryStore):
             else {}
         )
         self.counterexample_samples = (
-            payload.get("counterexample_samples", {})
-            if isinstance(payload.get("counterexample_samples"), dict)
-            else {}
+            payload.get("counterexample_samples", {}) if isinstance(payload.get("counterexample_samples"), dict) else {}
         )
         self.gold_candidate_samples = (
-            payload.get("gold_candidate_samples", {})
-            if isinstance(payload.get("gold_candidate_samples"), dict)
-            else {}
+            payload.get("gold_candidate_samples", {}) if isinstance(payload.get("gold_candidate_samples"), dict) else {}
         )
         dataset_version = payload.get("dataset_version", "v1.0.0")
         self.dataset_version = dataset_version if isinstance(dataset_version, str) else "v1.0.0"
@@ -5099,19 +5062,16 @@ class PostgresBackedStore(InMemoryStore):
                     VALUES (1, %s::jsonb)
                     ON CONFLICT(id) DO UPDATE SET payload = EXCLUDED.payload
                     """
-        with self._lock:
-            with self._connect() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(upsert_sql, (blob,))
-                conn.commit()
+        with self._lock, self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(upsert_sql, (blob,))
+            conn.commit()
 
     def _load_state(self) -> None:
         select_sql = f"SELECT payload::text FROM {self._table_name} WHERE id = 1"
-        with self._lock:
-            with self._connect() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(select_sql)
-                    row = cur.fetchone()
+        with self._lock, self._connect() as conn, conn.cursor() as cur:
+            cur.execute(select_sql)
+            row = cur.fetchone()
         if row is None:
             return
         payload_raw = row[0]
@@ -5126,11 +5086,10 @@ class PostgresBackedStore(InMemoryStore):
         self._restore_state(payload)
 
     def reset(self) -> None:
-        with self._lock:
-            with self._connect() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        """
+        with self._lock, self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
                         TRUNCATE TABLE
                           jobs,
                           documents,
@@ -5141,8 +5100,8 @@ class PostgresBackedStore(InMemoryStore):
                           dlq_items,
                           workflow_checkpoints
                         """
-                    )
-                conn.commit()
+                )
+            conn.commit()
         super().reset()
         self._save_state()
 
