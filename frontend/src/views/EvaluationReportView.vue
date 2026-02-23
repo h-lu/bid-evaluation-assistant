@@ -17,7 +17,17 @@
           <div><strong>Total Score:</strong> {{ report.total_score }}</div>
           <div><strong>Confidence:</strong> {{ report.confidence }}</div>
           <div><strong>Citation Coverage:</strong> {{ report.citation_coverage }}</div>
+          <div v-if="report.score_deviation_pct !== undefined">
+            <strong>Score Deviation:</strong> {{ report.score_deviation_pct }}%
+          </div>
+          <div v-if="report.report_uri">
+            <strong>Report URI:</strong> {{ report.report_uri }}
+          </div>
           <div><strong>Risk Level:</strong> {{ report.risk_level }}</div>
+          <div v-if="report.redline_conflict"><strong>Redline Conflict:</strong> yes</div>
+          <div v-if="report.unsupported_claims?.length">
+            <strong>Unsupported Claims:</strong> {{ report.unsupported_claims.join(", ") }}
+          </div>
         </div>
         <div class="criteria-table">
           <table>
@@ -61,9 +71,18 @@
         <div><strong>Document:</strong> {{ selectedCitation.document_id }}</div>
         <div><strong>Page:</strong> {{ selectedCitation.page }}</div>
         <div><strong>Chunk:</strong> {{ selectedCitation.chunk_id }}</div>
+        <div v-if="selectedCitation.chunk_type">
+          <strong>Chunk Type:</strong> {{ selectedCitation.chunk_type }}
+        </div>
+        <div v-if="selectedCitation.heading_path?.length">
+          <strong>Heading:</strong> {{ selectedCitation.heading_path.join(" / ") }}
+        </div>
       </div>
-      <div v-if="selectedCitation?.quote" class="quote">
-        “{{ selectedCitation.quote }}”
+      <div v-if="selectedCitation?.text" class="quote">
+        “{{ selectedCitation.text }}”
+      </div>
+      <div v-if="selectedCitation?.context" class="meta">
+        {{ selectedCitation.context }}
       </div>
       <div class="pdf-pane">
         <div class="pdf-header">
@@ -81,6 +100,9 @@
     <article v-if="report?.interrupt" class="card review-card">
       <h3>Human Review Required</h3>
       <p class="meta">This evaluation is waiting for manual decision.</p>
+      <ul class="meta" v-if="hitlReasons.length">
+        <li v-for="reason in hitlReasons" :key="reason">{{ reason }}</li>
+      </ul>
       <div class="review-form">
         <label>Decision</label>
         <select v-model="reviewForm.decision">
@@ -112,6 +134,29 @@ const selectedCitation = ref(null);
 const highlightStyle = ref(null);
 const session = useSessionStore();
 const canReview = computed(() => session.can("review"));
+const hitlReasons = computed(() => {
+  if (!report.value) return [];
+  const reasons = [];
+  if (typeof report.value.confidence === "number" && report.value.confidence < 0.65) {
+    reasons.push("low_confidence");
+  }
+  if (typeof report.value.citation_coverage === "number" && report.value.citation_coverage < 0.9) {
+    reasons.push("low_citation_coverage");
+  }
+  if (
+    typeof report.value.score_deviation_pct === "number" &&
+    report.value.score_deviation_pct > 20
+  ) {
+    reasons.push("score_deviation_high");
+  }
+  if (report.value.redline_conflict) {
+    reasons.push("redline_conflict");
+  }
+  if (Array.isArray(report.value.unsupported_claims) && report.value.unsupported_claims.length) {
+    reasons.push("unsupported_claims");
+  }
+  return reasons;
+});
 
 const reviewForm = reactive({
   decision: "approve",

@@ -1,7 +1,7 @@
 # N9 前端 E2E 与引用真实化证据
 
 > 日期：2026-02-23  
-> 分支：`codex/n1-n5-closeout`
+> 分支：`codex/n6-n10-implementation`
 
 ## 1. 目标
 
@@ -15,17 +15,24 @@
 2. 高风险动作双人复核流程需前端可见并阻断。
 3. 引用回跳必须基于解析定位字段（`page/bbox`）。
 
-## 2. 变更点（待补齐）
+## 2. 变更点
 
-1. E2E 测试脚本与用例覆盖。
-2. 引用回跳与 bbox 高亮使用真实解析坐标。
-3. 角色权限与复核流程在前端强制提示。
-4. 报告归档结果在前端可追溯 `report_uri`。
+1. 新增 Playwright E2E 脚本（`frontend/scripts/e2e-smoke.mjs`）。
+2. 前端报告页补齐 `report_uri/score_deviation/redline_conflict/unsupported_claims` 展示。
+3. HITL 触发原因前端可视化。
 
 ## 3. 测试命令与结果（待执行）
 
-E2E 脚本尚未补齐，需先新增前端 E2E 测试命令再填写证据。
+```bash
+cd frontend
+npm install
+npx playwright install chromium
+npm run dev -- --host 127.0.0.1 --port 5173
+E2E_BASE_URL=http://127.0.0.1:5173 npm run test:e2e
+```
+
+结果：Playwright 启动失败（缺少 `libgbm.so.1`），需在 CI/宿主机补齐系统依赖后重试。
 
 ## 4. 结论
 
-尚未验证。完成 E2E 及引用真实化后需补齐命令输出与结论。
+E2E 脚本已就位，但当前环境缺少 Playwright 依赖，需补齐系统库后复跑。
