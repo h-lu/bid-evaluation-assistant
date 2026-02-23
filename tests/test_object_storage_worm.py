@@ -99,3 +99,20 @@ def test_legal_hold_blocks_object_storage_cleanup(client):
     )
     assert cleaned.status_code == 200
     assert cleaned.json()["data"]["deleted"] is True
+
+
+def test_retention_blocks_object_storage_cleanup(client, monkeypatch):
+    monkeypatch.setenv("OBJECT_STORAGE_RETENTION_DAYS", "1")
+    store.reset()
+    document_id = _upload_document(client, tenant_id="tenant_obj", content=b"%PDF-1.4 retention")
+    blocked = client.post(
+        "/api/v1/internal/storage/cleanup",
+        headers={"x-internal-debug": "true", "x-trace-id": "trace_retention_1", "x-tenant-id": "tenant_obj"},
+        json={
+            "object_type": "document",
+            "object_id": document_id,
+            "reason": "retention_window_elapsed",
+        },
+    )
+    assert blocked.status_code == 409
+    assert blocked.json()["error"]["code"] == "RETENTION_ACTIVE"

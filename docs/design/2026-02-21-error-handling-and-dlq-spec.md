@@ -75,6 +75,11 @@
 2. `SUPPLIER_NOT_FOUND`
 3. `RULE_PACK_NOT_FOUND`
 
+### 3.7 合规与保全
+
+1. `LEGAL_HOLD_ACTIVE`
+2. `RETENTION_ACTIVE`
+
 ## 4. API 错误响应规则
 
 1. 生产环境不返回堆栈。

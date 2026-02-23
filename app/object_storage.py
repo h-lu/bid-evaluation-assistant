@@ -4,7 +4,7 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
@@ -33,6 +33,8 @@ class ObjectStorageConfig:
     access_key: str
     secret_key: str
     force_path_style: bool
+    retention_days: int
+    retention_mode: str
 
 
 class ObjectStorageBackend:
@@ -65,6 +67,15 @@ class ObjectStorageBackend:
     def is_legal_hold_active(self, *, storage_uri: str) -> bool:
         raise NotImplementedError
 
+    def set_retention(self, *, storage_uri: str, mode: str, retain_until: datetime) -> bool:
+        raise NotImplementedError
+
+    def get_retention(self, *, storage_uri: str) -> dict[str, Any] | None:
+        raise NotImplementedError
+
+    def is_retention_active(self, *, storage_uri: str, now: datetime | None = None) -> bool:
+        raise NotImplementedError
+
 
 class LocalObjectStorage(ObjectStorageBackend):
     backend_name = "local"
@@ -74,6 +85,8 @@ class LocalObjectStorage(ObjectStorageBackend):
         self._root = Path(config.root)
         self._prefix = config.prefix.strip("/")
         self._worm_mode = bool(config.worm_mode)
+        self._retention_days = max(int(config.retention_days), 0)
+        self._retention_mode = (config.retention_mode or "GOVERNANCE").upper()
         self._root.mkdir(parents=True, exist_ok=True)
 
     def put_object(
@@ -97,14 +110,16 @@ class LocalObjectStorage(ObjectStorageBackend):
             return self._uri_for_key(key)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content_bytes)
-        self._write_meta(
-            path,
-            {
-                "legal_hold": False,
-                "content_type": content_type or "application/octet-stream",
-                "created_at": _now_iso(),
-            },
-        )
+        meta = {
+            "legal_hold": False,
+            "content_type": content_type or "application/octet-stream",
+            "created_at": _now_iso(),
+            "retention_mode": self._retention_mode,
+        }
+        if self._retention_days > 0:
+            retain_until = datetime.now(tz=UTC) + timedelta(days=self._retention_days)
+            meta["retention_until"] = retain_until.isoformat()
+        self._write_meta(path, meta)
         return self._uri_for_key(key)
 
     def get_object(self, *, storage_uri: str) -> bytes:
@@ -118,6 +133,14 @@ class LocalObjectStorage(ObjectStorageBackend):
             raise ApiError(
                 code="LEGAL_HOLD_ACTIVE",
                 message="object is under legal hold",
+                error_class="business_rule",
+                retryable=False,
+                http_status=409,
+            )
+        if self.is_retention_active(storage_uri=storage_uri):
+            raise ApiError(
+                code="RETENTION_ACTIVE",
+                message="object is under retention",
                 error_class="business_rule",
                 retryable=False,
                 http_status=409,
@@ -157,6 +180,43 @@ class LocalObjectStorage(ObjectStorageBackend):
             return False
         meta = self._read_meta(path)
         return bool(meta.get("legal_hold", False))
+
+    def set_retention(self, *, storage_uri: str, mode: str, retain_until: datetime) -> bool:
+        path = self._path_for_uri(storage_uri)
+        if not path.exists():
+            return False
+        meta = self._read_meta(path)
+        meta["retention_mode"] = (mode or self._retention_mode).upper()
+        meta["retention_until"] = retain_until.astimezone(UTC).isoformat()
+        self._write_meta(path, meta)
+        return True
+
+    def get_retention(self, *, storage_uri: str) -> dict[str, Any] | None:
+        path = self._path_for_uri(storage_uri)
+        if not path.exists():
+            return None
+        meta = self._read_meta(path)
+        retain_until = meta.get("retention_until")
+        if not retain_until:
+            return None
+        return {
+            "mode": meta.get("retention_mode", self._retention_mode),
+            "retain_until": retain_until,
+        }
+
+    def is_retention_active(self, *, storage_uri: str, now: datetime | None = None) -> bool:
+        retention = self.get_retention(storage_uri=storage_uri)
+        if not retention:
+            return False
+        retain_until_raw = retention.get("retain_until")
+        try:
+            retain_until = datetime.fromisoformat(retain_until_raw)
+        except Exception:
+            return False
+        current = now.astimezone(UTC) if now is not None else datetime.now(tz=UTC)
+        if retain_until.tzinfo is None:
+            retain_until = retain_until.replace(tzinfo=UTC)
+        return current < retain_until
 
     def reset(self) -> None:
         if not self._root.exists():
@@ -222,6 +282,8 @@ class S3ObjectStorage(ObjectStorageBackend):
         self._bucket = config.bucket
         self._prefix = config.prefix.strip("/")
         self._worm_mode = bool(config.worm_mode)
+        self._retention_days = max(int(config.retention_days), 0)
+        self._retention_mode = (config.retention_mode or "GOVERNANCE").upper()
         session = boto3.session.Session(
             aws_access_key_id=config.access_key or None,
             aws_secret_access_key=config.secret_key or None,
@@ -252,6 +314,9 @@ class S3ObjectStorage(ObjectStorageBackend):
             Body=content_bytes,
             ContentType=content_type or "application/octet-stream",
         )
+        if self._retention_days > 0:
+            retain_until = datetime.now(tz=UTC) + timedelta(days=self._retention_days)
+            self.set_retention(storage_uri=self._uri_for_key(key), mode=self._retention_mode, retain_until=retain_until)
         return self._uri_for_key(key)
 
     def get_object(self, *, storage_uri: str) -> bytes:
@@ -264,6 +329,14 @@ class S3ObjectStorage(ObjectStorageBackend):
             raise ApiError(
                 code="LEGAL_HOLD_ACTIVE",
                 message="object is under legal hold",
+                error_class="business_rule",
+                retryable=False,
+                http_status=409,
+            )
+        if self.is_retention_active(storage_uri=storage_uri):
+            raise ApiError(
+                code="RETENTION_ACTIVE",
+                message="object is under retention",
                 error_class="business_rule",
                 retryable=False,
                 http_status=409,
@@ -304,6 +377,47 @@ class S3ObjectStorage(ObjectStorageBackend):
         except Exception:  # pragma: no cover
             return False
 
+    def set_retention(self, *, storage_uri: str, mode: str, retain_until: datetime) -> bool:
+        parsed = _parse_storage_uri(storage_uri)
+        try:
+            self._client.put_object_retention(
+                Bucket=parsed["bucket"],
+                Key=parsed["key"],
+                Retention={
+                    "Mode": (mode or self._retention_mode).upper(),
+                    "RetainUntilDate": retain_until.astimezone(UTC),
+                },
+            )
+            return True
+        except Exception:  # pragma: no cover
+            return False
+
+    def get_retention(self, *, storage_uri: str) -> dict[str, Any] | None:
+        parsed = _parse_storage_uri(storage_uri)
+        try:
+            response = self._client.get_object_retention(Bucket=parsed["bucket"], Key=parsed["key"])
+        except Exception:  # pragma: no cover
+            return None
+        retention = response.get("Retention", {})
+        if not retention:
+            return None
+        return {
+            "mode": retention.get("Mode"),
+            "retain_until": retention.get("RetainUntilDate"),
+        }
+
+    def is_retention_active(self, *, storage_uri: str, now: datetime | None = None) -> bool:
+        retention = self.get_retention(storage_uri=storage_uri)
+        if not retention:
+            return False
+        retain_until = retention.get("retain_until")
+        if not isinstance(retain_until, datetime):
+            return False
+        current = now.astimezone(UTC) if now is not None else datetime.now(tz=UTC)
+        if retain_until.tzinfo is None:
+            retain_until = retain_until.replace(tzinfo=UTC)
+        return current < retain_until
+
     def _build_key(self, *, tenant_id: str, object_type: str, object_id: str, filename: str) -> str:
         safe_filename = _clean_segment(filename)
         safe_type = _clean_segment(object_type)
@@ -343,6 +457,11 @@ def _parse_storage_uri(uri: str) -> dict[str, str]:
 def create_object_storage_from_env(environ: dict[str, str] | None = None) -> ObjectStorageBackend:
     env = os.environ if environ is None else environ
     backend = env.get("BEA_OBJECT_STORAGE_BACKEND", "local").strip().lower() or "local"
+    retention_days_raw = env.get("OBJECT_STORAGE_RETENTION_DAYS", "0").strip() or "0"
+    try:
+        retention_days = int(retention_days_raw)
+    except ValueError:
+        retention_days = 0
     config = ObjectStorageConfig(
         backend=backend,
         bucket=env.get("OBJECT_STORAGE_BUCKET", "bea").strip() or "bea",
@@ -355,6 +474,8 @@ def create_object_storage_from_env(environ: dict[str, str] | None = None) -> Obj
         secret_key=env.get("OBJECT_STORAGE_SECRET_KEY", "").strip(),
         force_path_style=env.get("OBJECT_STORAGE_FORCE_PATH_STYLE", "true").strip().lower()
         not in {"0", "false", "no", "off"},
+        retention_days=max(retention_days, 0),
+        retention_mode=env.get("OBJECT_STORAGE_RETENTION_MODE", "GOVERNANCE").strip() or "GOVERNANCE",
     )
     if config.backend == "s3":
         return S3ObjectStorage(config=config)

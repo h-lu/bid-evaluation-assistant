@@ -191,7 +191,8 @@
 1. 仅内部治理流程使用，必须携带 `x-internal-debug: true`。
 2. `legal-hold/release` 必须满足双人复核与必填 reason。
 3. `storage/cleanup` 对被 hold 对象返回 `409 LEGAL_HOLD_ACTIVE`。
-4. 审计完整性校验失败返回 `409 AUDIT_INTEGRITY_BROKEN`。
+4. `storage/cleanup` 对有 retention 的对象返回 `409 RETENTION_ACTIVE`。
+5. 审计完整性校验失败返回 `409 AUDIT_INTEGRITY_BROKEN`。
 
 ### 4.13 Internal Persistence & Queue（生产化调试）
 

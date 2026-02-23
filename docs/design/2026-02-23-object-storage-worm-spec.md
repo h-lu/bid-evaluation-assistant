@@ -7,7 +7,7 @@
 ## 1. 目标
 
 1. 将原始文档与评估报告落入对象存储，形成可审计的证据归档链路。
-2. 提供最小 WORM 语义：写入后不可覆盖，legal hold 生效时不可删除。
+2. 提供最小 WORM 语义：写入后不可覆盖，legal hold/retention 生效时不可删除。
 3. 与现有 API 契约（`legal-hold/*`、`storage/cleanup`）一致，不新增破坏性字段。
 
 ## 2. 范围与非目标
@@ -35,6 +35,9 @@
 4. `apply_legal_hold(storage_uri) -> bool`
 5. `release_legal_hold(storage_uri) -> bool`
 6. `is_legal_hold_active(storage_uri) -> bool`
+7. `set_retention(storage_uri, mode, retain_until) -> bool`
+8. `get_retention(storage_uri) -> {mode, retain_until} | None`
+9. `is_retention_active(storage_uri, now) -> bool`
 
 ### 3.2 URI 规范
 
@@ -64,10 +67,10 @@ object://local/bea/tenants/tenant_a/reports/ev_x/report.json
 
 1. `OBJECT_STORAGE_WORM_MODE=true` 时：
    - `put_object` 不允许覆盖既有对象。
-   - `delete_object` 仅在 legal hold 释放后允许。
+   - `delete_object` 仅在 legal hold/retention 释放后允许。
 2. `OBJECT_STORAGE_WORM_MODE=false` 时：
    - 允许覆盖（用于本地调试或回放）。
-   - legal hold 仍阻断删除。
+   - legal hold/retention 仍阻断删除。
 
 ## 6. legal hold 语义
 
@@ -75,12 +78,19 @@ object://local/bea/tenants/tenant_a/reports/ev_x/report.json
 2. `impose` 后必须标记对象为 `hold=true`，并在 cleanup 删除时阻断。
 3. `release` 必须双人复核，释放后才允许删除。
 
+## 6.1 retention 语义
+
+1. retention 为“时间窗保全”，在 `retain_until` 之前禁止删除。
+2. retention 模式支持 `GOVERNANCE/COMPLIANCE`（由配置决定）。
+3. retention 与 legal hold 可同时存在，删除需二者都解除。
+
 ## 7. API 行为补充
 
 1. `POST /internal/legal-hold/impose`：
    - 如果对象已存在，标记 hold；否则仅记录 hold（待对象生成后补标）。
 2. `POST /internal/storage/cleanup`：
    - 对有 hold 的对象返回 `409 LEGAL_HOLD_ACTIVE`。
+   - 对有 retention 的对象返回 `409 RETENTION_ACTIVE`。
    - 成功删除后写入审计日志 `storage_cleanup_executed`。
 
 ## 8. 配置项
@@ -95,13 +105,16 @@ object://local/bea/tenants/tenant_a/reports/ev_x/report.json
 8. `OBJECT_STORAGE_ACCESS_KEY`
 9. `OBJECT_STORAGE_SECRET_KEY`
 10. `OBJECT_STORAGE_FORCE_PATH_STYLE`（默认 `true`）
+11. `OBJECT_STORAGE_RETENTION_DAYS`（默认 `0`，关闭）
+12. `OBJECT_STORAGE_RETENTION_MODE`（默认 `GOVERNANCE`）
 
 ## 9. 验收标准
 
 1. 上传文档后对象存储存在原始文件。
 2. 评估报告生成后对象存储存在 report.json。
 3. legal hold 生效后 cleanup 失败并返回 `LEGAL_HOLD_ACTIVE`。
-4. legal hold 释放后 cleanup 删除成功并写审计日志。
+4. retention 生效后 cleanup 失败并返回 `RETENTION_ACTIVE`。
+5. legal hold 释放后 cleanup 删除成功并写审计日志。
 
 ## 10. 关联文档
 

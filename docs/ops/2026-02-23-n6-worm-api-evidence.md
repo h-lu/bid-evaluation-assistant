@@ -27,7 +27,7 @@
 pytest -q tests/test_object_storage_worm.py
 ```
 
-结果：待执行
+结果：通过（local backend）
 
 ```bash
 pytest -q tests/test_legal_hold_api.py
