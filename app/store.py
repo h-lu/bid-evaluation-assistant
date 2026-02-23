@@ -110,6 +110,7 @@ class InMemoryStore:
         self.domain_events_outbox: dict[str, dict[str, Any]] = {}
         self.outbox_delivery_records: dict[str, dict[str, Any]] = {}
         self.workflow_checkpoints: dict[str, list[dict[str, Any]]] = {}
+        self.langgraph_checkpoint_kind = "langgraph_state"
         self.citation_sources: dict[str, dict[str, Any]] = {}
         self.dlq_items: dict[str, dict[str, Any]] = {}
         self.legal_hold_objects: dict[str, dict[str, Any]] = {}
@@ -1439,11 +1440,95 @@ class InMemoryStore:
         tenant_id: str,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
-        return self.workflow_repository.list(
+        items = self.workflow_repository.list(
             thread_id=thread_id,
             tenant_id=tenant_id,
             limit=limit,
         )
+        return [item for item in items if item.get("kind") != self.langgraph_checkpoint_kind]
+
+    def upsert_langgraph_checkpoint(self, *, record: dict[str, Any]) -> dict[str, Any]:
+        thread_id = str(record.get("thread_id") or "")
+        tenant_id = str(record.get("tenant_id") or "tenant_default")
+        checkpoint_id = str(record.get("checkpoint_id") or "")
+        if not thread_id or not checkpoint_id:
+            raise ApiError(
+                code="REQ_VALIDATION_FAILED",
+                message="invalid langgraph checkpoint record",
+                error_class="validation",
+                retryable=False,
+                http_status=400,
+            )
+        existing = self.get_langgraph_checkpoint_record(
+            thread_id=thread_id,
+            tenant_id=tenant_id,
+            checkpoint_id=checkpoint_id,
+            checkpoint_ns=record.get("checkpoint_ns", ""),
+        )
+        seq = int(existing.get("seq", 0)) if existing else self._next_workflow_seq(thread_id, tenant_id)
+        payload = dict(record)
+        payload["kind"] = self.langgraph_checkpoint_kind
+        payload["seq"] = seq
+        payload["langgraph_checkpoint_id"] = checkpoint_id
+        payload["parent_langgraph_checkpoint_id"] = record.get("parent_checkpoint_id")
+        payload["checkpoint_id"] = f"lgcp_{checkpoint_id}"
+        return self.workflow_repository.append(checkpoint=payload)
+
+    def get_langgraph_checkpoint_record(
+        self,
+        *,
+        thread_id: str,
+        tenant_id: str,
+        checkpoint_id: str | None,
+        checkpoint_ns: str | None = None,
+    ) -> dict[str, Any] | None:
+        items = self.list_langgraph_checkpoints(
+            thread_id=thread_id,
+            tenant_id=tenant_id,
+            checkpoint_ns=checkpoint_ns,
+        )
+        if checkpoint_id:
+            for item in items:
+                if item.get("checkpoint_id") == checkpoint_id:
+                    return item
+            return None
+        return items[0] if items else None
+
+    def list_langgraph_checkpoints(
+        self,
+        *,
+        thread_id: str,
+        tenant_id: str,
+        checkpoint_ns: str | None = None,
+    ) -> list[dict[str, Any]]:
+        raw = self.workflow_repository.list(thread_id=thread_id, tenant_id=tenant_id, limit=1000)
+        items: list[dict[str, Any]] = []
+        for item in raw:
+            if item.get("kind") != self.langgraph_checkpoint_kind:
+                continue
+            if checkpoint_ns is not None and item.get("checkpoint_ns", "") != checkpoint_ns:
+                continue
+            record = dict(item)
+            record["checkpoint_id"] = record.get("langgraph_checkpoint_id")
+            record["parent_checkpoint_id"] = record.get("parent_langgraph_checkpoint_id")
+            items.append(record)
+        items.sort(key=lambda x: int(x.get("seq", 0)), reverse=True)
+        return items
+
+    def delete_langgraph_checkpoints(self, *, thread_id: str) -> None:
+        if thread_id not in self.workflow_checkpoints:
+            return
+        self.workflow_checkpoints[thread_id] = [
+            item
+            for item in self.workflow_checkpoints[thread_id]
+            if item.get("kind") != self.langgraph_checkpoint_kind
+        ]
+
+    def _next_workflow_seq(self, thread_id: str, tenant_id: str) -> int:
+        items = self.workflow_repository.list(thread_id=thread_id, tenant_id=tenant_id, limit=1000)
+        if not items:
+            return 1
+        return max(int(item.get("seq", 0)) for item in items) + 1
 
     def _workflow_runtime_mode(self) -> tuple[str, object | None]:
         mode = os.environ.get("WORKFLOW_RUNTIME", "langgraph").strip().lower() or "langgraph"
@@ -1510,7 +1595,23 @@ class InMemoryStore:
                 "output": {"status": "running"},
             }
 
-        if needs_human_review:
+        mode, langgraph_module = self._workflow_runtime_mode()
+        state = _base_state()
+
+        def _node(name: str, payload: dict[str, Any] | None = None):
+            def _inner(current: dict[str, Any]) -> dict[str, Any]:
+                self._append_node_checkpoint(
+                    thread_id=thread_id,
+                    job_id=str(job.get("job_id") or ""),
+                    tenant_id=tenant_id,
+                    node=name,
+                    payload=payload,
+                )
+                return current
+
+            return _inner
+
+        if mode != "langgraph" and needs_human_review:
             self._append_node_checkpoint(
                 thread_id=thread_id,
                 job_id=str(job.get("job_id") or ""),
@@ -1563,45 +1664,14 @@ class InMemoryStore:
                 "evaluation_id": evaluation_id,
             }
 
-        mode, langgraph_module = self._workflow_runtime_mode()
-        state = _base_state()
-
-        def _node(name: str, payload: dict[str, Any] | None = None):
-            def _inner(current: dict[str, Any]) -> dict[str, Any]:
-                self._append_node_checkpoint(
-                    thread_id=thread_id,
-                    job_id=str(job.get("job_id") or ""),
-                    tenant_id=tenant_id,
-                    node=name,
-                    payload=payload,
-                )
-                return current
-
-            return _inner
-
         if mode == "langgraph" and langgraph_module is not None:
             try:
-                from langgraph.graph import END, StateGraph  # type: ignore
+                from app.langgraph_runtime import run_evaluation_graph
 
-                graph = StateGraph(dict)
-                graph.add_node("load_context", _node("load_context"))
-                graph.add_node("retrieve_evidence", _node("retrieve_evidence"))
-                graph.add_node("evaluate_rules", _node("evaluate_rules"))
-                graph.add_node("score_with_llm", _node("score_with_llm"))
-                graph.add_node("quality_gate", _node("quality_gate", {"decision": "pass"}))
-                graph.add_node("finalize_report", _node("finalize_report"))
-                graph.add_node("persist_result", _node("persist_result"))
-                graph.set_entry_point("load_context")
-                graph.add_edge("load_context", "retrieve_evidence")
-                graph.add_edge("retrieve_evidence", "evaluate_rules")
-                graph.add_edge("evaluate_rules", "score_with_llm")
-                graph.add_edge("score_with_llm", "quality_gate")
-                graph.add_edge("quality_gate", "finalize_report")
-                graph.add_edge("finalize_report", "persist_result")
-                graph.add_edge("persist_result", END)
-                compiled = graph.compile()
-                compiled.invoke(state, config={"configurable": {"thread_id": thread_id}})
+                return run_evaluation_graph(store=self, job=job, tenant_id=tenant_id)
             except Exception:
+                if true_stack_required(os.environ):
+                    raise
                 mode = "compat"
 
         if mode != "langgraph":
@@ -1641,6 +1711,17 @@ class InMemoryStore:
     ) -> dict[str, Any]:
         thread_id = str(job.get("thread_id") or self._new_thread_id("resume"))
         job_id = str(job.get("job_id") or "")
+        mode, langgraph_module = self._workflow_runtime_mode()
+        if mode == "langgraph" and langgraph_module is not None:
+            try:
+                from app.langgraph_runtime import run_resume_graph
+
+                return run_resume_graph(store=self, job=job, tenant_id=tenant_id)
+            except Exception:
+                if true_stack_required(os.environ):
+                    raise
+                mode = "compat"
+
         self._append_node_checkpoint(
             thread_id=thread_id,
             job_id=job_id,

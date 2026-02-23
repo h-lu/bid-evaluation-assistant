@@ -44,6 +44,7 @@ HITL: interrupt -> wait resume_token -> resume -> finalize
 1. API 线程不执行长任务。
 2. interrupt payload 必须 JSON 可序列化。
 3. resume 仅允许单次消费且绑定 `tenant_id + evaluation_id`。
+4. LangGraph 必须携带 `thread_id` 作为恢复指针。
 
 ## 5. 实施任务（执行顺序）
 
@@ -149,3 +150,5 @@ pytest -q
 4. HITL token TTL 接入 `RESUME_TOKEN_TTL_HOURS` 配置，保持单次消费与租户绑定约束。
 5. Worker 调度引入按 tenant 轮询与 `tenant_burst_limit`，避免单租户突发独占消费窗口。
 6. 新增 `WORKFLOW_RUNTIME`，默认启用 LangGraph runtime；当依赖缺失且非真栈环境时降级为兼容执行路径。
+7. LangGraph runtime 使用 `interrupt`/`Command(resume=...)` 实现 HITL 中断恢复。
+8. LangGraph checkpoint 状态持久化与现有 workflow checkpoint 分离，内部标记 `langgraph_state`。

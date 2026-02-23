@@ -16,9 +16,9 @@
 
 ## 2. 变更点（待补齐）
 
-1. 定义 LangGraph 图与 typed edges。
-2. checkpointer 真实持久化后端。
-3. runtime 切换为强制 LangGraph。
+1. 定义 LangGraph 图与节点链路（load/retrieve/evaluate/score/quality/finalize/persist）。
+2. checkpointer 使用 `langgraph_state` 记录并可按 `thread_id` 读取。
+3. runtime 启用 `interrupt`/`Command(resume=...)`。
 4. 中断负载结构化并记录审计字段。
 
 ## 3. 测试命令与结果（待执行）
@@ -27,7 +27,7 @@
 pytest -q tests/test_workflow_checkpoints.py tests/test_resume_and_citation.py
 ```
 
-结果：待执行
+结果：通过
 
 ```bash
 pytest -q tests/test_worker_runtime.py tests/test_internal_job_run.py
