@@ -64,3 +64,6 @@ chroma_data/
 # Git worktrees
 .worktrees/
 worktrees/
+
+# Artifacts
+artifacts/
