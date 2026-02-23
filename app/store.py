@@ -1356,6 +1356,28 @@ class InMemoryStore:
         if report is None:
             return None
         self._assert_tenant_scope(report.get("tenant_id", "tenant_default"), tenant_id)
+        # Resolve citations to full objects per SSOT spec
+        raw_citations = report.get("citations", [])
+        if raw_citations and isinstance(raw_citations[0], str):
+            # Old format: list of chunk_ids -> resolve to objects
+            resolved_citations = self._resolve_citations_batch(raw_citations, include_quote=True)
+        else:
+            # Already resolved or empty
+            resolved_citations = raw_citations
+
+        # Resolve criteria_results citations (without quote per SSOT)
+        raw_criteria = report.get("criteria_results", [])
+        resolved_criteria = []
+        for item in raw_criteria:
+            item_copy = dict(item)
+            item_citations = item_copy.get("citations", [])
+            if item_citations and isinstance(item_citations[0], str):
+                item_copy["citations"] = self._resolve_citations_batch(item_citations, include_quote=False)
+            # Remove extra fields not in SSOT
+            item_copy.pop("weight", None)
+            item_copy.pop("citations_count", None)
+            resolved_criteria.append(item_copy)
+
         return {
             "evaluation_id": report["evaluation_id"],
             "supplier_id": report["supplier_id"],
@@ -1363,8 +1385,8 @@ class InMemoryStore:
             "confidence": report["confidence"],
             "citation_coverage": report.get("citation_coverage", 0.0),
             "risk_level": report["risk_level"],
-            "criteria_results": report["criteria_results"],
-            "citations": report["citations"],
+            "criteria_results": resolved_criteria,
+            "citations": resolved_citations,
             "needs_human_review": report["needs_human_review"],
             "trace_id": report["trace_id"],
             "interrupt": report.get("interrupt"),
@@ -2001,6 +2023,42 @@ class InMemoryStore:
         source_tenant = source.get("tenant_id", tenant_id)
         self._assert_tenant_scope(source_tenant, tenant_id)
         return source
+
+    def _resolve_citation(self, chunk_id: str, *, include_quote: bool = True) -> dict[str, Any]:
+        """
+        将 chunk_id 解析为完整 citation 对象。
+
+        Args:
+            chunk_id: chunk 唯一标识
+            include_quote: 是否包含 quote 字段（报告级需要，criteria 级不需要）
+
+        Returns:
+            {"chunk_id": str, "page": int | None, "bbox": list | None, "quote": str | None}
+        """
+        source = self.citation_sources.get(chunk_id)
+        if source is None:
+            result = {
+                "chunk_id": chunk_id,
+                "page": None,
+                "bbox": None,
+            }
+            if include_quote:
+                result["quote"] = None
+            return result
+        result = {
+            "chunk_id": chunk_id,
+            "page": source.get("page"),
+            "bbox": source.get("bbox"),
+        }
+        if include_quote:
+            result["quote"] = source.get("text")
+        return result
+
+    def _resolve_citations_batch(self, chunk_ids: list[str], *, include_quote: bool = True) -> list[dict[str, Any]]:
+        """
+        批量解析 chunk_id 列表为 citation 对象列表。
+        """
+        return [self._resolve_citation(cid, include_quote=include_quote) for cid in chunk_ids]
 
     @staticmethod
     def _select_retrieval_mode(*, query_type: str, high_risk: bool) -> str:
@@ -4549,6 +4607,23 @@ class PostgresBackedStore(InMemoryStore):
         if loaded is not None:
             self._assert_tenant_scope(loaded.get("tenant_id", "tenant_default"), tenant_id)
             self.evaluation_reports[evaluation_id] = loaded
+            # Resolve citations to full objects per SSOT spec
+            raw_citations = loaded.get("citations", [])
+            if raw_citations and isinstance(raw_citations[0], str):
+                resolved_citations = self._resolve_citations_batch(raw_citations, include_quote=True)
+            else:
+                resolved_citations = raw_citations
+            # Resolve criteria_results citations (without quote per SSOT)
+            raw_criteria = loaded.get("criteria_results", [])
+            resolved_criteria = []
+            for item in raw_criteria:
+                item_copy = dict(item)
+                item_citations = item_copy.get("citations", [])
+                if item_citations and isinstance(item_citations[0], str):
+                    item_copy["citations"] = self._resolve_citations_batch(item_citations, include_quote=False)
+                item_copy.pop("weight", None)
+                item_copy.pop("citations_count", None)
+                resolved_criteria.append(item_copy)
             return {
                 "evaluation_id": loaded["evaluation_id"],
                 "supplier_id": loaded["supplier_id"],
@@ -4556,11 +4631,12 @@ class PostgresBackedStore(InMemoryStore):
                 "confidence": loaded["confidence"],
                 "citation_coverage": loaded.get("citation_coverage", 0.0),
                 "risk_level": loaded["risk_level"],
-                "criteria_results": loaded["criteria_results"],
-                "citations": loaded["citations"],
+                "criteria_results": resolved_criteria,
+                "citations": resolved_citations,
                 "needs_human_review": loaded["needs_human_review"],
                 "trace_id": loaded["trace_id"],
                 "interrupt": loaded.get("interrupt"),
+                "report_uri": loaded.get("report_uri"),
             }
         return super().get_evaluation_report_for_tenant(
             evaluation_id=evaluation_id,
