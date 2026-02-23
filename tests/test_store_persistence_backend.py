@@ -118,6 +118,9 @@ def test_store_factory_uses_postgres_backend_with_fake_driver(monkeypatch):
                 payload = self._state.get("payload")
                 self._row = (payload,) if payload is not None else None
                 return
+            if normalized.startswith("select payload") and "from rule_packs" in normalized:
+                self._row = None
+                return
             if normalized.startswith("select job_id, tenant_id, job_type"):
                 if not params:
                     raise AssertionError("expected tenant_id and job_id")
@@ -421,6 +424,9 @@ def test_postgres_store_run_job_once_persists_status_between_transitions(monkeyp
             ):
                 return
             if normalized.startswith("select payload::text from"):
+                self._row = None
+                return
+            if normalized.startswith("select payload") and "from rule_packs" in normalized:
                 self._row = None
                 return
             if normalized.startswith("insert into") and "bea_store_state" in normalized:

@@ -48,6 +48,22 @@ from app.repositories.workflow_checkpoints import PostgresWorkflowCheckpointsRep
 from app.runtime_profile import true_stack_required
 
 
+def _json_safe(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    if isinstance(value, dict):
+        return {str(key): _json_safe(val) for key, val in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(item) for item in value]
+    try:
+        json.dumps(value, ensure_ascii=True)
+        return value
+    except TypeError:
+        return str(value)
+
+
 @dataclass
 class IdempotencyRecord:
     fingerprint: str
@@ -775,6 +791,7 @@ class InMemoryStore:
                         else "rule engine blocked: required bid document scope missing"
                     ),
                     "citations": citations,
+                    "citations_count": len(citations),
                     "confidence": 0.81 if hard_constraint_pass else 1.0,
                 }
             )
@@ -1373,6 +1390,8 @@ class InMemoryStore:
             )
 
         current_status = job["status"]
+        if new_status == current_status:
+            return job
         allowed = self.ALLOWED_TRANSITIONS.get(current_status, set())
         if new_status not in allowed:
             raise ApiError(
@@ -1586,7 +1605,7 @@ class InMemoryStore:
         payload["langgraph_checkpoint_id"] = checkpoint_id
         payload["parent_langgraph_checkpoint_id"] = record.get("parent_checkpoint_id")
         payload["checkpoint_id"] = f"lgcp_{checkpoint_id}"
-        return self.workflow_repository.append(checkpoint=payload)
+        return self.workflow_repository.append(checkpoint=_json_safe(payload))
 
     def get_langgraph_checkpoint_record(
         self,
