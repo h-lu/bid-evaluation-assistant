@@ -10,6 +10,7 @@
     "test:e2e": "node scripts/e2e-smoke.mjs"
   },
   "dependencies": {
+    "pdfjs-dist": "^4.3.136",
     "pinia": "^2.2.6",
     "vue": "^3.5.13",
     "vue-router": "^4.4.5"

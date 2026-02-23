@@ -288,7 +288,6 @@ td {
 
 .pdf-canvas {
   position: relative;
-  aspect-ratio: 3 / 4;
   background: #ffffff;
   border: 1px dashed var(--border);
   border-radius: 8px;
@@ -296,9 +295,8 @@ td {
 }
 
 .pdf-page {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(135deg, #ffffff 0%, #f4f7f6 100%);
+  display: block;
+  background: #ffffff;
 }
 
 .highlight-box {

@@ -756,9 +756,15 @@ class InMemoryStore:
                 else "ck_rule_block_1"
             )
             citations = [citation_id]
+            criteria_name = criteria.get("criteria_name") or criteria.get("name") or criteria_id
+            requirement_text = criteria.get("requirement_text") or criteria.get("requirement")
+            response_text = criteria.get("response_text") or criteria.get("response")
             criteria_results.append(
                 {
                     "criteria_id": criteria_id,
+                    "criteria_name": str(criteria_name),
+                    "requirement_text": str(requirement_text) if requirement_text is not None else None,
+                    "response_text": str(response_text) if response_text is not None else None,
                     "score": score,
                     "max_score": max_score,
                     "weight": weight,

@@ -34,19 +34,26 @@
             <thead>
               <tr>
                 <th>Criteria</th>
+                <th>Requirement</th>
+                <th>Response</th>
                 <th>Score</th>
                 <th>Hard Pass</th>
+                <th>Confidence</th>
                 <th>Reason</th>
                 <th>Citations</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="item in report.criteria_results" :key="item.criteria_id">
-                <td>{{ item.criteria_id }}</td>
+                <td>{{ item.criteria_name || item.criteria_id }}</td>
+                <td>{{ item.requirement_text || "-" }}</td>
+                <td>{{ item.response_text || "-" }}</td>
                 <td>{{ item.score }} / {{ item.max_score }}</td>
                 <td>{{ item.hard_pass ? "yes" : "no" }}</td>
+                <td>{{ item.confidence ?? "-" }}</td>
                 <td>{{ item.reason }}</td>
                 <td>
+                  <div class="meta">Count: {{ item.citations_count ?? item.citations?.length ?? 0 }}</div>
                   <button
                     v-for="cid in item.citations"
                     :key="cid"
@@ -84,13 +91,13 @@
       <div v-if="selectedCitation?.context" class="meta">
         {{ selectedCitation.context }}
       </div>
-      <div class="pdf-pane">
-        <div class="pdf-header">
-          <span>PDF Preview (mock)</span>
-          <span v-if="selectedCitation">Page {{ selectedCitation.page }}</span>
-        </div>
+        <div class="pdf-pane">
+          <div class="pdf-header">
+            <span>PDF Preview</span>
+            <span v-if="selectedCitation">Page {{ selectedCitation.page }}</span>
+          </div>
         <div class="pdf-canvas">
-          <div class="pdf-page"></div>
+          <canvas ref="pdfCanvas" class="pdf-page"></canvas>
           <div v-if="highlightStyle" class="highlight-box" :style="highlightStyle"></div>
         </div>
         <p class="meta" v-if="!selectedCitation">Select a citation to render highlight.</p>
@@ -123,8 +130,10 @@
 import { computed, onMounted, reactive, ref } from "vue";
 import { useRoute } from "vue-router";
 
-import { getCitationSource, getEvaluationReport, resumeEvaluation } from "../api";
+import { getCitationSource, getDocumentRaw, getEvaluationReport, resumeEvaluation } from "../api";
 import { useSessionStore } from "../stores/session";
+import * as pdfjsLib from "pdfjs-dist/build/pdf";
+import pdfWorker from "pdfjs-dist/build/pdf.worker?url";
 
 const route = useRoute();
 const evaluationId = computed(() => route.params.evaluation_id);
@@ -132,6 +141,14 @@ const report = ref(null);
 const error = ref("");
 const selectedCitation = ref(null);
 const highlightStyle = ref(null);
+const pdfCanvas = ref(null);
+const pdfViewport = ref(null);
+const pdfState = reactive({
+  doc: null,
+  documentId: null,
+  page: 1,
+  scale: 1.4
+});
 const session = useSessionStore();
 const canReview = computed(() => session.can("review"));
 const hitlReasons = computed(() => {
@@ -176,6 +193,9 @@ async function selectCitation(chunkId) {
   error.value = "";
   try {
     selectedCitation.value = await getCitationSource(chunkId);
+    if (selectedCitation.value?.document_id) {
+      await loadPdf(selectedCitation.value.document_id, selectedCitation.value.page || 1);
+    }
     highlightStyle.value = mapHighlight(selectedCitation.value?.bbox || []);
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err);
@@ -205,23 +225,44 @@ async function submitReview() {
 }
 
 function mapHighlight(bbox) {
-  if (!Array.isArray(bbox) || bbox.length !== 4) {
+  if (!Array.isArray(bbox) || bbox.length !== 4 || !pdfViewport.value) {
     return null;
   }
   const [x0, y0, x1, y1] = bbox.map((v) => Number(v) || 0);
-  const maxCoord = Math.max(x1, y1, 1);
-  const norm = maxCoord > 1 ? 1 / maxCoord : 1;
-  const left = Math.max(0, x0 * norm * 100);
-  const top = Math.max(0, y0 * norm * 100);
-  const width = Math.max(0, (x1 - x0) * norm * 100);
-  const height = Math.max(0, (y1 - y0) * norm * 100);
+  const rect = pdfViewport.value.convertToViewportRectangle([x0, y0, x1, y1]);
+  const left = Math.min(rect[0], rect[2]);
+  const top = Math.min(rect[1], rect[3]);
+  const width = Math.abs(rect[2] - rect[0]);
+  const height = Math.abs(rect[3] - rect[1]);
   return {
-    left: `${left}%`,
-    top: `${top}%`,
-    width: `${width}%`,
-    height: `${height}%`
+    left: `${left}px`,
+    top: `${top}px`,
+    width: `${width}px`,
+    height: `${height}px`
   };
 }
+
+async function loadPdf(documentId, pageNumber) {
+  if (!pdfCanvas.value) return;
+  if (pdfState.documentId !== documentId) {
+    const raw = await getDocumentRaw(documentId);
+    const loadingTask = pdfjsLib.getDocument({ data: raw.buffer });
+    pdfState.doc = await loadingTask.promise;
+    pdfState.documentId = documentId;
+  }
+  if (!pdfState.doc) return;
+  pdfState.page = pageNumber;
+  const page = await pdfState.doc.getPage(pageNumber);
+  const viewport = page.getViewport({ scale: pdfState.scale });
+  pdfViewport.value = viewport;
+  const canvas = pdfCanvas.value;
+  const context = canvas.getContext("2d");
+  canvas.width = viewport.width;
+  canvas.height = viewport.height;
+  await page.render({ canvasContext: context, viewport }).promise;
+}
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 onMounted(loadReport);
 </script>

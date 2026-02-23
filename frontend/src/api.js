@@ -60,6 +60,24 @@ export function getCitationSource(chunkId) {
   return apiRequest(`/api/v1/citations/${chunkId}/source`, { method: "GET" });
 }
 
+export async function getDocumentRaw(documentId) {
+  const session = useSessionStore();
+  const tenantId = session.tenantId || "tenant_demo";
+  const response = await fetch(`${baseUrl}/api/v1/documents/${documentId}/raw`, {
+    method: "GET",
+    headers: {
+      "x-tenant-id": tenantId,
+      "x-trace-id": defaultTrace()
+    }
+  });
+  if (!response.ok) {
+    throw new Error(`DOC_RAW_${response.status}`);
+  }
+  const contentType = response.headers.get("Content-Type") || "application/octet-stream";
+  const buffer = await response.arrayBuffer();
+  return { buffer, contentType };
+}
+
 export function getJob(jobId) {
   return apiRequest(`/api/v1/jobs/${jobId}`, { method: "GET" });
 }

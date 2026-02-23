@@ -77,14 +77,14 @@
 
 点对点评分表字段：
 
-1. `criteria_name`
-2. `requirement_text`
-3. `response_text`
+1. `criteria_id`（若存在 `criteria_name`，优先展示 `criteria_name`）
+2. `requirement_text`（可选，来自规则包或解析提取）
+3. `response_text`（可选，来自解析提取）
 4. `hard_pass`
 5. `score/max_score`
 6. `reason`
 7. `confidence`
-8. `citations_count`
+8. `citations_count`（由 `citations.length` 计算）
 
 ### 3.3 人工复核页
 
@@ -109,7 +109,7 @@
   "document_id": "doc_xxx",
   "page": 8,
   "bbox": [120.2, 310.0, 520.8, 365.4],
-  "quote": "原文片段...",
+  "text": "原文片段...",
   "context": "上下文..."
 }
 ```
