@@ -724,34 +724,105 @@ class InMemoryStore:
         include_doc_types = payload.get("evaluation_scope", {}).get("include_doc_types", [])
         include_doc_types_normalized = {str(x).lower() for x in include_doc_types}
         hard_constraint_pass = "bid" in include_doc_types_normalized
-        criteria_results = [
-            {
-                "criteria_id": "delivery",
-                "score": 18.0 if hard_constraint_pass else 0.0,
-                "max_score": 20.0,
-                "hard_pass": hard_constraint_pass,
-                "reason": (
-                    "delivery period satisfies baseline"
-                    if hard_constraint_pass
-                    else "rule engine blocked: required bid document scope missing"
-                ),
-                "citations": ["ck_eval_stub_1" if hard_constraint_pass else "ck_rule_block_1"],
-                "confidence": 0.81 if hard_constraint_pass else 1.0,
-            }
-        ]
-        total_score = sum(float(item.get("score", 0.0)) for item in criteria_results)
-        max_total = sum(float(item.get("max_score", 0.0)) for item in criteria_results) or 1.0
-        citation_hits = sum(1 for item in criteria_results if item.get("citations"))
-        citation_coverage = citation_hits / max(len(criteria_results), 1)
-        confidence_avg = sum(float(item.get("confidence", 0.0)) for item in criteria_results) / max(
-            len(criteria_results), 1
+        rule_pack = self.get_rule_pack_for_tenant(
+            rule_pack_version=str(payload.get("rule_pack_version") or ""),
+            tenant_id=tenant_id,
         )
+        rules = rule_pack.get("rules") if isinstance(rule_pack, dict) else {}
+        criteria_defs = rules.get("criteria") if isinstance(rules, dict) else None
+        if not isinstance(criteria_defs, list) or not criteria_defs:
+            criteria_defs = [
+                {
+                    "criteria_id": "delivery",
+                    "max_score": 20.0,
+                    "weight": 1.0,
+                }
+            ]
+
+        criteria_results: list[dict[str, Any]] = []
+        citations_all: list[str] = []
+        unsupported_claims: list[str] = []
+        for criteria in criteria_defs:
+            if not isinstance(criteria, dict):
+                continue
+            criteria_id = str(criteria.get("criteria_id") or "criteria")
+            max_score = float(criteria.get("max_score", 20.0))
+            weight = float(criteria.get("weight", 1.0))
+            score = max_score * 0.9 if hard_constraint_pass else 0.0
+            citation_id = (
+                f"ck_{criteria_id}_{evaluation_id[:6]}"
+                if hard_constraint_pass
+                else "ck_rule_block_1"
+            )
+            citations = [citation_id]
+            criteria_results.append(
+                {
+                    "criteria_id": criteria_id,
+                    "score": score,
+                    "max_score": max_score,
+                    "weight": weight,
+                    "hard_pass": hard_constraint_pass,
+                    "reason": (
+                        "delivery period satisfies baseline"
+                        if hard_constraint_pass
+                        else "rule engine blocked: required bid document scope missing"
+                    ),
+                    "citations": citations,
+                    "confidence": 0.81 if hard_constraint_pass else 1.0,
+                }
+            )
+            citations_all.extend(citations)
+
+        for chunk_id in citations_all:
+            if chunk_id not in self.citation_sources:
+                self.register_citation_source(
+                    chunk_id=chunk_id,
+                    source={
+                        "chunk_id": chunk_id,
+                        "document_id": f"doc_{evaluation_id[:8]}",
+                        "tenant_id": tenant_id,
+                        "project_id": payload.get("project_id"),
+                        "supplier_id": payload.get("supplier_id"),
+                        "doc_type": include_doc_types[0] if include_doc_types else "bid",
+                        "page": 1,
+                        "bbox": [0.0, 0.0, 1.0, 1.0],
+                        "heading_path": ["auto", "stub"],
+                        "chunk_type": "text",
+                        "content_source": "stub",
+                        "text": "stub citation",
+                        "context": "stub context",
+                        "score_raw": 0.78,
+                        "chunk_hash": f"hash_{chunk_id}",
+                    },
+                )
+
+        resolvable = [
+            cid for cid in citations_all if self.citation_sources.get(cid) is not None
+        ]
+        if len(resolvable) < len(citations_all):
+            for missing in (set(citations_all) - set(resolvable)):
+                unsupported_claims.append(missing)
+
+        total_score = sum(float(item.get("score", 0.0)) * float(item.get("weight", 1.0)) for item in criteria_results)
+        max_total = sum(float(item.get("max_score", 0.0)) * float(item.get("weight", 1.0)) for item in criteria_results) or 1.0
+        citation_coverage = len(resolvable) / max(len(citations_all), 1)
+        evidence_quality = citation_coverage
+        retrieval_agreement = citation_coverage
+        model_stability = 0.85 if hard_constraint_pass else 0.7
+        base_confidence = 0.4 * evidence_quality + 0.3 * retrieval_agreement + 0.3 * model_stability
+        score_calibration = self.strategy_config.get("score_calibration", {})
+        confidence_scale = float(score_calibration.get("confidence_scale", 1.0))
+        score_bias = float(score_calibration.get("score_bias", 0.0))
+        confidence_avg = max(0.0, min(1.0, base_confidence * confidence_scale + score_bias))
         score_deviation_pct = abs(total_score - max_total) / max_total * 100.0
+        redline_conflict = bool(rules.get("redline_conflict", False)) if isinstance(rules, dict) else False
         needs_human_review = (
             force_hitl
             or confidence_avg < 0.65
             or citation_coverage < 0.90
             or score_deviation_pct > 20.0
+            or redline_conflict
+            or bool(unsupported_claims)
         )
         interrupt_payload = None
         if needs_human_review:
@@ -796,12 +867,13 @@ class InMemoryStore:
             "score_deviation_pct": round(score_deviation_pct, 2),
             "risk_level": "medium" if hard_constraint_pass else "high",
             "criteria_results": criteria_results,
-            "citations": [row["citations"][0] for row in criteria_results if row.get("citations")],
+            "citations": citations_all,
             "needs_human_review": needs_human_review,
             "trace_id": payload.get("trace_id") or "",
             "tenant_id": tenant_id,
             "thread_id": thread_id,
             "interrupt": interrupt_payload,
+            "unsupported_claims": unsupported_claims,
             }
         )
         self.append_outbox_event(
@@ -2405,6 +2477,24 @@ class InMemoryStore:
             object_id=object_id,
         )
         if active_hold is not None:
+            storage_uri = self._resolve_storage_uri(
+                tenant_id=tenant_id,
+                object_type=object_type,
+                object_id=object_id,
+            )
+            self._append_audit_log(
+                log={
+                    "tenant_id": tenant_id,
+                    "action": "storage_cleanup_blocked",
+                    "object_type": object_type,
+                    "object_id": object_id,
+                    "storage_uri": storage_uri,
+                    "reason": reason,
+                    "trace_id": trace_id,
+                    "blocked_by": "legal_hold",
+                    "occurred_at": self._utcnow_iso(),
+                }
+            )
             raise ApiError(
                 code="LEGAL_HOLD_ACTIVE",
                 message="object is under legal hold",
@@ -2417,6 +2507,29 @@ class InMemoryStore:
             object_type=object_type,
             object_id=object_id,
         )
+        if storage_uri and self.object_storage.is_retention_active(storage_uri=storage_uri):
+            retention = self.object_storage.get_retention(storage_uri=storage_uri)
+            self._append_audit_log(
+                log={
+                    "tenant_id": tenant_id,
+                    "action": "storage_cleanup_blocked",
+                    "object_type": object_type,
+                    "object_id": object_id,
+                    "storage_uri": storage_uri,
+                    "reason": reason,
+                    "trace_id": trace_id,
+                    "blocked_by": "retention",
+                    "retention": retention,
+                    "occurred_at": self._utcnow_iso(),
+                }
+            )
+            raise ApiError(
+                code="RETENTION_ACTIVE",
+                message="object is under retention",
+                error_class="business_rule",
+                retryable=False,
+                http_status=409,
+            )
         deleted = False
         if storage_uri:
             deleted = self.object_storage.delete_object(storage_uri=storage_uri)

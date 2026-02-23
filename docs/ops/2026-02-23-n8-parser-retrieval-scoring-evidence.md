@@ -36,6 +36,12 @@ pytest -q tests/test_retrieval_query.py
 
 结果：通过
 
+```bash
+pytest -q tests/test_evaluation_report.py
+```
+
+结果：通过
+
 ## 4. 结论
 
 解析/检索基础能力已对齐并通过回归命令验证（详见第 3 节）。
