@@ -1394,12 +1394,14 @@ def create_app() -> FastAPI:
                 http_status=400,
             )
         replay_passed = bool(payload.get("replay_passed"))
+        dataset_version = str(payload.get("dataset_version") or "").strip() or None
         gate_results_obj = payload.get("gate_results", {})
         gate_results = gate_results_obj if isinstance(gate_results_obj, dict) else {}
         data = store.evaluate_release_readiness(
             release_id=release_id,
             tenant_id=_tenant_id_from_request(request),
             trace_id=_trace_id_from_request(request),
+            dataset_version=dataset_version,
             replay_passed=replay_passed,
             gate_results=gate_results,
         )
@@ -1429,12 +1431,14 @@ def create_app() -> FastAPI:
                 http_status=400,
             )
         replay_passed = bool(payload.get("replay_passed", False))
+        dataset_version = str(payload.get("dataset_version") or "").strip() or None
         gate_results_obj = payload.get("gate_results", {})
         gate_results = gate_results_obj if isinstance(gate_results_obj, dict) else {}
         data = store.execute_release_pipeline(
             release_id=release_id,
             tenant_id=_tenant_id_from_request(request),
             trace_id=_trace_id_from_request(request),
+            dataset_version=dataset_version,
             replay_passed=replay_passed,
             gate_results=gate_results,
         )

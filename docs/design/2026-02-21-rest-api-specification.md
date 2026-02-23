@@ -881,6 +881,7 @@
 ```json
 {
   "release_id": "rel_20260222_01",
+  "dataset_version": "v1.0.0",
   "replay_passed": true,
   "gate_results": {
     "quality": true,
@@ -903,6 +904,7 @@
     "assessment_id": "ra_xxx",
     "release_id": "rel_20260222_01",
     "tenant_id": "tenant_a",
+    "dataset_version": "v1.0.0",
     "admitted": true,
     "failed_checks": [],
     "replay_passed": true,
@@ -927,6 +929,7 @@
 1. 仅内部发布准入流水线使用，必须携带 `x-internal-debug: true`。
 2. 任一门禁为 `false` 或 `replay_passed=false`，都必须阻断发布（`admitted=false`）。
 3. `failed_checks` 必须给出可审计的失败原因列表。
+4. `dataset_version` 为空时必须阻断发布并追加 `DATASET_VERSION_REQUIRED`。
 
 ### 5.16C `POST /internal/release/pipeline/execute`
 
@@ -935,6 +938,7 @@
 ```json
 {
   "release_id": "rel_20260222_01",
+  "dataset_version": "v1.0.0",
   "replay_passed": true,
   "gate_results": {
     "quality": true,
@@ -957,6 +961,7 @@
     "pipeline_id": "pl_xxx",
     "release_id": "rel_20260222_01",
     "tenant_id": "tenant_a",
+    "dataset_version": "v1.0.0",
     "stage": "release_ready",
     "admitted": true,
     "failed_checks": [],

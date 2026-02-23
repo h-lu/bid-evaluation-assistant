@@ -2845,12 +2845,15 @@ class InMemoryStore:
         release_id: str,
         tenant_id: str,
         trace_id: str,
+        dataset_version: str | None,
         replay_passed: bool,
         gate_results: dict[str, Any],
     ) -> dict[str, Any]:
         expected_gates = ["quality", "performance", "security", "cost", "rollout", "rollback", "ops"]
         normalized_gate_results = {name: bool(gate_results.get(name, False)) for name in expected_gates}
         failed_checks: list[str] = []
+        if not (dataset_version or "").strip():
+            failed_checks.append("DATASET_VERSION_REQUIRED")
         for gate_name in expected_gates:
             if not normalized_gate_results[gate_name]:
                 failed_checks.append(f"{gate_name.upper()}_GATE_FAILED")
@@ -2862,6 +2865,7 @@ class InMemoryStore:
             "assessment_id": assessment_id,
             "release_id": release_id,
             "tenant_id": tenant_id,
+            "dataset_version": dataset_version or "",
             "admitted": admitted,
             "failed_checks": failed_checks,
             "replay_passed": replay_passed,
@@ -2879,6 +2883,7 @@ class InMemoryStore:
                 "action": "release_readiness_evaluated",
                 "release_id": release_id,
                 "assessment_id": assessment_id,
+                "dataset_version": dataset_version or "",
                 "admitted": admitted,
                 "failed_checks": failed_checks,
                 "trace_id": trace_id,
@@ -2893,6 +2898,7 @@ class InMemoryStore:
         release_id: str,
         tenant_id: str,
         trace_id: str,
+        dataset_version: str | None,
         replay_passed: bool,
         gate_results: dict[str, Any],
     ) -> dict[str, Any]:
@@ -2902,6 +2908,7 @@ class InMemoryStore:
                 release_id=release_id,
                 tenant_id=tenant_id,
                 trace_id=trace_id,
+                dataset_version=dataset_version,
                 replay_passed=replay_passed,
                 gate_results=gate_results,
             )
@@ -2921,6 +2928,7 @@ class InMemoryStore:
             "pipeline_id": pipeline_id,
             "release_id": release_id,
             "tenant_id": tenant_id,
+            "dataset_version": dataset_version or "",
             "stage": stage,
             "admitted": admitted,
             "failed_checks": failed_checks,
@@ -2941,6 +2949,7 @@ class InMemoryStore:
                 "action": "release_pipeline_executed",
                 "release_id": release_id,
                 "pipeline_id": pipeline_id,
+                "dataset_version": dataset_version or "",
                 "stage": stage,
                 "admitted": admitted,
                 "failed_checks": failed_checks,
@@ -3782,6 +3791,7 @@ class SqliteBackedStore(InMemoryStore):
         release_id: str,
         tenant_id: str,
         trace_id: str,
+        dataset_version: str | None,
         replay_passed: bool,
         gate_results: dict[str, Any],
     ) -> dict[str, Any]:
@@ -3789,6 +3799,7 @@ class SqliteBackedStore(InMemoryStore):
             release_id=release_id,
             tenant_id=tenant_id,
             trace_id=trace_id,
+            dataset_version=dataset_version,
             replay_passed=replay_passed,
             gate_results=gate_results,
         )
@@ -4086,6 +4097,7 @@ class SqliteBackedStore(InMemoryStore):
         release_id: str,
         tenant_id: str,
         trace_id: str,
+        dataset_version: str | None,
         replay_passed: bool,
         gate_results: dict[str, Any],
     ) -> dict[str, Any]:
@@ -4093,6 +4105,7 @@ class SqliteBackedStore(InMemoryStore):
             release_id=release_id,
             tenant_id=tenant_id,
             trace_id=trace_id,
+            dataset_version=dataset_version,
             replay_passed=replay_passed,
             gate_results=gate_results,
         )
@@ -4105,6 +4118,7 @@ class SqliteBackedStore(InMemoryStore):
         release_id: str,
         tenant_id: str,
         trace_id: str,
+        dataset_version: str | None,
         replay_passed: bool,
         gate_results: dict[str, Any],
     ) -> dict[str, Any]:
@@ -4112,6 +4126,7 @@ class SqliteBackedStore(InMemoryStore):
             release_id=release_id,
             tenant_id=tenant_id,
             trace_id=trace_id,
+            dataset_version=dataset_version,
             replay_passed=replay_passed,
             gate_results=gate_results,
         )
@@ -5107,6 +5122,7 @@ class PostgresBackedStore(InMemoryStore):
         release_id: str,
         tenant_id: str,
         trace_id: str,
+        dataset_version: str | None,
         replay_passed: bool,
         gate_results: dict[str, Any],
     ) -> dict[str, Any]:
@@ -5114,6 +5130,7 @@ class PostgresBackedStore(InMemoryStore):
             release_id=release_id,
             tenant_id=tenant_id,
             trace_id=trace_id,
+            dataset_version=dataset_version,
             replay_passed=replay_passed,
             gate_results=gate_results,
         )
