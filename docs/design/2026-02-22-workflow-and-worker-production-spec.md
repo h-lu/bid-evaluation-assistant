@@ -97,6 +97,7 @@ HITL: interrupt -> wait resume_token -> resume -> finalize
 4. `WORKER_RETRY_BACKOFF_BASE_MS`
 5. `RESUME_TOKEN_TTL_HOURS`
 6. `WORKFLOW_CHECKPOINT_BACKEND`
+7. `WORKFLOW_RUNTIME`（`langgraph|compat`）
 
 ## 8. 测试与验证命令
 
@@ -147,3 +148,4 @@ pytest -q
 3. `run_job_once` 接入配置化重试参数：`WORKER_MAX_RETRIES`、`WORKER_RETRY_BACKOFF_BASE_MS`、`WORKER_RETRY_BACKOFF_MAX_MS`。
 4. HITL token TTL 接入 `RESUME_TOKEN_TTL_HOURS` 配置，保持单次消费与租户绑定约束。
 5. Worker 调度引入按 tenant 轮询与 `tenant_burst_limit`，避免单租户突发独占消费窗口。
+6. 新增 `WORKFLOW_RUNTIME`，默认启用 LangGraph runtime；当依赖缺失且非真栈环境时降级为兼容执行路径。
