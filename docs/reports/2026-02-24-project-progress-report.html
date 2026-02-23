@@ -680,13 +680,232 @@
             </div>
         </div>
 
-        <!-- 六、项目进展 -->
-        <div class="slide">
+        <!-- 六、数据库设计 -->
+        <div class="slide print-break">
             <div class="slide-header">
-                <h1>六、项目进展</h1>
+                <h1>六、数据库设计</h1>
             </div>
 
-            <h3>6.1 整体进度</h3>
+            <div class="highlight-box" style="background: linear-gradient(135deg, #1890ff 0%, #096dd9 100%);">
+                原则：业务真值只认 PostgreSQL，向量索引只做召回不做权威存储
+            </div>
+
+            <h3>6.1 存储架构设计思路</h3>
+            <div class="card" style="margin-bottom: 16px;">
+                <p><strong>为什么采用分层存储架构？</strong></p>
+                <ul>
+                    <li><strong>职责分离</strong>：业务数据与向量索引分离，避免单一存储瓶颈</li>
+                    <li><strong>性能优化</strong>：PostgreSQL 处理事务查询，Chroma 专注向量检索</li>
+                    <li><strong>成本控制</strong>：热数据在 PostgreSQL，向量索引可独立扩展</li>
+                    <li><strong>审计合规</strong>：WORM 存储保证原始文件和报告不可篡改</li>
+                </ul>
+            </div>
+
+            <div class="grid-4">
+                <div class="card" style="text-align: center;">
+                    <div class="card-icon">🗄️</div>
+                    <div class="card-title">PostgreSQL</div>
+                    <p style="font-size: 12px; color: #666;">业务真值、状态、审计<br>checkpoint、DLQ</p>
+                    <p style="font-size: 11px; color: #1890ff; margin-top: 8px;"><strong>选型理由</strong>：<br>成熟稳定、RLS 原生支持、JSONB 灵活</p>
+                </div>
+                <div class="card" style="text-align: center;">
+                    <div class="card-icon">🔍</div>
+                    <div class="card-title">Chroma/LightRAG</div>
+                    <p style="font-size: 12px; color: #666;">向量检索<br>召回索引</p>
+                    <p style="font-size: 11px; color: #1890ff; margin-top: 8px;"><strong>选型理由</strong>：<br>轻量级、无需重型向量库、支持图增强</p>
+                </div>
+                <div class="card" style="text-align: center;">
+                    <div class="card-icon">⚡</div>
+                    <div class="card-title">Redis</div>
+                    <p style="font-size: 12px; color: #666;">队列、幂等键<br>缓存、分布式锁</p>
+                    <p style="font-size: 11px; color: #1890ff; margin-top: 8px;"><strong>选型理由</strong>：<br>高性能、原子操作、成熟生态</p>
+                </div>
+                <div class="card" style="text-align: center;">
+                    <div class="card-icon">📦</div>
+                    <div class="card-title">Object Storage</div>
+                    <p style="font-size: 12px; color: #666;">原始文件、解析产物<br>报告归档 (WORM)</p>
+                    <p style="font-size: 11px; color: #1890ff; margin-top: 8px;"><strong>选型理由</strong>：<br>审计合规、一次写入不可篡改</p>
+                </div>
+            </div>
+
+            <h3>6.2 ER 图设计思路</h3>
+            <div class="card" style="margin-bottom: 16px;">
+                <div class="grid-2">
+                    <div>
+                        <p><strong>域划分原则</strong></p>
+                        <ul>
+                            <li><strong>基础域</strong>：租户、用户、项目、供应商、规则包</li>
+                            <li><strong>文档域</strong>：文档、解析记录、分块、位置信息</li>
+                            <li><strong>评估域</strong>：评估会话、评分项、结果、引用</li>
+                            <li><strong>治理域</strong>：任务、检查点、DLQ、审计日志</li>
+                        </ul>
+                    </div>
+                    <div>
+                        <p><strong>设计考量</strong></p>
+                        <ul>
+                            <li><strong>可追溯</strong>：每个评分项关联 citation，citation 关联 chunk 和位置</li>
+                            <li><strong>可恢复</strong>：workflow_checkpoints 记录完整状态，支持中断恢复</li>
+                            <li><strong>可审计</strong>：audit_logs 记录所有操作，支持链式哈希验证</li>
+                            <li><strong>多租户</strong>：所有表都有 tenant_id，支持 RLS 隔离</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <h3>6.3 ER 图</h3>
+            <div class="grid-4">
+                <div class="card" style="text-align: center;">
+                    <div class="card-icon">🗄️</div>
+                    <div class="card-title">PostgreSQL</div>
+                    <p style="font-size: 12px; color: #666;">业务真值、状态、审计<br>checkpoint、DLQ</p>
+                </div>
+                <div class="card" style="text-align: center;">
+                    <div class="card-icon">🔍</div>
+                    <div class="card-title">Chroma/LightRAG</div>
+                    <p style="font-size: 12px; color: #666;">向量检索<br>召回索引</p>
+                </div>
+                <div class="card" style="text-align: center;">
+                    <div class="card-icon">⚡</div>
+                    <div class="card-title">Redis</div>
+                    <p style="font-size: 12px; color: #666;">队列、幂等键<br>缓存、分布式锁</p>
+                </div>
+                <div class="card" style="text-align: center;">
+                    <div class="card-icon">📦</div>
+                    <div class="card-title">Object Storage</div>
+                    <p style="font-size: 12px; color: #666;">原始文件、解析产物<br>报告归档 (WORM)</p>
+                </div>
+            </div>
+
+            <h3>6.2 ER 图</h3>
+            <div class="arch-diagram" style="font-size: 11px; line-height: 1.5;">┌─────────────────────────────────────────────────────────────────────────────┐
+│                                  tenants                                     │
+│                                    │                                         │
+│                 ┌──────────────────┼──────────────────┐                     │
+│                 ▼                  ▼                  ▼                     │
+│              users              projects          rule_packs                │
+│                                   │                                          │
+│                      ┌────────────┴────────────┐                            │
+│                      ▼                         ▼                            │
+│            project_suppliers ◄──────────── suppliers                        │
+│                      │                                                      │
+│                      ▼                                                      │
+│                 documents ────────► document_parse_runs                     │
+│                      │                         │                            │
+│                      ▼                         ▼                            │
+│              document_chunks ◄─────── chunk_positions                       │
+│                      │                                                      │
+│                      ▼                                                      │
+│           evaluation_sessions ──────► evaluation_items                      │
+│                      │                         │                            │
+│                      ▼                         ▼                            │
+│            evaluation_results ◄──────── citations                           │
+│                                                                                 │
+│           ┌──────────┬──────────┬──────────┬──────────┐                    │
+│           ▼          ▼          ▼          ▼          ▼                    │
+│          jobs   workflow_   dlq_items  audit_logs  domain_events           │
+│                  checkpoints                      _outbox                    │
+│                                                                                 │
+│                              legal_hold_objects                                │
+└─────────────────────────────────────────────────────────────────────────────┘</div>
+
+            <h3>6.3 核心表结构</h3>
+            <div class="grid-2">
+                <div>
+                    <h4>基础域</h4>
+                    <table style="font-size: 12px;">
+                        <tr><th>表名</th><th>主要字段</th></tr>
+                        <tr><td><code>projects</code></td><td>project_id, tenant_id, project_code, name, ruleset_version</td></tr>
+                        <tr><td><code>suppliers</code></td><td>supplier_id, tenant_id, supplier_code, name, qualification_json</td></tr>
+                        <tr><td><code>rule_packs</code></td><td>rule_pack_version, tenant_id, name, status, payload</td></tr>
+                    </table>
+
+                    <h4>文档域</h4>
+                    <table style="font-size: 12px;">
+                        <tr><th>表名</th><th>主要字段</th></tr>
+                        <tr><td><code>documents</code></td><td>document_id, tenant_id, doc_type, filename, sha256, storage_uri</td></tr>
+                        <tr><td><code>document_chunks</code></td><td>chunk_id, document_id, chunk_index, content, heading_path</td></tr>
+                        <tr><td><code>chunk_positions</code></td><td>chunk_id, page_no, x0, y0, x1, y1 (bbox)</td></tr>
+                    </table>
+                </div>
+
+                <div>
+                    <h4>评估域</h4>
+                    <table style="font-size: 12px;">
+                        <tr><th>表名</th><th>主要字段</th></tr>
+                        <tr><td><code>evaluation_sessions</code></td><td>evaluation_id, tenant_id, status, total_score, confidence, report_uri</td></tr>
+                        <tr><td><code>evaluation_items</code></td><td>item_id, criteria_id, hard_pass, score, max_score, reason</td></tr>
+                        <tr><td><code>citations</code></td><td>citation_id, chunk_id, page_no, bbox_json, quote</td></tr>
+                    </table>
+
+                    <h4>任务与治理域</h4>
+                    <table style="font-size: 12px;">
+                        <tr><th>表名</th><th>主要字段</th></tr>
+                        <tr><td><code>jobs</code></td><td>job_id, job_type, status, retry_count, trace_id, payload_json</td></tr>
+                        <tr><td><code>workflow_checkpoints</code></td><td>checkpoint_id, thread_id, evaluation_id, state_json</td></tr>
+                        <tr><td><code>dlq_items</code></td><td>dlq_id, job_id, error_class, error_code, status</td></tr>
+                        <tr><td><code>audit_logs</code></td><td>audit_id, actor_id, action, resource_type, trace_id</td></tr>
+                    </table>
+                </div>
+            </div>
+
+            <h3>6.4 多租户隔离 (RLS)</h3>
+            <div class="card">
+                <div class="two-col">
+                    <div>
+                        <h4>策略要求</h4>
+                        <ul>
+                            <li>核心业务表全部启用 RLS</li>
+                            <li>连接会话必须先设置 <code>app.current_tenant</code></li>
+                            <li>无 tenant 上下文时拒绝查询</li>
+                        </ul>
+                    </div>
+                    <div>
+                        <h4>策略模板</h4>
+                        <code style="font-size: 11px; background: #1a1a2e; color: #52c41a; padding: 8px; display: block; border-radius: 4px;">
+USING (tenant_id = current_setting('app.current_tenant')::uuid)
+WITH CHECK (tenant_id = current_setting('app.current_tenant')::uuid)
+                        </code>
+                    </div>
+                </div>
+            </div>
+
+            <h3>6.5 索引策略</h3>
+            <table>
+                <tr>
+                    <th>表</th>
+                    <th>索引</th>
+                    <th>用途</th>
+                </tr>
+                <tr>
+                    <td><code>documents</code></td>
+                    <td>(tenant_id, project_id, supplier_id, created_at DESC)</td>
+                    <td>文档列表查询</td>
+                </tr>
+                <tr>
+                    <td><code>evaluation_sessions</code></td>
+                    <td>(tenant_id, project_id, status, created_at DESC)</td>
+                    <td>评估列表查询</td>
+                </tr>
+                <tr>
+                    <td><code>jobs</code></td>
+                    <td>(tenant_id, status, created_at DESC)</td>
+                    <td>任务状态查询</td>
+                </tr>
+                <tr>
+                    <td><code>workflow_checkpoints</code></td>
+                    <td>(tenant_id, thread_id, updated_at DESC)</td>
+                    <td>状态恢复</td>
+                </tr>
+            </table>
+        </div>
+
+        <!-- 七、项目进展 -->
+        <div class="slide">
+            <div class="slide-header">
+                <h1>七、项目进展</h1>
+            </div>
+
+            <h3>7.1 整体进度</h3>
             <div class="progress-bar" style="margin-bottom: 8px;">
                 <div class="progress-fill" style="width: 60%;">60%</div>
             </div>
@@ -705,7 +924,7 @@
                 </div>
             </div>
 
-            <h3>6.2 已完成工作</h3>
+            <h3>7.2 已完成工作</h3>
             <div class="grid-2">
                 <div class="card">
                     <div class="card-title">基础设施</div>
@@ -729,7 +948,7 @@
                 </div>
             </div>
 
-            <h3>6.3 代码统计</h3>
+            <h3>7.3 代码统计</h3>
             <div class="grid-4">
                 <div class="card" style="text-align: center;">
                     <div class="card-value">8,500</div>
@@ -750,13 +969,13 @@
             </div>
         </div>
 
-        <!-- 七、后续计划 -->
+        <!-- 八、后续计划 -->
         <div class="slide print-break">
             <div class="slide-header">
-                <h1>七、后续计划</h1>
+                <h1>八、后续计划</h1>
             </div>
 
-            <h3>7.1 三阶段路线图</h3>
+            <h3>8.1 三阶段路线图</h3>
             <div class="timeline">
                 <div class="timeline-item">
                     <h4>第一阶段：核心业务逻辑 (2-3 周)</h4>
@@ -786,7 +1005,7 @@
                 </div>
             </div>
 
-            <h3>7.2 风险评估</h3>
+            <h3>8.2 风险评估</h3>
             <table>
                 <tr>
                     <th>风险</th>
@@ -821,10 +1040,10 @@
             </table>
         </div>
 
-        <!-- 八、总结 -->
+        <!-- 九、总结 -->
         <div class="slide">
             <div class="slide-header">
-                <h1>八、总结</h1>
+                <h1>九、总结</h1>
             </div>
 
             <div class="grid-2">
