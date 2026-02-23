@@ -900,6 +900,7 @@ class InMemoryStore:
             },
             "payload": payload,
             "last_error": None,
+            "errors": [],  # SSOT: errors array
             }
         )
         self._persist_evaluation_report(
@@ -1025,6 +1026,7 @@ class InMemoryStore:
             },
             "payload": payload,
             "last_error": None,
+            "errors": [],  # SSOT: errors array
             }
         )
         route = self._select_parser(
@@ -1518,6 +1520,7 @@ class InMemoryStore:
             },
             "payload": payload,
             "last_error": None,
+            "errors": [],  # SSOT: errors array
             }
         )
         if report is not None:
@@ -1603,6 +1606,116 @@ class InMemoryStore:
             limit=limit,
         )
         return [item for item in items if item.get("kind") != self.langgraph_checkpoint_kind]
+
+    def get_workflow_state(self, *, evaluation_id: str, tenant_id: str) -> dict[str, Any] | None:
+        """
+        获取工作流状态对象（对齐 SSOT langgraph-agent-workflow-spec §2）。
+
+        Returns:
+            完整的工作流状态对象，包含 identity/trace/inputs/retrieval/scoring/review/output/runtime
+        """
+        report = self.get_evaluation_report_for_tenant(evaluation_id=evaluation_id, tenant_id=tenant_id)
+        if report is None:
+            return None
+
+        thread_id = report.get("thread_id", "")
+        job = self._find_job_by_evaluation_id(evaluation_id=evaluation_id, tenant_id=tenant_id)
+        checkpoints = self.list_workflow_checkpoints(thread_id=thread_id, tenant_id=tenant_id) if thread_id else []
+
+        # 从 checkpoints 提取各阶段信息
+        retrieved_chunks = self._extract_retrieved_chunks(checkpoints)
+        evidence_bundle = self._extract_evidence_bundle(checkpoints)
+        query_bundle = self._extract_query_bundle(checkpoints)
+
+        return {
+            "identity": {
+                "tenant_id": tenant_id,
+                "project_id": report.get("project_id"),
+                "evaluation_id": evaluation_id,
+                "supplier_id": report.get("supplier_id"),
+            },
+            "trace": {
+                "trace_id": report.get("trace_id"),
+                "thread_id": thread_id,
+                "checkpoint_id": checkpoints[-1].get("checkpoint_id") if checkpoints else None,
+            },
+            "inputs": {
+                "query_bundle": query_bundle,
+                "rule_pack_version": report.get("rule_pack_version"),
+            },
+            "retrieval": {
+                "retrieved_chunks": retrieved_chunks,
+                "evidence_bundle": evidence_bundle,
+            },
+            "scoring": {
+                "criteria_scores": report.get("criteria_results", []),
+                "total_score": report.get("total_score"),
+                "confidence": report.get("confidence"),
+                "citation_coverage": report.get("citation_coverage"),
+            },
+            "review": {
+                "requires_human_review": report.get("needs_human_review"),
+                "human_review_payload": report.get("interrupt"),
+                "human_decision": None,
+                "resume_token": report.get("interrupt", {}).get("resume_token") if report.get("interrupt") else None,
+            },
+            "output": {
+                "report_payload": report,
+                "status": job.get("status") if job else None,
+            },
+            "runtime": {
+                "retry_count": job.get("retry_count", 0) if job else 0,
+                "errors": self._collect_errors(job, checkpoints),
+            },
+        }
+
+    def _find_job_by_evaluation_id(self, *, evaluation_id: str, tenant_id: str) -> dict[str, Any] | None:
+        """通过 evaluation_id 查找对应的 job"""
+        for job in self.jobs.values():
+            if job.get("resource", {}).get("id") == evaluation_id:
+                if job.get("tenant_id") == tenant_id:
+                    return job
+        return None
+
+    def _extract_query_bundle(self, checkpoints: list[dict[str, Any]]) -> dict[str, Any] | None:
+        """从 checkpoints 提取查询包"""
+        for cp in checkpoints:
+            if cp.get("node") == "load_context":
+                return cp.get("payload", {}).get("query_bundle")
+        return None
+
+    def _extract_retrieved_chunks(self, checkpoints: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """从 checkpoints 提取召回的 chunks"""
+        for cp in checkpoints:
+            if cp.get("node") == "retrieve_evidence":
+                return cp.get("payload", {}).get("retrieved_chunks", [])
+        return []
+
+    def _extract_evidence_bundle(self, checkpoints: list[dict[str, Any]]) -> dict[str, Any] | None:
+        """从 checkpoints 提取证据包"""
+        for cp in checkpoints:
+            if cp.get("node") == "retrieve_evidence":
+                return cp.get("payload", {}).get("evidence_bundle")
+        return None
+
+    def _collect_errors(self, job: dict[str, Any] | None, checkpoints: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """收集所有错误信息"""
+        errors = []
+        if job:
+            # 从 job 的 errors 数组获取
+            job_errors = job.get("errors", [])
+            if job_errors:
+                errors.extend(job_errors)
+            # 兼容旧格式：从 last_error 获取
+            elif job.get("last_error"):
+                errors.append(job["last_error"])
+        # 从 checkpoint 中收集错误
+        for cp in checkpoints:
+            if cp.get("status") == "error":
+                error_info = cp.get("payload", {}).get("error")
+                if error_info:
+                    errors.append(error_info)
+        return errors
 
     def upsert_langgraph_checkpoint(self, *, record: dict[str, Any]) -> dict[str, Any]:
         thread_id = str(record.get("thread_id") or "")
@@ -3431,12 +3544,16 @@ class InMemoryStore:
                 retry_after_ms = self._retry_backoff_ms(job_id=job_id, retry_count=retry_count)
                 retry_at = (datetime.now(UTC) + timedelta(milliseconds=retry_after_ms)).isoformat()
                 retried_job["next_retry_at"] = retry_at
-                retried_job["last_error"] = {
+                error_info = {
                     "code": error_code,
                     "message": error["message"],
                     "retryable": True,
                     "class": "transient",
+                    "occurred_at": self._utcnow_iso(),
                 }
+                retried_job["last_error"] = error_info
+                # SSOT: append to errors array
+                retried_job.setdefault("errors", []).append(error_info)
                 self._persist_job(job=retried_job)
                 if job.get("job_type") == "parse":
                     manifest = self.get_parse_manifest_for_tenant(job_id=job_id, tenant_id=tenant_id)
@@ -3498,12 +3615,16 @@ class InMemoryStore:
                 tenant_id=tenant_id,
             )
             failed_job.pop("next_retry_at", None)
-            failed_job["last_error"] = {
+            error_info = {
                 "code": error_code,
                 "message": error["message"],
                 "retryable": error["retryable"],
                 "class": error["class"],
+                "occurred_at": self._utcnow_iso(),
             }
+            failed_job["last_error"] = error_info
+            # SSOT: append to errors array
+            failed_job.setdefault("errors", []).append(error_info)
             self._persist_job(job=failed_job)
             if job.get("job_type") == "parse":
                 manifest = self.get_parse_manifest_for_tenant(job_id=job_id, tenant_id=tenant_id)
