@@ -5,15 +5,351 @@ info:
   description: |
     Gate C OpenAPI contract subset for async job submission, parse/resume/cancel,
     job status query, DLQ operations, citation source lookup, retrieval query/preview,
-    and evaluation report lookup.
+    evaluation report lookup, and projects/suppliers/rules CRUD.
     The following planned interfaces are intentionally out of this subset:
-    auth/session, projects/suppliers CRUD, and GET /evaluations/{evaluation_id}.
+    auth/session and GET /evaluations/{evaluation_id}.
 servers:
   - url: /api/v1
 security:
   - BearerAuth: []
 
 paths:
+  /projects:
+    get:
+      operationId: listProjects
+      summary: List projects
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectListResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      operationId: createProject
+      summary: Create a project
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectCreateRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /projects/{project_id}:
+    get:
+      operationId: getProject
+      summary: Get a project
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200':
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      operationId: updateProject
+      summary: Update a project
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectUpdateRequest'
+      responses:
+        '200':
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      operationId: deleteProject
+      summary: Delete a project
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200':
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectDeleteResponse'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /suppliers:
+    get:
+      operationId: listSuppliers
+      summary: List suppliers
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupplierListResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      operationId: createSupplier
+      summary: Create a supplier
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SupplierCreateRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupplierResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /suppliers/{supplier_id}:
+    get:
+      operationId: getSupplier
+      summary: Get a supplier
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SupplierId'
+      responses:
+        '200':
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupplierResponse'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      operationId: updateSupplier
+      summary: Update a supplier
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SupplierId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SupplierUpdateRequest'
+      responses:
+        '200':
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupplierResponse'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      operationId: deleteSupplier
+      summary: Delete a supplier
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SupplierId'
+      responses:
+        '200':
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupplierDeleteResponse'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /rules:
+    get:
+      operationId: listRulePacks
+      summary: List rule packs
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RulePackListResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      operationId: createRulePack
+      summary: Create a rule pack
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RulePackCreateRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RulePackResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /rules/{rule_pack_version}:
+    get:
+      operationId: getRulePack
+      summary: Get a rule pack
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RulePackVersion'
+      responses:
+        '200':
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RulePackResponse'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      operationId: updateRulePack
+      summary: Update a rule pack
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RulePackVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RulePackUpdateRequest'
+      responses:
+        '200':
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RulePackResponse'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      operationId: deleteRulePack
+      summary: Delete a rule pack
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RulePackVersion'
+      responses:
+        '200':
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RulePackDeleteResponse'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /documents/upload:
     post:
       operationId: uploadDocument
@@ -1497,6 +1833,24 @@ components:
         type: string
     DocumentId:
       name: document_id
+      in: path
+      required: true
+      schema:
+        type: string
+    ProjectId:
+      name: project_id
+      in: path
+      required: true
+      schema:
+        type: string
+    SupplierId:
+      name: supplier_id
+      in: path
+      required: true
+      schema:
+        type: string
+    RulePackVersion:
+      name: rule_pack_version
       in: path
       required: true
       schema:
@@ -3863,5 +4217,303 @@ components:
           const: true
         data:
           $ref: '#/components/schemas/DlqDiscardData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    Project:
+      type: object
+      required: [project_id, project_code, name, ruleset_version, status]
+      properties:
+        project_id:
+          type: string
+        project_code:
+          type: string
+        name:
+          type: string
+        ruleset_version:
+          type: string
+        status:
+          type: string
+        created_at:
+          type: string
+        updated_at:
+          type: string
+
+    ProjectCreateRequest:
+      type: object
+      required: [project_code, name]
+      properties:
+        project_code:
+          type: string
+        name:
+          type: string
+        ruleset_version:
+          type: string
+        status:
+          type: string
+
+    ProjectUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        ruleset_version:
+          type: string
+        status:
+          type: string
+
+    ProjectListData:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Project'
+        total:
+          type: integer
+
+    ProjectListResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/ProjectListData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    ProjectResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/Project'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    ProjectDeleteData:
+      type: object
+      required: [project_id, deleted]
+      properties:
+        project_id:
+          type: string
+        deleted:
+          type: boolean
+
+    ProjectDeleteResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/ProjectDeleteData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    Supplier:
+      type: object
+      required: [supplier_id, supplier_code, name, status]
+      properties:
+        supplier_id:
+          type: string
+        supplier_code:
+          type: string
+        name:
+          type: string
+        qualification:
+          type: object
+        risk_flags:
+          type: object
+        status:
+          type: string
+        created_at:
+          type: string
+        updated_at:
+          type: string
+
+    SupplierCreateRequest:
+      type: object
+      required: [supplier_code, name]
+      properties:
+        supplier_code:
+          type: string
+        name:
+          type: string
+        qualification:
+          type: object
+        risk_flags:
+          type: object
+        status:
+          type: string
+
+    SupplierUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        qualification:
+          type: object
+        risk_flags:
+          type: object
+        status:
+          type: string
+
+    SupplierListData:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Supplier'
+        total:
+          type: integer
+
+    SupplierListResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/SupplierListData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    SupplierResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/Supplier'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    SupplierDeleteData:
+      type: object
+      required: [supplier_id, deleted]
+      properties:
+        supplier_id:
+          type: string
+        deleted:
+          type: boolean
+
+    SupplierDeleteResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/SupplierDeleteData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    RulePack:
+      type: object
+      required: [rule_pack_version, name, status]
+      properties:
+        rule_pack_version:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+        rules:
+          type: object
+        created_at:
+          type: string
+        updated_at:
+          type: string
+
+    RulePackCreateRequest:
+      type: object
+      required: [rule_pack_version, name]
+      properties:
+        rule_pack_version:
+          type: string
+        name:
+          type: string
+        rules:
+          type: object
+        status:
+          type: string
+
+    RulePackUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        rules:
+          type: object
+        status:
+          type: string
+
+    RulePackListData:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RulePack'
+        total:
+          type: integer
+
+    RulePackListResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/RulePackListData'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    RulePackResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/RulePack'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    RulePackDeleteData:
+      type: object
+      required: [rule_pack_version, deleted]
+      properties:
+        rule_pack_version:
+          type: string
+        deleted:
+          type: boolean
+
+    RulePackDeleteResponse:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success:
+          type: boolean
+          const: true
+        data:
+          $ref: '#/components/schemas/RulePackDeleteData'
         meta:
           $ref: '#/components/schemas/Meta'

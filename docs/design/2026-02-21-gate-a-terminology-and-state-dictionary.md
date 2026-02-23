@@ -129,6 +129,12 @@ upload_received -> parse_queued -> parsing -> parsed -> indexing -> indexed
 2. `DLQ_REQUEUE_CONFLICT`
 3. `APPROVAL_REQUIRED`
 
+### 4.6 资源管理
+
+1. `PROJECT_NOT_FOUND`
+2. `SUPPLIER_NOT_FOUND`
+3. `RULE_PACK_NOT_FOUND`
+
 规则：
 
 1. 错误码命名统一使用 `UPPER_SNAKE_CASE`。

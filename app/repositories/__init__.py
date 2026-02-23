@@ -11,6 +11,9 @@ from app.repositories.workflow_checkpoints import (
     InMemoryWorkflowCheckpointsRepository,
     PostgresWorkflowCheckpointsRepository,
 )
+from app.repositories.projects import InMemoryProjectsRepository, PostgresProjectsRepository
+from app.repositories.suppliers import InMemorySuppliersRepository, PostgresSuppliersRepository
+from app.repositories.rule_packs import InMemoryRulePacksRepository, PostgresRulePacksRepository
 
 __all__ = [
     "InMemoryAuditLogsRepository",

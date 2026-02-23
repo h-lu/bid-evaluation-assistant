@@ -69,6 +69,12 @@
 2. `DLQ_REQUEUE_CONFLICT`
 3. `APPROVAL_REQUIRED`
 
+### 3.6 资源管理
+
+1. `PROJECT_NOT_FOUND`
+2. `SUPPLIER_NOT_FOUND`
+3. `RULE_PACK_NOT_FOUND`
+
 ## 4. API 错误响应规则
 
 1. 生产环境不返回堆栈。
