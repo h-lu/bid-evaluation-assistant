@@ -757,51 +757,24 @@ class InMemoryStore:
                 }
             ]
 
-        criteria_results: list[dict[str, Any]] = []
-        citations_all: list[str] = []
-        unsupported_claims: list[str] = []
-        redline_conflict = False
+        # Phase 1: 收集所有 citation_ids 并注册 citation_sources
+        citations_all_ids: list[str] = []
+        criteria_weights: dict[str, float] = {}  # 用于计算总分
         for criteria in criteria_defs:
             if not isinstance(criteria, dict):
                 continue
             criteria_id = str(criteria.get("criteria_id") or "criteria")
-            max_score = float(criteria.get("max_score", 20.0))
             weight = float(criteria.get("weight", 1.0))
-            score = max_score * 0.9 if hard_constraint_pass else 0.0
+            criteria_weights[criteria_id] = weight
             citation_id = (
                 f"ck_{criteria_id}_{evaluation_id[:6]}"
                 if hard_constraint_pass
                 else "ck_rule_block_1"
             )
-            citations = [citation_id]
-            criteria_name = criteria.get("criteria_name") or criteria.get("name") or criteria_id
-            requirement_text = criteria.get("requirement_text") or criteria.get("requirement")
-            response_text = criteria.get("response_text") or criteria.get("response")
-            criteria_results.append(
-                {
-                    "criteria_id": criteria_id,
-                    "criteria_name": str(criteria_name),
-                    "requirement_text": str(requirement_text) if requirement_text is not None else None,
-                    "response_text": str(response_text) if response_text is not None else None,
-                    "score": score,
-                    "max_score": max_score,
-                    "weight": weight,
-                    "hard_pass": hard_constraint_pass,
-                    "reason": (
-                        "delivery period satisfies baseline"
-                        if hard_constraint_pass
-                        else "rule engine blocked: required bid document scope missing"
-                    ),
-                    "citations": citations,
-                    "citations_count": len(citations),
-                    "confidence": 0.81 if hard_constraint_pass else 1.0,
-                }
-            )
-            citations_all.extend(citations)
-            if criteria.get("require_citation") and not citations:
-                unsupported_claims.append(criteria_id)
+            citations_all_ids.append(citation_id)
 
-        for chunk_id in citations_all:
+        # 注册所有 citation_sources
+        for chunk_id in citations_all_ids:
             if chunk_id not in self.citation_sources:
                 self.register_citation_source(
                     chunk_id=chunk_id,
@@ -824,11 +797,51 @@ class InMemoryStore:
                     },
                 )
 
+        # Phase 2: 创建 criteria_results（SSOT 格式：无 weight/citations_count，citations 为对象）
+        criteria_results: list[dict[str, Any]] = []
+        unsupported_claims: list[str] = []
+        redline_conflict = False
+
+        for idx, criteria in enumerate(criteria_defs):
+            if not isinstance(criteria, dict):
+                continue
+            criteria_id = str(criteria.get("criteria_id") or "criteria")
+            max_score = float(criteria.get("max_score", 20.0))
+            score = max_score * 0.9 if hard_constraint_pass else 0.0
+            citation_id = citations_all_ids[idx] if idx < len(citations_all_ids) else f"ck_{criteria_id}_{evaluation_id[:6]}"
+            criteria_name = criteria.get("criteria_name") or criteria.get("name") or criteria_id
+            requirement_text = criteria.get("requirement_text") or criteria.get("requirement")
+            response_text = criteria.get("response_text") or criteria.get("response")
+
+            # SSOT: citations 为对象数组，无 quote
+            resolved_citations = self._resolve_citations_batch([citation_id], include_quote=False)
+
+            criteria_results.append(
+                {
+                    "criteria_id": criteria_id,
+                    "criteria_name": str(criteria_name),
+                    "requirement_text": str(requirement_text) if requirement_text is not None else None,
+                    "response_text": str(response_text) if response_text is not None else None,
+                    "score": score,
+                    "max_score": max_score,
+                    "hard_pass": hard_constraint_pass,
+                    "reason": (
+                        "delivery period satisfies baseline"
+                        if hard_constraint_pass
+                        else "rule engine blocked: required bid document scope missing"
+                    ),
+                    "citations": resolved_citations,
+                    "confidence": 0.81 if hard_constraint_pass else 1.0,
+                }
+            )
+            if criteria.get("require_citation") and not resolved_citations:
+                unsupported_claims.append(criteria_id)
+
         resolvable = [
-            cid for cid in citations_all if self.citation_sources.get(cid) is not None
+            cid for cid in citations_all_ids if self.citation_sources.get(cid) is not None
         ]
-        if len(resolvable) < len(citations_all):
-            for missing in (set(citations_all) - set(resolvable)):
+        if len(resolvable) < len(citations_all_ids):
+            for missing in (set(citations_all_ids) - set(resolvable)):
                 unsupported_claims.append(missing)
         if isinstance(rules, dict):
             redlines = rules.get("redlines")
@@ -849,11 +862,18 @@ class InMemoryStore:
                 if not required.issubset(include_doc_types_normalized):
                     redline_conflict = True
 
-        total_score = sum(float(item.get("score", 0.0)) * float(item.get("weight", 1.0)) for item in criteria_results)
-        max_total = sum(float(item.get("max_score", 0.0)) * float(item.get("weight", 1.0)) for item in criteria_results) or 1.0
-        citation_coverage = len(resolvable) / max(len(citations_all), 1)
+        # 使用 criteria_weights 计算总分（不从 criteria_results 取 weight）
+        total_score = 0.0
+        max_total = 0.0
+        for item in criteria_results:
+            cid = item.get("criteria_id", "")
+            w = criteria_weights.get(cid, 1.0)
+            total_score += float(item.get("score", 0.0)) * w
+            max_total += float(item.get("max_score", 0.0)) * w
+        max_total = max_total or 1.0
+        citation_coverage = len(resolvable) / max(len(citations_all_ids), 1)
         evidence_quality = citation_coverage
-        retrieval_agreement = self._calculate_retrieval_agreement(citations_all)
+        retrieval_agreement = self._calculate_retrieval_agreement(citations_all_ids)
         model_stability = 0.85 if hard_constraint_pass else 0.7
         base_confidence = 0.4 * evidence_quality + 0.3 * retrieval_agreement + 0.3 * model_stability
         score_calibration = self.strategy_config.get("score_calibration", {})
@@ -913,7 +933,7 @@ class InMemoryStore:
             "score_deviation_pct": round(score_deviation_pct, 2),
             "risk_level": "medium" if hard_constraint_pass else "high",
             "criteria_results": criteria_results,
-            "citations": citations_all,
+            "citations": self._resolve_citations_batch(citations_all_ids, include_quote=True),  # SSOT: citations 为对象数组
             "needs_human_review": needs_human_review,
             "trace_id": payload.get("trace_id") or "",
             "tenant_id": tenant_id,
