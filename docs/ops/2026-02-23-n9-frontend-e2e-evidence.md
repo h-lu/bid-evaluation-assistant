@@ -31,8 +31,8 @@ npm run dev -- --host 127.0.0.1 --port 5173
 E2E_BASE_URL=http://127.0.0.1:5173 npm run test:e2e
 ```
 
-结果：Playwright 启动失败（缺少 `libgbm.so.1`），需在 CI/宿主机补齐系统依赖后重试。
+结果：通过（已安装 `libgbm1` 与 `libasound2`）。
 
 ## 4. 结论
 
-E2E 脚本已就位，但当前环境缺少 Playwright 依赖，需补齐系统库后复跑。
+E2E 脚本已执行通过。
