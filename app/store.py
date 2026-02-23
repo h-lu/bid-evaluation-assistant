@@ -46,6 +46,12 @@ from app.repositories.suppliers import PostgresSuppliersRepository
 from app.repositories.workflow_checkpoints import InMemoryWorkflowCheckpointsRepository
 from app.repositories.workflow_checkpoints import PostgresWorkflowCheckpointsRepository
 from app.runtime_profile import true_stack_required
+from app.mock_llm import (
+    MOCK_LLM_ENABLED,
+    mock_generate_explanation,
+    mock_retrieve_evidence,
+    mock_score_criteria,
+)
 
 
 def _json_safe(value: Any) -> Any:
@@ -757,47 +763,85 @@ class InMemoryStore:
                 }
             ]
 
-        # Phase 1: 收集所有 citation_ids 并注册 citation_sources
+        # Phase 1: 使用 Mock LLM 检索证据
         citations_all_ids: list[str] = []
         criteria_weights: dict[str, float] = {}  # 用于计算总分
+        criteria_evidence: dict[str, list[dict[str, Any]]] = {}  # 每个 criteria 的证据
+
         for criteria in criteria_defs:
             if not isinstance(criteria, dict):
                 continue
             criteria_id = str(criteria.get("criteria_id") or "criteria")
             weight = float(criteria.get("weight", 1.0))
             criteria_weights[criteria_id] = weight
-            citation_id = (
-                f"ck_{criteria_id}_{evaluation_id[:6]}"
-                if hard_constraint_pass
-                else "ck_rule_block_1"
-            )
-            citations_all_ids.append(citation_id)
+            requirement_text = str(criteria.get("requirement_text") or criteria.get("requirement") or "")
 
-        # 注册所有 citation_sources
+            # 使用 Mock LLM 检索证据
+            if MOCK_LLM_ENABLED:
+                evidence = mock_retrieve_evidence(
+                    query=requirement_text,
+                    top_k=3,
+                    tenant_id=tenant_id,
+                    supplier_id=payload.get("supplier_id"),
+                    doc_scope=include_doc_types,
+                )
+            else:
+                # 回退到 stub
+                citation_id = (
+                    f"ck_{criteria_id}_{evaluation_id[:6]}"
+                    if hard_constraint_pass
+                    else "ck_rule_block_1"
+                )
+                evidence = [{
+                    "chunk_id": citation_id,
+                    "page": 1,
+                    "bbox": [0.0, 0.0, 1.0, 1.0],
+                    "text": "stub citation",
+                    "score_raw": 0.78,
+                    "tenant_id": tenant_id,
+                    "supplier_id": payload.get("supplier_id"),
+                }]
+
+            criteria_evidence[criteria_id] = evidence
+            for ev in evidence:
+                citations_all_ids.append(ev["chunk_id"])
+
+        # 注册所有 citation_sources（来自 Mock LLM 检索结果）
         for chunk_id in citations_all_ids:
             if chunk_id not in self.citation_sources:
-                self.register_citation_source(
-                    chunk_id=chunk_id,
-                    source={
-                        "chunk_id": chunk_id,
-                        "document_id": f"doc_{evaluation_id[:8]}",
-                        "tenant_id": tenant_id,
-                        "project_id": payload.get("project_id"),
-                        "supplier_id": payload.get("supplier_id"),
-                        "doc_type": include_doc_types[0] if include_doc_types else "bid",
-                        "page": 1,
-                        "bbox": [0.0, 0.0, 1.0, 1.0],
-                        "heading_path": ["auto", "stub"],
-                        "chunk_type": "text",
-                        "content_source": "stub",
-                        "text": "stub citation",
-                        "context": "stub context",
-                        "score_raw": 0.78,
-                        "chunk_hash": f"hash_{chunk_id}",
-                    },
-                )
+                # 从 evidence 中查找完整信息
+                source_data = None
+                for ev_list in criteria_evidence.values():
+                    for ev in ev_list:
+                        if ev.get("chunk_id") == chunk_id:
+                            source_data = ev
+                            break
+                    if source_data:
+                        break
 
-        # Phase 2: 创建 criteria_results（SSOT 格式：无 weight/citations_count，citations 为对象）
+                if source_data:
+                    self.register_citation_source(
+                        chunk_id=chunk_id,
+                        source={
+                            "chunk_id": chunk_id,
+                            "document_id": f"doc_{evaluation_id[:8]}",
+                            "tenant_id": tenant_id,
+                            "project_id": payload.get("project_id"),
+                            "supplier_id": payload.get("supplier_id"),
+                            "doc_type": include_doc_types[0] if include_doc_types else "bid",
+                            "page": source_data.get("page", 1),
+                            "bbox": source_data.get("bbox", [0.0, 0.0, 1.0, 1.0]),
+                            "heading_path": ["auto", "mock_llm"],
+                            "chunk_type": "text",
+                            "content_source": "mock_llm" if MOCK_LLM_ENABLED else "stub",
+                            "text": source_data.get("text", "mock citation"),
+                            "context": source_data.get("text", "")[:200],
+                            "score_raw": source_data.get("score_raw", 0.78),
+                            "chunk_hash": f"hash_{chunk_id}",
+                        },
+                    )
+
+        # Phase 2: 创建 criteria_results（使用 Mock LLM 评分）
         criteria_results: list[dict[str, Any]] = []
         unsupported_claims: list[str] = []
         redline_conflict = False
@@ -807,14 +851,40 @@ class InMemoryStore:
                 continue
             criteria_id = str(criteria.get("criteria_id") or "criteria")
             max_score = float(criteria.get("max_score", 20.0))
-            score = max_score * 0.9 if hard_constraint_pass else 0.0
-            citation_id = citations_all_ids[idx] if idx < len(citations_all_ids) else f"ck_{criteria_id}_{evaluation_id[:6]}"
             criteria_name = criteria.get("criteria_name") or criteria.get("name") or criteria_id
             requirement_text = criteria.get("requirement_text") or criteria.get("requirement")
             response_text = criteria.get("response_text") or criteria.get("response")
 
+            # 获取该 criteria 的证据
+            evidence = criteria_evidence.get(criteria_id, [])
+            citation_ids_for_criteria = [ev.get("chunk_id") for ev in evidence if ev.get("chunk_id")]
+
+            # 使用 Mock LLM 评分
+            if MOCK_LLM_ENABLED and evidence:
+                llm_result = mock_score_criteria(
+                    criteria_id=criteria_id,
+                    requirement_text=str(requirement_text or ""),
+                    evidence_chunks=evidence,
+                    max_score=max_score,
+                    hard_constraint_pass=hard_constraint_pass,
+                )
+                score = llm_result["score"]
+                hard_pass = llm_result["hard_pass"] and hard_constraint_pass
+                reason = llm_result["reason"]
+                confidence = 0.85 if hard_pass else 0.65
+            else:
+                # 回退到 stub 逻辑
+                score = max_score * 0.9 if hard_constraint_pass else 0.0
+                hard_pass = hard_constraint_pass
+                reason = (
+                    "delivery period satisfies baseline"
+                    if hard_constraint_pass
+                    else "rule engine blocked: required bid document scope missing"
+                )
+                confidence = 0.81 if hard_constraint_pass else 1.0
+
             # SSOT: citations 为对象数组，无 quote
-            resolved_citations = self._resolve_citations_batch([citation_id], include_quote=False)
+            resolved_citations = self._resolve_citations_batch(citation_ids_for_criteria, include_quote=False)
 
             criteria_results.append(
                 {
@@ -824,14 +894,10 @@ class InMemoryStore:
                     "response_text": str(response_text) if response_text is not None else None,
                     "score": score,
                     "max_score": max_score,
-                    "hard_pass": hard_constraint_pass,
-                    "reason": (
-                        "delivery period satisfies baseline"
-                        if hard_constraint_pass
-                        else "rule engine blocked: required bid document scope missing"
-                    ),
+                    "hard_pass": hard_pass,
+                    "reason": reason,
                     "citations": resolved_citations,
-                    "confidence": 0.81 if hard_constraint_pass else 1.0,
+                    "confidence": confidence,
                 }
             )
             if criteria.get("require_citation") and not resolved_citations:
@@ -881,21 +947,29 @@ class InMemoryStore:
         score_bias = float(score_calibration.get("score_bias", 0.0))
         confidence_avg = max(0.0, min(1.0, base_confidence * confidence_scale + score_bias))
         score_deviation_pct = abs(total_score - max_total) / max_total * 100.0
-        needs_human_review = (
-            force_hitl
-            or confidence_avg < 0.65
-            or citation_coverage < 0.90
-            or score_deviation_pct > 20.0
-            or redline_conflict
-            or bool(unsupported_claims)
-        )
+        # 收集 HITL 触发原因
+        hitl_reasons: list[str] = []
+        if force_hitl:
+            hitl_reasons.append("force_hitl")
+        if confidence_avg < 0.65:
+            hitl_reasons.append(f"confidence_low ({confidence_avg:.2f} < 0.65)")
+        if citation_coverage < 0.90:
+            hitl_reasons.append(f"citation_coverage_low ({citation_coverage:.2%} < 90%)")
+        if score_deviation_pct > 20.0:
+            hitl_reasons.append(f"score_deviation_high ({score_deviation_pct:.1f}% > 20%)")
+        if redline_conflict:
+            hitl_reasons.append("redline_conflict")
+        if unsupported_claims:
+            hitl_reasons.append("unsupported_claims")
+
+        needs_human_review = bool(hitl_reasons)
         interrupt_payload = None
         if needs_human_review:
             resume_token = f"rt_{uuid.uuid4().hex[:12]}"
             interrupt_payload = {
                 "type": "human_review",
                 "evaluation_id": evaluation_id,
-                "reasons": ["force_hitl"],
+                "reasons": hitl_reasons,
                 "suggested_actions": ["approve", "reject", "edit_scores"],
                 "resume_token": resume_token,
             }
@@ -903,7 +977,7 @@ class InMemoryStore:
                 evaluation_id=evaluation_id,
                 resume_token=resume_token,
                 tenant_id=tenant_id,
-                reasons=["force_hitl"],
+                reasons=hitl_reasons,
             )
         self._persist_job(
             job={
