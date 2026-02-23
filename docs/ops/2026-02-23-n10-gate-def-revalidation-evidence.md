@@ -43,6 +43,12 @@ pytest -q tests/test_gate_d_other_gates.py tests/test_gate_e_rollout_and_rollbac
 
 结果：通过
 
+```bash
+pytest
+```
+
+结果：通过（`230 passed in 16.54s`）
+
 ## 4. 结论
 
 Gate D/E/F 复验命令均通过，满足准入证据要求。

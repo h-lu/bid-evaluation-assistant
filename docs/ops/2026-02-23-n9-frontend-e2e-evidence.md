@@ -20,18 +20,21 @@
 1. 新增 Playwright E2E 脚本（`frontend/scripts/e2e-smoke.mjs`）。
 2. 前端报告页补齐 `report_uri/score_deviation/redline_conflict/unsupported_claims` 展示。
 3. HITL 触发原因前端可视化。
+4. E2E 脚本通过 API 完成上传/解析/评估并验证报告页。
+5. 引用回跳使用 PDF.js 渲染与 bbox 真实坐标映射。
 
-## 3. 测试命令与结果（待执行）
+## 3. 测试命令与结果（已执行）
 
 ```bash
+uvicorn app.main:app --host 127.0.0.1 --port 8010
 cd frontend
 npm install
 npx playwright install chromium
-npm run dev -- --host 127.0.0.1 --port 5173
-E2E_BASE_URL=http://127.0.0.1:5173 npm run test:e2e
+VITE_API_BASE_URL=http://127.0.0.1:8010 npm run dev -- --host 127.0.0.1 --port 5173
+E2E_BASE_URL=http://127.0.0.1:5173 E2E_API_BASE_URL=http://127.0.0.1:8010 E2E_TENANT_ID=tenant_demo npm run test:e2e
 ```
 
-结果：通过（已安装 `libgbm1` 与 `libasound2`）。
+结果：通过（全链路包含上传->解析->评估->报告页渲染，`VITE_API_BASE_URL` 指向 `8010`）。
 
 ## 4. 结论
 

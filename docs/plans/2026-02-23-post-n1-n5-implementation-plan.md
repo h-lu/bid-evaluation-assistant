@@ -149,7 +149,7 @@ SSOT 对齐要点：
 3. 引用回跳必须基于解析定位字段（`page/bbox`），报告可追溯 `report_uri`。
 
 输入：
-1. `docs/design/2026-02-21-front-end-spec.md`。
+1. `docs/design/2026-02-21-frontend-interaction-spec.md`。
 2. 当前前端引用面板与权限实现。
 
 产出：
@@ -205,7 +205,22 @@ SSOT 对齐要点：
 3. 运行日志与审计记录。
 4. 结论与风险说明。
 
-## 11. 风险与控制
+## 11. 执行状态（2026-02-23）
+
+1. N6 真实 WORM API 接入：已完成并有证据。
+2. N7 LangGraph 真 runtime 替换：已完成并有证据。
+3. N8 解析/检索/评分深度实现：已完成并有证据。
+4. N9 前端 E2E 与引用真实化：已完成并有证据。
+5. N10 Gate D/E/F 真实验收与准入归档：已完成并有证据。
+
+证据索引：
+1. `docs/ops/2026-02-23-n6-worm-api-evidence.md`
+2. `docs/ops/2026-02-23-n7-langgraph-runtime-evidence.md`
+3. `docs/ops/2026-02-23-n8-parser-retrieval-scoring-evidence.md`
+4. `docs/ops/2026-02-23-n9-frontend-e2e-evidence.md`
+5. `docs/ops/2026-02-23-n10-gate-def-revalidation-evidence.md`
+
+## 12. 风险与控制
 
 风险：
 1. 真实组件接入导致契约漂移。
@@ -217,7 +232,7 @@ SSOT 对齐要点：
 2. 引入回放测试作为回归门禁。
 3. 关键性能指标设定阈值并触发自动回滚。
 
-## 12. 参考与关联文档
+## 13. 参考与关联文档
 
 1. `docs/plans/2026-02-21-end-to-end-unified-design.md`
 2. `docs/design/2026-02-21-implementation-plan.md`
