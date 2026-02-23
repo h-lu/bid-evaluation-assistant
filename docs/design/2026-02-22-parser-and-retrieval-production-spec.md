@@ -72,6 +72,11 @@ Query -> Rewrite (constraints-preserving) -> Selector -> LightRAG Query
 2. chunk：`chunk_id,document_id,page,bbox,heading_path,chunk_type,parser,parser_version,text`。
 3. 去重键：`document_id + chunk_hash`。
 
+可追加字段（不破坏兼容）：
+
+1. manifest：`content_source,chunk_count`。
+2. chunk：`content_source`。
+
 ### 5.3 P2-S3：LightRAG 真索引与查询
 
 输入：S2。  
@@ -107,6 +112,7 @@ Query -> Rewrite (constraints-preserving) -> Selector -> LightRAG Query
 1. 不改 `GET /documents/{document_id}/chunks` 输出语义。
 2. 不改 citation 最小字段：`document_id/page/bbox/text/context`。
 3. 新增字段仅可追加，不可破坏老字段含义。
+4. citation 可追加 `heading_path/chunk_type/content_source` 以支持回跳与调试。
 
 ## 7. 配置清单
 

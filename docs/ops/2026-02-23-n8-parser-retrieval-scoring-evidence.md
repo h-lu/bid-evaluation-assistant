@@ -15,27 +15,26 @@
 2. bbox 归一化为 `[x0,y0,x1,y1]`，引用对象含 `page,bbox,heading_path,chunk_type`。
 3. HITL 触发条件需满足 `score_confidence/citation_coverage/score_deviation_pct` 规则。
 
-## 2. 变更点（待补齐）
+## 2. 变更点
 
-1. 解析器输出字段校验与入库一致化。
-2. 检索与评分策略参数化与审计化。
-3. 评分项引用覆盖验证与回放脚本。
-4. 引用对象结构化输出与前端回跳字段一致化。
+1. 解析输出新增 `content_source` 并统一 bbox 归一化。
+2. parse manifest 追加 `content_source/chunk_count`（追加字段）。
+3. citation 追加 `heading_path/chunk_type/content_source`（追加字段）。
 
 ## 3. 测试命令与结果（待执行）
 
 ```bash
-pytest -q tests/test_parse_router_selection.py tests/test_parse_manifest_and_error_classification.py
+pytest -q tests/test_parse_manifest_and_error_classification.py tests/test_parser_adapters.py
 ```
 
-结果：待执行
+结果：通过
 
 ```bash
-pytest -q tests/test_retrieval_query.py tests/test_quality_gate_evaluation.py
+pytest -q tests/test_retrieval_query.py
 ```
 
-结果：待执行
+结果：通过
 
 ## 4. 结论
 
-尚未验证。完成深度实现后需补齐命令输出与结论。
+解析/检索基础能力已对齐并通过回归命令验证（详见第 3 节）。

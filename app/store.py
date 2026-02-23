@@ -525,6 +525,7 @@ class InMemoryStore:
         item.setdefault("parser", "mineru")
         item.setdefault("parser_version", "v0")
         item.setdefault("section", "")
+        item.setdefault("content_source", "unknown")
         item.setdefault("text", text)
         return item
 
@@ -3324,11 +3325,16 @@ class InMemoryStore:
                         normalized_chunk = self._ensure_chunk_shape(document_id=document_id, chunk=chunk)
                         if normalized_chunk.get("parser") != route.selected_parser:
                             self.parser_retrieval_metrics["parse_fallback_used_total"] += 1
+                        if manifest is not None:
+                            manifest["content_source"] = normalized_chunk.get("content_source", "unknown")
                         persisted_chunks = self._persist_document_chunks(
                             tenant_id=tenant_id,
                             document_id=document_id,
                             chunks=[normalized_chunk],
                         )
+                        if manifest is not None:
+                            manifest["chunk_count"] = len(persisted_chunks)
+                            self._persist_parse_manifest(manifest=manifest)
                         for persisted in persisted_chunks:
                             page, bbox = self._extract_page_and_bbox(persisted)
                             self.register_citation_source(
@@ -3342,6 +3348,9 @@ class InMemoryStore:
                                     "doc_type": document.get("doc_type"),
                                     "page": page,
                                     "bbox": bbox,
+                                    "heading_path": persisted.get("heading_path", []),
+                                    "chunk_type": persisted.get("chunk_type", "text"),
+                                    "content_source": persisted.get("content_source", "unknown"),
                                     "text": persisted.get("text", ""),
                                     "context": persisted.get("section", ""),
                                     "score_raw": 0.78,
