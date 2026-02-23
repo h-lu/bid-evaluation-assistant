@@ -724,8 +724,35 @@ class InMemoryStore:
         include_doc_types = payload.get("evaluation_scope", {}).get("include_doc_types", [])
         include_doc_types_normalized = {str(x).lower() for x in include_doc_types}
         hard_constraint_pass = "bid" in include_doc_types_normalized
-        needs_human_review = force_hitl and hard_constraint_pass
-        confidence = 0.62 if needs_human_review else (0.78 if hard_constraint_pass else 1.0)
+        criteria_results = [
+            {
+                "criteria_id": "delivery",
+                "score": 18.0 if hard_constraint_pass else 0.0,
+                "max_score": 20.0,
+                "hard_pass": hard_constraint_pass,
+                "reason": (
+                    "delivery period satisfies baseline"
+                    if hard_constraint_pass
+                    else "rule engine blocked: required bid document scope missing"
+                ),
+                "citations": ["ck_eval_stub_1" if hard_constraint_pass else "ck_rule_block_1"],
+                "confidence": 0.81 if hard_constraint_pass else 1.0,
+            }
+        ]
+        total_score = sum(float(item.get("score", 0.0)) for item in criteria_results)
+        max_total = sum(float(item.get("max_score", 0.0)) for item in criteria_results) or 1.0
+        citation_hits = sum(1 for item in criteria_results if item.get("citations"))
+        citation_coverage = citation_hits / max(len(criteria_results), 1)
+        confidence_avg = sum(float(item.get("confidence", 0.0)) for item in criteria_results) / max(
+            len(criteria_results), 1
+        )
+        score_deviation_pct = abs(total_score - max_total) / max_total * 100.0
+        needs_human_review = (
+            force_hitl
+            or confidence_avg < 0.65
+            or citation_coverage < 0.90
+            or score_deviation_pct > 20.0
+        )
         interrupt_payload = None
         if needs_human_review:
             resume_token = f"rt_{uuid.uuid4().hex[:12]}"
@@ -763,26 +790,13 @@ class InMemoryStore:
             report={
             "evaluation_id": evaluation_id,
             "supplier_id": payload.get("supplier_id", ""),
-            "total_score": 88.5 if hard_constraint_pass else 0.0,
-            "confidence": confidence,
-            "citation_coverage": 1.0,
+            "total_score": total_score if hard_constraint_pass else 0.0,
+            "confidence": confidence_avg,
+            "citation_coverage": citation_coverage,
+            "score_deviation_pct": round(score_deviation_pct, 2),
             "risk_level": "medium" if hard_constraint_pass else "high",
-            "criteria_results": [
-                {
-                    "criteria_id": "delivery",
-                    "score": 18.0 if hard_constraint_pass else 0.0,
-                    "max_score": 20.0,
-                    "hard_pass": hard_constraint_pass,
-                    "reason": (
-                        "delivery period satisfies baseline"
-                        if hard_constraint_pass
-                        else "rule engine blocked: required bid document scope missing"
-                    ),
-                    "citations": ["ck_eval_stub_1" if hard_constraint_pass else "ck_rule_block_1"],
-                    "confidence": 0.81 if hard_constraint_pass else 1.0,
-                }
-            ],
-            "citations": ["ck_eval_stub_1" if hard_constraint_pass else "ck_rule_block_1"],
+            "criteria_results": criteria_results,
+            "citations": [row["citations"][0] for row in criteria_results if row.get("citations")],
             "needs_human_review": needs_human_review,
             "trace_id": payload.get("trace_id") or "",
             "tenant_id": tenant_id,

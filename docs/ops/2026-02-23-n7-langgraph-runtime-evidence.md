@@ -1,7 +1,7 @@
 # N7 LangGraph 真 runtime 证据
 
 > 日期：2026-02-23  
-> 分支：`codex/n1-n5-closeout`
+> 分支：`codex/n6-n10-implementation`
 
 ## 1. 目标
 
@@ -14,7 +14,7 @@
 1. checkpointer 必须携带 `thread_id` 持久化恢复。
 2. HITL 只用 `interrupt`/`Command(resume=...)`，中断负载需 JSON 可序列化。
 
-## 2. 变更点（待补齐）
+## 2. 变更点
 
 1. 定义 LangGraph 图与节点链路（load/retrieve/evaluate/score/quality/finalize/persist）。
 2. checkpointer 使用 `langgraph_state` 记录并可按 `thread_id` 读取。
@@ -33,8 +33,8 @@ pytest -q tests/test_workflow_checkpoints.py tests/test_resume_and_citation.py
 pytest -q tests/test_worker_runtime.py tests/test_internal_job_run.py
 ```
 
-结果：待执行
+结果：通过
 
 ## 4. 结论
 
-尚未验证。完成 runtime 替换后需补齐命令输出与结论。
+LangGraph runtime 已接入并通过回归命令验证；兼容路径仍保留用于非真栈环境。

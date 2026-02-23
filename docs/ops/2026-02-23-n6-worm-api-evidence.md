@@ -1,7 +1,7 @@
 # N6 真实 WORM API 接入证据
 
 > 日期：2026-02-23  
-> 分支：`codex/n1-n5-closeout`
+> 分支：`codex/n6-n10-implementation`
 
 ## 1. 目标
 
@@ -14,12 +14,11 @@
 1. 合规约束：审计日志不可篡改，legal hold 对象不可被自动清理。
 2. 高风险动作需双人复核（legal hold release）。
 
-## 2. 变更点（待补齐）
+## 2. 变更点
 
-1. 对象存储适配层新增 WORM/Retention/Legal Hold API 调用。
-2. legal hold 生命周期与合规保全状态统一。
-3. 审计事件增加保全策略字段。
-4. 保全状态查询对齐 `storage_uri` 与 `report_uri` 的一致性追溯。
+1. 对象存储适配层增加 retention 与删除阻断。
+2. legal hold 生命周期与保全状态联动。
+3. 保全状态可由 `storage_uri/report_uri` 追溯。
 
 ## 3. 测试命令与结果（待执行）
 
@@ -33,8 +32,8 @@ pytest -q tests/test_object_storage_worm.py
 pytest -q tests/test_legal_hold_api.py
 ```
 
-结果：待执行
+结果：通过
 
 ## 4. 结论
 
-尚未验证。完成真实 WORM API 对接后需补齐命令输出与结论。
+当前验证基于 local backend 与流程阻断语义，真实对象存储合规保全 API 接入仍需补齐。
