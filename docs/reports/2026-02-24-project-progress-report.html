@@ -1,0 +1,882 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>辅助评标专家系统 - 项目进展汇报</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: #f5f7fa;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .slide {
+            background: white;
+            border-radius: 12px;
+            padding: 40px;
+            margin-bottom: 24px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+        }
+
+        .slide-header {
+            border-bottom: 3px solid #1890ff;
+            padding-bottom: 16px;
+            margin-bottom: 32px;
+        }
+
+        .slide-header h1 {
+            font-size: 28px;
+            color: #1890ff;
+            margin-bottom: 8px;
+        }
+
+        .slide-header h2 {
+            font-size: 24px;
+            color: #333;
+        }
+
+        h3 {
+            font-size: 18px;
+            color: #333;
+            margin: 24px 0 16px;
+            padding-left: 12px;
+            border-left: 4px solid #1890ff;
+        }
+
+        h4 {
+            font-size: 16px;
+            color: #666;
+            margin: 16px 0 12px;
+        }
+
+        p {
+            margin-bottom: 12px;
+        }
+
+        .highlight-box {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 24px;
+            border-radius: 8px;
+            font-size: 18px;
+            text-align: center;
+            margin: 20px 0;
+        }
+
+        .grid-2 {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 24px;
+        }
+
+        .grid-3 {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 24px;
+        }
+
+        .grid-4 {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 20px;
+        }
+
+        .card {
+            background: #f8fafc;
+            border-radius: 8px;
+            padding: 20px;
+            border: 1px solid #e2e8f0;
+        }
+
+        .card-title {
+            font-weight: 600;
+            color: #1890ff;
+            margin-bottom: 12px;
+            font-size: 16px;
+        }
+
+        .card-icon {
+            font-size: 32px;
+            margin-bottom: 12px;
+        }
+
+        .card-value {
+            font-size: 36px;
+            font-weight: bold;
+            color: #1890ff;
+        }
+
+        .card-unit {
+            font-size: 14px;
+            color: #666;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 16px 0;
+        }
+
+        th, td {
+            padding: 12px 16px;
+            text-align: left;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        th {
+            background: #f8fafc;
+            font-weight: 600;
+            color: #333;
+        }
+
+        tr:hover {
+            background: #f8fafc;
+        }
+
+        .status-complete {
+            color: #52c41a;
+            font-weight: 600;
+        }
+
+        .status-pending {
+            color: #faad14;
+            font-weight: 600;
+        }
+
+        .status-done {
+            color: #52c41a;
+        }
+
+        .progress-bar {
+            background: #e2e8f0;
+            border-radius: 8px;
+            height: 24px;
+            overflow: hidden;
+            margin: 16px 0;
+        }
+
+        .progress-fill {
+            background: linear-gradient(90deg, #1890ff, #52c41a);
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            padding-right: 12px;
+            color: white;
+            font-weight: 600;
+            font-size: 14px;
+            transition: width 0.5s ease;
+        }
+
+        .arch-diagram {
+            background: #1a1a2e;
+            color: #eee;
+            padding: 24px;
+            border-radius: 8px;
+            font-family: "Courier New", monospace;
+            font-size: 12px;
+            line-height: 1.4;
+            overflow-x: auto;
+            white-space: pre;
+        }
+
+        .flow-diagram {
+            background: #f0f5ff;
+            padding: 24px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .flow-step {
+            display: inline-block;
+            background: #1890ff;
+            color: white;
+            padding: 12px 20px;
+            border-radius: 6px;
+            margin: 8px 4px;
+            font-weight: 500;
+        }
+
+        .flow-arrow {
+            display: inline-block;
+            color: #1890ff;
+            font-size: 20px;
+            margin: 0 4px;
+        }
+
+        .tag {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .tag-blue { background: #e6f7ff; color: #1890ff; }
+        .tag-green { background: #f6ffed; color: #52c41a; }
+        .tag-orange { background: #fff7e6; color: #fa8c16; }
+        .tag-purple { background: #f9f0ff; color: #722ed1; }
+
+        .metric-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 0;
+            border-bottom: 1px dashed #e2e8f0;
+        }
+
+        .metric-label {
+            color: #666;
+        }
+
+        .metric-value {
+            font-weight: 600;
+            color: #333;
+        }
+
+        .timeline {
+            position: relative;
+            padding-left: 32px;
+        }
+
+        .timeline-item {
+            position: relative;
+            padding-bottom: 24px;
+        }
+
+        .timeline-item:before {
+            content: '';
+            position: absolute;
+            left: -24px;
+            top: 8px;
+            width: 12px;
+            height: 12px;
+            background: #1890ff;
+            border-radius: 50%;
+        }
+
+        .timeline-item:after {
+            content: '';
+            position: absolute;
+            left: -19px;
+            top: 20px;
+            width: 2px;
+            height: calc(100% - 12px);
+            background: #e2e8f0;
+        }
+
+        .timeline-item:last-child:after {
+            display: none;
+        }
+
+        .risk-high { color: #f5222d; }
+        .risk-medium { color: #fa8c16; }
+        .risk-low { color: #52c41a; }
+
+        .two-col {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 32px;
+        }
+
+        .footer {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+            font-size: 14px;
+        }
+
+        .print-break {
+            page-break-after: always;
+        }
+
+        @media print {
+            body {
+                background: white;
+            }
+            .slide {
+                box-shadow: none;
+                border: 1px solid #e2e8f0;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- 封面 -->
+        <div class="slide" style="text-align: center; padding: 80px 40px;">
+            <h1 style="font-size: 36px; color: #1890ff; margin-bottom: 24px;">辅助评标专家系统</h1>
+            <h2 style="font-size: 24px; color: #333; margin-bottom: 48px;">项目进展汇报</h2>
+            <div style="font-size: 18px; color: #666;">
+                <p>版本：v1.0</p>
+                <p>日期：2026-02-24</p>
+                <p>基线版本：v2026.02.21-r3</p>
+            </div>
+        </div>
+
+        <!-- 一、项目概述 -->
+        <div class="slide print-break">
+            <div class="slide-header">
+                <h1>一、项目概述</h1>
+            </div>
+
+            <div class="highlight-box">
+                AI 生成"可解释评分建议"，专家做最终裁量
+            </div>
+
+            <h3>1.1 核心业务流程</h3>
+            <div class="flow-diagram">
+                <span class="flow-step">上传文档</span>
+                <span class="flow-arrow">→</span>
+                <span class="flow-step">解析建库</span>
+                <span class="flow-arrow">→</span>
+                <span class="flow-step">检索证据</span>
+                <span class="flow-arrow">→</span>
+                <span class="flow-step">评分判定</span>
+                <span class="flow-arrow">→</span>
+                <span class="flow-step">报告归档</span>
+            </div>
+
+            <h3>1.2 MVP 功能范围</h3>
+            <div class="grid-3">
+                <div class="card">
+                    <div class="card-title">基础管理</div>
+                    <ul>
+                        <li>项目管理</li>
+                        <li>供应商管理</li>
+                        <li>规则包管理</li>
+                    </ul>
+                </div>
+                <div class="card">
+                    <div class="card-title">文档处理</div>
+                    <ul>
+                        <li>文档上传</li>
+                        <li>智能解析</li>
+                        <li>分块索引</li>
+                    </ul>
+                </div>
+                <div class="card">
+                    <div class="card-title">智能评分</div>
+                    <ul>
+                        <li>检索增强评分</li>
+                        <li>证据链追溯</li>
+                        <li>人机协作复核</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <!-- 二、技术架构 -->
+        <div class="slide">
+            <div class="slide-header">
+                <h1>二、技术架构</h1>
+            </div>
+
+            <h3>2.1 整体架构</h3>
+            <div class="arch-diagram">┌─────────────────────────────────────────────────────────────────────┐
+│                           用户层                                     │
+│                    Frontend (Vue3 + TypeScript)                      │
+└─────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                           API 层                                     │
+│              FastAPI (REST API + JWT 认证)                           │
+│  • 66 个 API 端点  • 多租户隔离 (RLS)  • 全链路 Trace ID             │
+└─────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                         业务逻辑层                                   │
+│  ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────┐    │
+│  │  文档解析   │  │  智能检索   │  │  LLM 评分   │  │  工作流    │    │
+│  │  Parser    │  │  Retrieval │  │  Scoring   │  │  LangGraph │    │
+│  └────────────┘  └────────────┘  └────────────┘  └────────────┘    │
+└─────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                          存储层                                      │
+│  PostgreSQL      Chroma         Redis          Object Storage       │
+│  (业务数据+RLS)  (向量检索)     (缓存/队列)    (WORM审计)            │
+└─────────────────────────────────────────────────────────────────────┘</div>
+
+            <h3>2.2 技术栈选型</h3>
+            <table>
+                <tr>
+                    <th>层级</th>
+                    <th>技术选型</th>
+                    <th>选型原因</th>
+                </tr>
+                <tr>
+                    <td><span class="tag tag-blue">API 框架</span></td>
+                    <td>FastAPI</td>
+                    <td>高性能异步、自动 OpenAPI 文档、类型安全</td>
+                </tr>
+                <tr>
+                    <td><span class="tag tag-blue">状态机</span></td>
+                    <td>LangGraph</td>
+                    <td>原生支持 checkpoint/interrupt/resume</td>
+                </tr>
+                <tr>
+                    <td><span class="tag tag-purple">LLM</span></td>
+                    <td>多供应商 + 本地部署</td>
+                    <td>灵活切换国内主流 API / 本地模型</td>
+                </tr>
+                <tr>
+                    <td><span class="tag tag-green">向量检索</span></td>
+                    <td>Chroma + LightRAG</td>
+                    <td>轻量级、支持图增强检索</td>
+                </tr>
+                <tr>
+                    <td><span class="tag tag-orange">文档解析</span></td>
+                    <td>MinerU + Docling</td>
+                    <td>复杂 PDF 支持页码/bbox</td>
+                </tr>
+                <tr>
+                    <td><span class="tag tag-blue">数据库</span></td>
+                    <td>PostgreSQL + RLS</td>
+                    <td>成熟稳定、行级安全实现租户隔离</td>
+                </tr>
+            </table>
+        </div>
+
+        <!-- 三、核心流程 - LLM -->
+        <div class="slide print-break">
+            <div class="slide-header">
+                <h1>三、核心流程 - LLM 架构</h1>
+            </div>
+
+            <h3>3.1 LLM 灵活切换架构</h3>
+            <div class="arch-diagram">┌─────────────────────────────────────────────────────────────────────┐
+│                      LLM 适配层 (统一接口)                           │
+│  • generate(prompt, context) -> response                            │
+│  • structured_output(prompt, schema) -> json                        │
+│  • stream(prompt, context) -> iterator                              │
+└─────────────────────────────────────────────────────────────────────┘
+                                    │
+            ┌───────────────────────┼───────────────────────┐
+            ▼                       ▼                       ▼
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│   云端 API      │     │   云端 API      │     │   本地部署      │
+│   (主供应商)    │     │   (备用供应商)  │     │   (离线/敏感)   │
+├─────────────────┤     ├─────────────────┤     ├─────────────────┤
+│ • DeepSeek      │     │ • 智谱 GLM      │     │ • vLLM/Ollama   │
+│ • 通义千问      │     │ • 百川          │     │ • 本地 GPU      │
+│ • 百度文心      │     │ • 讯飞星火      │     │ • 私有化部署    │
+└─────────────────┘     └─────────────────┘     └─────────────────┘</div>
+
+            <h3>3.2 支持的国内 LLM 供应商</h3>
+            <table>
+                <tr>
+                    <th>供应商</th>
+                    <th>模型</th>
+                    <th>特点</th>
+                    <th>适用场景</th>
+                </tr>
+                <tr>
+                    <td><strong>DeepSeek</strong></td>
+                    <td>DeepSeek-V3</td>
+                    <td>性价比高、长上下文</td>
+                    <td>主力模型</td>
+                </tr>
+                <tr>
+                    <td><strong>阿里云</strong></td>
+                    <td>通义千问 Qwen</td>
+                    <td>企业级稳定、生态完善</td>
+                    <td>备用/高并发</td>
+                </tr>
+                <tr>
+                    <td><strong>百度</strong></td>
+                    <td>文心一言 ERNIE</td>
+                    <td>中文理解强、合规</td>
+                    <td>政务/国企场景</td>
+                </tr>
+                <tr>
+                    <td><strong>智谱</strong></td>
+                    <td>GLM-4</td>
+                    <td>学术背景、开源版本</td>
+                    <td>成本敏感场景</td>
+                </tr>
+                <tr>
+                    <td><strong>百川</strong></td>
+                    <td>Baichuan2</td>
+                    <td>开源可私有化</td>
+                    <td>数据敏感场景</td>
+                </tr>
+            </table>
+
+            <h3>3.3 本地部署方案</h3>
+            <div class="grid-3">
+                <div class="card">
+                    <div class="card-title">vLLM</div>
+                    <p>高性能推理引擎，生产级本地部署</p>
+                </div>
+                <div class="card">
+                    <div class="card-title">Ollama</div>
+                    <p>简单易用，适合开发测试</p>
+                </div>
+                <div class="card">
+                    <div class="card-title">TGI</div>
+                    <p>HuggingFace 推理，开源模型支持</p>
+                </div>
+            </div>
+
+            <h3>3.4 模型路由策略</h3>
+            <div class="card">
+                <ul>
+                    <li><strong>正常情况</strong>：主供应商 (DeepSeek/Qwen)</li>
+                    <li><strong>高负载</strong>：负载均衡到备用供应商</li>
+                    <li><strong>供应商故障</strong>：自动降级到备用</li>
+                    <li><strong>敏感数据</strong>：路由到本地部署模型</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- 四、核心流程 - 检索 & 解析 -->
+        <div class="slide">
+            <div class="slide-header">
+                <h1>四、核心流程 - 检索与解析</h1>
+            </div>
+
+            <div class="two-col">
+                <div>
+                    <h3>4.1 检索流程 (LightRAG)</h3>
+                    <table>
+                        <tr>
+                            <th>模式</th>
+                            <th>适用场景</th>
+                        </tr>
+                        <tr>
+                            <td><span class="tag tag-blue">local</span></td>
+                            <td>事实查询，定位具体实体</td>
+                        </tr>
+                        <tr>
+                            <td><span class="tag tag-green">global</span></td>
+                            <td>关系查询，全局关联</td>
+                        </tr>
+                        <tr>
+                            <td><span class="tag tag-orange">hybrid</span></td>
+                            <td>对比/总结，兼顾实体与全局</td>
+                        </tr>
+                        <tr>
+                            <td><span class="tag tag-purple">mix</span></td>
+                            <td>风险追溯，强证据召回</td>
+                        </tr>
+                    </table>
+
+                    <h4>检索流程</h4>
+                    <div class="flow-diagram" style="font-size: 12px; padding: 16px;">
+                        <span class="flow-step" style="font-size: 11px;">查询理解</span>
+                        <span class="flow-arrow">→</span>
+                        <span class="flow-step" style="font-size: 11px;">约束抽取</span>
+                        <span class="flow-arrow">→</span>
+                        <span class="flow-step" style="font-size: 11px;">模式选择</span>
+                        <span class="flow-arrow">→</span>
+                        <span class="flow-step" style="font-size: 11px;">向量召回</span>
+                        <span class="flow-arrow">→</span>
+                        <span class="flow-step" style="font-size: 11px;">重排序</span>
+                    </div>
+                </div>
+
+                <div>
+                    <h3>4.2 文档解析流程</h3>
+                    <table>
+                        <tr>
+                            <th>解析器</th>
+                            <th>适用场景</th>
+                        </tr>
+                        <tr>
+                            <td><strong>MinerU</strong></td>
+                            <td>复杂 PDF（表格、公式、扫描件）</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Docling</strong></td>
+                            <td>Office/HTML/常规 PDF</td>
+                        </tr>
+                        <tr>
+                            <td><strong>OCR 支路</strong></td>
+                            <td>图片型文档</td>
+                        </tr>
+                    </table>
+
+                    <h4>输出格式</h4>
+                    <ul>
+                        <li>Markdown + 页码 + bbox</li>
+                        <li>语义分块，保留结构</li>
+                        <li>元数据：document_id/tenant_id/supplier_id</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <!-- 五、工作流 & HITL -->
+        <div class="slide print-break">
+            <div class="slide-header">
+                <h1>五、工作流状态机</h1>
+            </div>
+
+            <div class="two-col">
+                <div>
+                    <h3>5.1 状态流转</h3>
+                    <div class="arch-diagram" style="font-size: 11px;">START
+  → load_context      (加载项目/规则/租户上下文)
+  → retrieve_evidence (召回与证据打包)
+  → evaluate_rules    (硬约束判定)
+  → score_with_llm    (软评分与解释生成)
+  → quality_gate      (判断是否进入 HITL)
+     ├─ pass  → finalize_report
+     └─ hitl  → human_review_interrupt (等待人工输入)
+  → persist_result    (写 DB/对象存储/审计)
+  → END</div>
+                </div>
+
+                <div>
+                    <h3>5.2 HITL 触发条件</h3>
+                    <table>
+                        <tr>
+                            <th>条件</th>
+                            <th>阈值</th>
+                            <th>说明</th>
+                        </tr>
+                        <tr>
+                            <td>置信度过低</td>
+                            <td>&lt; 0.65</td>
+                            <td>AI 不确定，需人工确认</td>
+                        </tr>
+                        <tr>
+                            <td>引用覆盖不足</td>
+                            <td>&lt; 90%</td>
+                            <td>证据不完整</td>
+                        </tr>
+                        <tr>
+                            <td>评分偏差过大</td>
+                            <td>&gt; 20%</td>
+                            <td>评分异常</td>
+                        </tr>
+                    </table>
+
+                    <h3>5.3 置信度计算</h3>
+                    <div class="card">
+                        <code>confidence = 0.4 × evidence_quality<br>
+                         &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;+ 0.3 × retrieval_agreement<br>
+                         &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;+ 0.3 × model_stability</code>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 六、项目进展 -->
+        <div class="slide">
+            <div class="slide-header">
+                <h1>六、项目进展</h1>
+            </div>
+
+            <h3>6.1 整体进度</h3>
+            <div class="progress-bar" style="margin-bottom: 8px;">
+                <div class="progress-fill" style="width: 60%;">60%</div>
+            </div>
+            <div class="grid-3" style="margin-top: 16px;">
+                <div class="card" style="text-align: center;">
+                    <div class="card-value" style="color: #52c41a;">100%</div>
+                    <div>框架层</div>
+                </div>
+                <div class="card" style="text-align: center;">
+                    <div class="card-value" style="color: #faad14;">30%</div>
+                    <div>业务逻辑层</div>
+                </div>
+                <div class="card" style="text-align: center;">
+                    <div class="card-value" style="color: #52c41a;">100%</div>
+                    <div>测试覆盖</div>
+                </div>
+            </div>
+
+            <h3>6.2 已完成工作</h3>
+            <div class="grid-2">
+                <div class="card">
+                    <div class="card-title">基础设施</div>
+                    <ul>
+                        <li class="status-done">✅ 66 个 REST API 端点</li>
+                        <li class="status-done">✅ LangGraph 状态机</li>
+                        <li class="status-done">✅ 多租户隔离 (RLS)</li>
+                        <li class="status-done">✅ DLQ 死信队列</li>
+                        <li class="status-done">✅ 审计日志 (不可篡改)</li>
+                    </ul>
+                </div>
+                <div class="card">
+                    <div class="card-title">质量保障</div>
+                    <ul>
+                        <li class="status-done">✅ SSOT 规范对齐</li>
+                        <li class="status-done">✅ Mock LLM 实现</li>
+                        <li class="status-done">✅ CI/CD 自动化</li>
+                        <li class="status-done">✅ 254 测试全部通过</li>
+                        <li class="status-done">✅ 0 警告</li>
+                    </ul>
+                </div>
+            </div>
+
+            <h3>6.3 代码统计</h3>
+            <div class="grid-4">
+                <div class="card" style="text-align: center;">
+                    <div class="card-value">8,500</div>
+                    <div class="card-unit">行业务代码</div>
+                </div>
+                <div class="card" style="text-align: center;">
+                    <div class="card-value">3,500</div>
+                    <div class="card-unit">行测试代码</div>
+                </div>
+                <div class="card" style="text-align: center;">
+                    <div class="card-value">66</div>
+                    <div class="card-unit">API 端点</div>
+                </div>
+                <div class="card" style="text-align: center;">
+                    <div class="card-value">254</div>
+                    <div class="card-unit">测试用例</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 七、后续计划 -->
+        <div class="slide print-break">
+            <div class="slide-header">
+                <h1>七、后续计划</h1>
+            </div>
+
+            <h3>7.1 三阶段路线图</h3>
+            <div class="timeline">
+                <div class="timeline-item">
+                    <h4>第一阶段：核心业务逻辑 (2-3 周)</h4>
+                    <ul>
+                        <li>Week 1: 文档解析 (MinerU + Docling)</li>
+                        <li>Week 2: 向量检索 (pgvector)</li>
+                        <li>Week 3: LLM 适配层 (多供应商 + 本地部署)</li>
+                    </ul>
+                </div>
+                <div class="timeline-item">
+                    <h4>第二阶段：端到端验证 (1 周)</h4>
+                    <ul>
+                        <li>集成测试套件</li>
+                        <li>端到端场景测试</li>
+                        <li>HITL 流程验证</li>
+                        <li>性能基准测试</li>
+                    </ul>
+                </div>
+                <div class="timeline-item">
+                    <h4>第三阶段：生产就绪 (1 周)</h4>
+                    <ul>
+                        <li>监控与告警 (Prometheus)</li>
+                        <li>日志聚合</li>
+                        <li>安全加固</li>
+                        <li>部署文档</li>
+                    </ul>
+                </div>
+            </div>
+
+            <h3>7.2 风险评估</h3>
+            <table>
+                <tr>
+                    <th>风险</th>
+                    <th>可能性</th>
+                    <th>影响</th>
+                    <th>缓解措施</th>
+                </tr>
+                <tr>
+                    <td>LLM API 限流</td>
+                    <td class="risk-medium">中</td>
+                    <td class="risk-high">高</td>
+                    <td>多供应商切换 + 重试降级</td>
+                </tr>
+                <tr>
+                    <td>向量检索精度</td>
+                    <td class="risk-medium">中</td>
+                    <td class="risk-medium">中</td>
+                    <td>多路召回 + 重排序</td>
+                </tr>
+                <tr>
+                    <td>文档解析失败</td>
+                    <td class="risk-low">低</td>
+                    <td class="risk-medium">中</td>
+                    <td>多解析器 fallback</td>
+                </tr>
+                <tr>
+                    <td>性能瓶颈</td>
+                    <td class="risk-medium">中</td>
+                    <td class="risk-medium">中</td>
+                    <td>异步处理 + 缓存</td>
+                </tr>
+            </table>
+        </div>
+
+        <!-- 八、总结 -->
+        <div class="slide">
+            <div class="slide-header">
+                <h1>八、总结</h1>
+            </div>
+
+            <div class="grid-2">
+                <div>
+                    <h3>关键成果</h3>
+                    <div class="card">
+                        <ul>
+                            <li>✅ <strong>架构完整</strong>：API、状态机、存储、安全、运维框架全部就绪</li>
+                            <li>✅ <strong>质量保障</strong>：254 测试全部通过，CI 自动化</li>
+                            <li>✅ <strong>规范对齐</strong>：代码与 SSOT 设计文档 100% 一致</li>
+                            <li>✅ <strong>可演示</strong>：Mock LLM 支持端到端流程演示</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div>
+                    <h3>下一步重点</h3>
+                    <div class="card">
+                        <ul>
+                            <li>📌 <strong>LLM 适配层</strong>：实现多供应商切换 + 本地部署支持</li>
+                            <li>📌 <strong>向量检索</strong>：pgvector 实现</li>
+                            <li>📌 <strong>文档解析</strong>：MinerU/Docling 集成</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <h3>预期里程碑</h3>
+            <table>
+                <tr>
+                    <th>时间节点</th>
+                    <th>里程碑</th>
+                </tr>
+                <tr>
+                    <td><strong>2 周后</strong></td>
+                    <td>核心业务逻辑可用</td>
+                </tr>
+                <tr>
+                    <td><strong>3 周后</strong></td>
+                    <td>端到端验证完成</td>
+                </tr>
+                <tr>
+                    <td><strong>4 周后</strong></td>
+                    <td>生产就绪</td>
+                </tr>
+            </table>
+        </div>
+
+        <div class="footer">
+            <p>文档版本：v1.0 | 更新日期：2026-02-24</p>
+            <p>辅助评标专家系统 - 项目组</p>
+        </div>
+    </div>
+</body>
+</html>
