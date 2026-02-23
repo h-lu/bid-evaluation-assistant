@@ -757,51 +757,24 @@ class InMemoryStore:
                 }
             ]
 
-        criteria_results: list[dict[str, Any]] = []
-        citations_all: list[str] = []
-        unsupported_claims: list[str] = []
-        redline_conflict = False
+        # Phase 1: 收集所有 citation_ids 并注册 citation_sources
+        citations_all_ids: list[str] = []
+        criteria_weights: dict[str, float] = {}  # 用于计算总分
         for criteria in criteria_defs:
             if not isinstance(criteria, dict):
                 continue
             criteria_id = str(criteria.get("criteria_id") or "criteria")
-            max_score = float(criteria.get("max_score", 20.0))
             weight = float(criteria.get("weight", 1.0))
-            score = max_score * 0.9 if hard_constraint_pass else 0.0
+            criteria_weights[criteria_id] = weight
             citation_id = (
                 f"ck_{criteria_id}_{evaluation_id[:6]}"
                 if hard_constraint_pass
                 else "ck_rule_block_1"
             )
-            citations = [citation_id]
-            criteria_name = criteria.get("criteria_name") or criteria.get("name") or criteria_id
-            requirement_text = criteria.get("requirement_text") or criteria.get("requirement")
-            response_text = criteria.get("response_text") or criteria.get("response")
-            criteria_results.append(
-                {
-                    "criteria_id": criteria_id,
-                    "criteria_name": str(criteria_name),
-                    "requirement_text": str(requirement_text) if requirement_text is not None else None,
-                    "response_text": str(response_text) if response_text is not None else None,
-                    "score": score,
-                    "max_score": max_score,
-                    "weight": weight,
-                    "hard_pass": hard_constraint_pass,
-                    "reason": (
-                        "delivery period satisfies baseline"
-                        if hard_constraint_pass
-                        else "rule engine blocked: required bid document scope missing"
-                    ),
-                    "citations": citations,
-                    "citations_count": len(citations),
-                    "confidence": 0.81 if hard_constraint_pass else 1.0,
-                }
-            )
-            citations_all.extend(citations)
-            if criteria.get("require_citation") and not citations:
-                unsupported_claims.append(criteria_id)
+            citations_all_ids.append(citation_id)
 
-        for chunk_id in citations_all:
+        # 注册所有 citation_sources
+        for chunk_id in citations_all_ids:
             if chunk_id not in self.citation_sources:
                 self.register_citation_source(
                     chunk_id=chunk_id,
@@ -824,11 +797,51 @@ class InMemoryStore:
                     },
                 )
 
+        # Phase 2: 创建 criteria_results（SSOT 格式：无 weight/citations_count，citations 为对象）
+        criteria_results: list[dict[str, Any]] = []
+        unsupported_claims: list[str] = []
+        redline_conflict = False
+
+        for idx, criteria in enumerate(criteria_defs):
+            if not isinstance(criteria, dict):
+                continue
+            criteria_id = str(criteria.get("criteria_id") or "criteria")
+            max_score = float(criteria.get("max_score", 20.0))
+            score = max_score * 0.9 if hard_constraint_pass else 0.0
+            citation_id = citations_all_ids[idx] if idx < len(citations_all_ids) else f"ck_{criteria_id}_{evaluation_id[:6]}"
+            criteria_name = criteria.get("criteria_name") or criteria.get("name") or criteria_id
+            requirement_text = criteria.get("requirement_text") or criteria.get("requirement")
+            response_text = criteria.get("response_text") or criteria.get("response")
+
+            # SSOT: citations 为对象数组，无 quote
+            resolved_citations = self._resolve_citations_batch([citation_id], include_quote=False)
+
+            criteria_results.append(
+                {
+                    "criteria_id": criteria_id,
+                    "criteria_name": str(criteria_name),
+                    "requirement_text": str(requirement_text) if requirement_text is not None else None,
+                    "response_text": str(response_text) if response_text is not None else None,
+                    "score": score,
+                    "max_score": max_score,
+                    "hard_pass": hard_constraint_pass,
+                    "reason": (
+                        "delivery period satisfies baseline"
+                        if hard_constraint_pass
+                        else "rule engine blocked: required bid document scope missing"
+                    ),
+                    "citations": resolved_citations,
+                    "confidence": 0.81 if hard_constraint_pass else 1.0,
+                }
+            )
+            if criteria.get("require_citation") and not resolved_citations:
+                unsupported_claims.append(criteria_id)
+
         resolvable = [
-            cid for cid in citations_all if self.citation_sources.get(cid) is not None
+            cid for cid in citations_all_ids if self.citation_sources.get(cid) is not None
         ]
-        if len(resolvable) < len(citations_all):
-            for missing in (set(citations_all) - set(resolvable)):
+        if len(resolvable) < len(citations_all_ids):
+            for missing in (set(citations_all_ids) - set(resolvable)):
                 unsupported_claims.append(missing)
         if isinstance(rules, dict):
             redlines = rules.get("redlines")
@@ -849,11 +862,18 @@ class InMemoryStore:
                 if not required.issubset(include_doc_types_normalized):
                     redline_conflict = True
 
-        total_score = sum(float(item.get("score", 0.0)) * float(item.get("weight", 1.0)) for item in criteria_results)
-        max_total = sum(float(item.get("max_score", 0.0)) * float(item.get("weight", 1.0)) for item in criteria_results) or 1.0
-        citation_coverage = len(resolvable) / max(len(citations_all), 1)
+        # 使用 criteria_weights 计算总分（不从 criteria_results 取 weight）
+        total_score = 0.0
+        max_total = 0.0
+        for item in criteria_results:
+            cid = item.get("criteria_id", "")
+            w = criteria_weights.get(cid, 1.0)
+            total_score += float(item.get("score", 0.0)) * w
+            max_total += float(item.get("max_score", 0.0)) * w
+        max_total = max_total or 1.0
+        citation_coverage = len(resolvable) / max(len(citations_all_ids), 1)
         evidence_quality = citation_coverage
-        retrieval_agreement = citation_coverage
+        retrieval_agreement = self._calculate_retrieval_agreement(citations_all_ids)
         model_stability = 0.85 if hard_constraint_pass else 0.7
         base_confidence = 0.4 * evidence_quality + 0.3 * retrieval_agreement + 0.3 * model_stability
         score_calibration = self.strategy_config.get("score_calibration", {})
@@ -900,6 +920,7 @@ class InMemoryStore:
             },
             "payload": payload,
             "last_error": None,
+            "errors": [],  # SSOT: errors array
             }
         )
         self._persist_evaluation_report(
@@ -912,7 +933,7 @@ class InMemoryStore:
             "score_deviation_pct": round(score_deviation_pct, 2),
             "risk_level": "medium" if hard_constraint_pass else "high",
             "criteria_results": criteria_results,
-            "citations": citations_all,
+            "citations": self._resolve_citations_batch(citations_all_ids, include_quote=True),  # SSOT: citations 为对象数组
             "needs_human_review": needs_human_review,
             "trace_id": payload.get("trace_id") or "",
             "tenant_id": tenant_id,
@@ -1025,6 +1046,7 @@ class InMemoryStore:
             },
             "payload": payload,
             "last_error": None,
+            "errors": [],  # SSOT: errors array
             }
         )
         route = self._select_parser(
@@ -1356,6 +1378,28 @@ class InMemoryStore:
         if report is None:
             return None
         self._assert_tenant_scope(report.get("tenant_id", "tenant_default"), tenant_id)
+        # Resolve citations to full objects per SSOT spec
+        raw_citations = report.get("citations", [])
+        if raw_citations and isinstance(raw_citations[0], str):
+            # Old format: list of chunk_ids -> resolve to objects
+            resolved_citations = self._resolve_citations_batch(raw_citations, include_quote=True)
+        else:
+            # Already resolved or empty
+            resolved_citations = raw_citations
+
+        # Resolve criteria_results citations (without quote per SSOT)
+        raw_criteria = report.get("criteria_results", [])
+        resolved_criteria = []
+        for item in raw_criteria:
+            item_copy = dict(item)
+            item_citations = item_copy.get("citations", [])
+            if item_citations and isinstance(item_citations[0], str):
+                item_copy["citations"] = self._resolve_citations_batch(item_citations, include_quote=False)
+            # Remove extra fields not in SSOT
+            item_copy.pop("weight", None)
+            item_copy.pop("citations_count", None)
+            resolved_criteria.append(item_copy)
+
         return {
             "evaluation_id": report["evaluation_id"],
             "supplier_id": report["supplier_id"],
@@ -1363,8 +1407,8 @@ class InMemoryStore:
             "confidence": report["confidence"],
             "citation_coverage": report.get("citation_coverage", 0.0),
             "risk_level": report["risk_level"],
-            "criteria_results": report["criteria_results"],
-            "citations": report["citations"],
+            "criteria_results": resolved_criteria,
+            "citations": resolved_citations,
             "needs_human_review": report["needs_human_review"],
             "trace_id": report["trace_id"],
             "interrupt": report.get("interrupt"),
@@ -1496,6 +1540,7 @@ class InMemoryStore:
             },
             "payload": payload,
             "last_error": None,
+            "errors": [],  # SSOT: errors array
             }
         )
         if report is not None:
@@ -1581,6 +1626,116 @@ class InMemoryStore:
             limit=limit,
         )
         return [item for item in items if item.get("kind") != self.langgraph_checkpoint_kind]
+
+    def get_workflow_state(self, *, evaluation_id: str, tenant_id: str) -> dict[str, Any] | None:
+        """
+        获取工作流状态对象（对齐 SSOT langgraph-agent-workflow-spec §2）。
+
+        Returns:
+            完整的工作流状态对象，包含 identity/trace/inputs/retrieval/scoring/review/output/runtime
+        """
+        report = self.get_evaluation_report_for_tenant(evaluation_id=evaluation_id, tenant_id=tenant_id)
+        if report is None:
+            return None
+
+        thread_id = report.get("thread_id", "")
+        job = self._find_job_by_evaluation_id(evaluation_id=evaluation_id, tenant_id=tenant_id)
+        checkpoints = self.list_workflow_checkpoints(thread_id=thread_id, tenant_id=tenant_id) if thread_id else []
+
+        # 从 checkpoints 提取各阶段信息
+        retrieved_chunks = self._extract_retrieved_chunks(checkpoints)
+        evidence_bundle = self._extract_evidence_bundle(checkpoints)
+        query_bundle = self._extract_query_bundle(checkpoints)
+
+        return {
+            "identity": {
+                "tenant_id": tenant_id,
+                "project_id": report.get("project_id"),
+                "evaluation_id": evaluation_id,
+                "supplier_id": report.get("supplier_id"),
+            },
+            "trace": {
+                "trace_id": report.get("trace_id"),
+                "thread_id": thread_id,
+                "checkpoint_id": checkpoints[-1].get("checkpoint_id") if checkpoints else None,
+            },
+            "inputs": {
+                "query_bundle": query_bundle,
+                "rule_pack_version": report.get("rule_pack_version"),
+            },
+            "retrieval": {
+                "retrieved_chunks": retrieved_chunks,
+                "evidence_bundle": evidence_bundle,
+            },
+            "scoring": {
+                "criteria_scores": report.get("criteria_results", []),
+                "total_score": report.get("total_score"),
+                "confidence": report.get("confidence"),
+                "citation_coverage": report.get("citation_coverage"),
+            },
+            "review": {
+                "requires_human_review": report.get("needs_human_review"),
+                "human_review_payload": report.get("interrupt"),
+                "human_decision": None,
+                "resume_token": report.get("interrupt", {}).get("resume_token") if report.get("interrupt") else None,
+            },
+            "output": {
+                "report_payload": report,
+                "status": job.get("status") if job else None,
+            },
+            "runtime": {
+                "retry_count": job.get("retry_count", 0) if job else 0,
+                "errors": self._collect_errors(job, checkpoints),
+            },
+        }
+
+    def _find_job_by_evaluation_id(self, *, evaluation_id: str, tenant_id: str) -> dict[str, Any] | None:
+        """通过 evaluation_id 查找对应的 job"""
+        for job in self.jobs.values():
+            if job.get("resource", {}).get("id") == evaluation_id:
+                if job.get("tenant_id") == tenant_id:
+                    return job
+        return None
+
+    def _extract_query_bundle(self, checkpoints: list[dict[str, Any]]) -> dict[str, Any] | None:
+        """从 checkpoints 提取查询包"""
+        for cp in checkpoints:
+            if cp.get("node") == "load_context":
+                return cp.get("payload", {}).get("query_bundle")
+        return None
+
+    def _extract_retrieved_chunks(self, checkpoints: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """从 checkpoints 提取召回的 chunks"""
+        for cp in checkpoints:
+            if cp.get("node") == "retrieve_evidence":
+                return cp.get("payload", {}).get("retrieved_chunks", [])
+        return []
+
+    def _extract_evidence_bundle(self, checkpoints: list[dict[str, Any]]) -> dict[str, Any] | None:
+        """从 checkpoints 提取证据包"""
+        for cp in checkpoints:
+            if cp.get("node") == "retrieve_evidence":
+                return cp.get("payload", {}).get("evidence_bundle")
+        return None
+
+    def _collect_errors(self, job: dict[str, Any] | None, checkpoints: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """收集所有错误信息"""
+        errors = []
+        if job:
+            # 从 job 的 errors 数组获取
+            job_errors = job.get("errors", [])
+            if job_errors:
+                errors.extend(job_errors)
+            # 兼容旧格式：从 last_error 获取
+            elif job.get("last_error"):
+                errors.append(job["last_error"])
+        # 从 checkpoint 中收集错误
+        for cp in checkpoints:
+            if cp.get("status") == "error":
+                error_info = cp.get("payload", {}).get("error")
+                if error_info:
+                    errors.append(error_info)
+        return errors
 
     def upsert_langgraph_checkpoint(self, *, record: dict[str, Any]) -> dict[str, Any]:
         thread_id = str(record.get("thread_id") or "")
@@ -2001,6 +2156,85 @@ class InMemoryStore:
         source_tenant = source.get("tenant_id", tenant_id)
         self._assert_tenant_scope(source_tenant, tenant_id)
         return source
+
+    def _resolve_citation(self, chunk_id: str, *, include_quote: bool = True) -> dict[str, Any]:
+        """
+        将 chunk_id 解析为完整 citation 对象。
+
+        Args:
+            chunk_id: chunk 唯一标识
+            include_quote: 是否包含 quote 字段（报告级需要，criteria 级不需要）
+
+        Returns:
+            {"chunk_id": str, "page": int | None, "bbox": list | None, "quote": str | None}
+        """
+        source = self.citation_sources.get(chunk_id)
+        if source is None:
+            result = {
+                "chunk_id": chunk_id,
+                "page": None,
+                "bbox": None,
+            }
+            if include_quote:
+                result["quote"] = None
+            return result
+        result = {
+            "chunk_id": chunk_id,
+            "page": source.get("page"),
+            "bbox": source.get("bbox"),
+        }
+        if include_quote:
+            result["quote"] = source.get("text")
+        return result
+
+    def _resolve_citations_batch(self, chunk_ids: list[str], *, include_quote: bool = True) -> list[dict[str, Any]]:
+        """
+        批量解析 chunk_id 列表为 citation 对象列表。
+        """
+        return [self._resolve_citation(cid, include_quote=include_quote) for cid in chunk_ids]
+
+    def _calculate_retrieval_agreement(self, chunk_ids: list[str]) -> float:
+        """
+        计算检索一致性 (retrieval_agreement)。
+
+        基于引用来源的 score_raw 分布计算：
+        - 如果所有 citation 的 score_raw 都较高且接近，认为一致性好
+        - 如果 score_raw 分散，认为一致性差
+
+        Returns:
+            float: 0.0 ~ 1.0
+        """
+        if not chunk_ids:
+            return 0.0
+
+        scores = []
+        for cid in chunk_ids:
+            source = self.citation_sources.get(cid)
+            if source and "score_raw" in source:
+                try:
+                    scores.append(float(source.get("score_raw", 0)))
+                except (TypeError, ValueError):
+                    pass
+
+        if not scores:
+            return 0.5  # 无分数数据时返回中等值
+
+        if len(scores) == 1:
+            return 1.0  # 单个结果，完全一致
+
+        # 计算分数的变异系数 (CV = std / mean)
+        mean_score = sum(scores) / len(scores)
+        if mean_score == 0:
+            return 0.5
+
+        variance = sum((s - mean_score) ** 2 for s in scores) / len(scores)
+        std_dev = variance ** 0.5
+        cv = std_dev / mean_score
+
+        # CV 越小，一致性越高
+        # CV=0 → agreement=1.0, CV>=1 → agreement=0.0
+        agreement = max(0.0, min(1.0, 1.0 - cv))
+        return agreement
 
     @staticmethod
     def _select_retrieval_mode(*, query_type: str, high_risk: bool) -> str:
@@ -3330,12 +3564,16 @@ class InMemoryStore:
                 retry_after_ms = self._retry_backoff_ms(job_id=job_id, retry_count=retry_count)
                 retry_at = (datetime.now(UTC) + timedelta(milliseconds=retry_after_ms)).isoformat()
                 retried_job["next_retry_at"] = retry_at
-                retried_job["last_error"] = {
+                error_info = {
                     "code": error_code,
                     "message": error["message"],
                     "retryable": True,
                     "class": "transient",
+                    "occurred_at": self._utcnow_iso(),
                 }
+                retried_job["last_error"] = error_info
+                # SSOT: append to errors array
+                retried_job.setdefault("errors", []).append(error_info)
                 self._persist_job(job=retried_job)
                 if job.get("job_type") == "parse":
                     manifest = self.get_parse_manifest_for_tenant(job_id=job_id, tenant_id=tenant_id)
@@ -3397,12 +3635,16 @@ class InMemoryStore:
                 tenant_id=tenant_id,
             )
             failed_job.pop("next_retry_at", None)
-            failed_job["last_error"] = {
+            error_info = {
                 "code": error_code,
                 "message": error["message"],
                 "retryable": error["retryable"],
                 "class": error["class"],
+                "occurred_at": self._utcnow_iso(),
             }
+            failed_job["last_error"] = error_info
+            # SSOT: append to errors array
+            failed_job.setdefault("errors", []).append(error_info)
             self._persist_job(job=failed_job)
             if job.get("job_type") == "parse":
                 manifest = self.get_parse_manifest_for_tenant(job_id=job_id, tenant_id=tenant_id)
@@ -4549,6 +4791,23 @@ class PostgresBackedStore(InMemoryStore):
         if loaded is not None:
             self._assert_tenant_scope(loaded.get("tenant_id", "tenant_default"), tenant_id)
             self.evaluation_reports[evaluation_id] = loaded
+            # Resolve citations to full objects per SSOT spec
+            raw_citations = loaded.get("citations", [])
+            if raw_citations and isinstance(raw_citations[0], str):
+                resolved_citations = self._resolve_citations_batch(raw_citations, include_quote=True)
+            else:
+                resolved_citations = raw_citations
+            # Resolve criteria_results citations (without quote per SSOT)
+            raw_criteria = loaded.get("criteria_results", [])
+            resolved_criteria = []
+            for item in raw_criteria:
+                item_copy = dict(item)
+                item_citations = item_copy.get("citations", [])
+                if item_citations and isinstance(item_citations[0], str):
+                    item_copy["citations"] = self._resolve_citations_batch(item_citations, include_quote=False)
+                item_copy.pop("weight", None)
+                item_copy.pop("citations_count", None)
+                resolved_criteria.append(item_copy)
             return {
                 "evaluation_id": loaded["evaluation_id"],
                 "supplier_id": loaded["supplier_id"],
@@ -4556,11 +4815,12 @@ class PostgresBackedStore(InMemoryStore):
                 "confidence": loaded["confidence"],
                 "citation_coverage": loaded.get("citation_coverage", 0.0),
                 "risk_level": loaded["risk_level"],
-                "criteria_results": loaded["criteria_results"],
-                "citations": loaded["citations"],
+                "criteria_results": resolved_criteria,
+                "citations": resolved_citations,
                 "needs_human_review": loaded["needs_human_review"],
                 "trace_id": loaded["trace_id"],
                 "interrupt": loaded.get("interrupt"),
+                "report_uri": loaded.get("report_uri"),
             }
         return super().get_evaluation_report_for_tenant(
             evaluation_id=evaluation_id,
