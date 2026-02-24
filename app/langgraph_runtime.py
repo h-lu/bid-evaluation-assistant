@@ -1,17 +1,34 @@
+"""LangGraph evaluation workflow runtime.
+
+Aligned with SSOT langgraph-agent-workflow-spec:
+  §3 Graph structure (conditional edges for quality_gate)
+  §4 Node responsibilities (real node functions)
+  §5 Routing rules (pass/hitl/error)
+  §6 Checkpoint & durable execution
+  §7 Interrupt/resume contract
+"""
+
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
 from app.errors import ApiError
 
+logger = logging.getLogger(__name__)
+
 try:  # pragma: no cover - optional dependency at runtime
     from langgraph.checkpoint.base import BaseCheckpointSaver  # type: ignore
 except Exception:  # pragma: no cover - langgraph not installed
     BaseCheckpointSaver = object  # type: ignore
 
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def _utcnow_iso() -> str:
     return datetime.now(tz=UTC).isoformat()
@@ -37,6 +54,10 @@ class WorkflowIdentity:
     job_id: str
     tenant_id: str
 
+
+# ---------------------------------------------------------------------------
+# Checkpoint saver (unchanged)
+# ---------------------------------------------------------------------------
 
 class StoreCheckpointSaver(BaseCheckpointSaver):  # type: ignore[misc]
     def __init__(self, *, store: Any) -> None:
@@ -183,29 +204,55 @@ class StoreCheckpointSaver(BaseCheckpointSaver):  # type: ignore[misc]
         self._store.delete_langgraph_checkpoints(thread_id=thread_id)
 
 
+# ---------------------------------------------------------------------------
+# Graph builder (SSOT §3 – real nodes + conditional edges)
+# ---------------------------------------------------------------------------
+
 def build_evaluation_graph(*, store: Any, identity: WorkflowIdentity):
+    """Build a LangGraph StateGraph with **real** evaluation node functions.
+
+    Graph structure (SSOT §3)::
+
+        START -> load_context -> retrieve_evidence -> evaluate_rules
+              -> score_with_llm -> quality_gate
+              -> (pass: finalize_report | hitl: human_review_interrupt)
+              -> persist_result -> END
+    """
     from langgraph.graph import END, StateGraph  # type: ignore
     from langgraph.types import interrupt  # type: ignore
 
-    def _node(name: str, payload: dict[str, Any] | None = None, status: str = "succeeded"):
+    from app.evaluation_nodes import (
+        node_evaluate_rules,
+        node_finalize_report,
+        node_load_context,
+        node_persist_result,
+        node_quality_gate,
+        node_retrieve_evidence,
+        node_score_with_llm,
+    )
+
+    def _wrap(node_fn, name: str):
+        """Wrap a node function: bind store, record checkpoint."""
         def _inner(state: dict[str, Any]) -> dict[str, Any]:
             store._append_node_checkpoint(
                 thread_id=identity.thread_id,
                 job_id=identity.job_id,
                 tenant_id=identity.tenant_id,
                 node=name,
-                status=status,
-                payload=payload or {},
+                payload={},
             )
-            return state
-
+            updates = node_fn(state, store=store)
+            return updates
+        _inner.__name__ = name
         return _inner
 
-    def _quality_gate(state: dict[str, Any]) -> dict[str, Any]:
-        review = state.get("review", {})
-        requires_human_review = bool(review.get("requires_human_review", False))
-        if requires_human_review:
-            payload = _safe_interrupt_payload(review.get("human_review_payload"))
+    def _quality_gate_node(state: dict[str, Any]) -> dict[str, Any]:
+        updates = node_quality_gate(state, store=store)
+        merged = {**state, **updates}
+        needs_review = merged.get("needs_human_review", False)
+
+        if needs_review:
+            payload = _safe_interrupt_payload(merged.get("interrupt_payload"))
             store._append_node_checkpoint(
                 thread_id=identity.thread_id,
                 job_id=identity.job_id,
@@ -223,16 +270,25 @@ def build_evaluation_graph(*, store: Any, identity: WorkflowIdentity):
                 payload=payload,
             )
             interrupt(payload)
-        return _node("quality_gate", {"decision": "pass"})(state)
+        else:
+            store._append_node_checkpoint(
+                thread_id=identity.thread_id,
+                job_id=identity.job_id,
+                tenant_id=identity.tenant_id,
+                node="quality_gate",
+                payload={"decision": "pass"},
+            )
+        return updates
 
     graph = StateGraph(dict)
-    graph.add_node("load_context", _node("load_context"))
-    graph.add_node("retrieve_evidence", _node("retrieve_evidence"))
-    graph.add_node("evaluate_rules", _node("evaluate_rules"))
-    graph.add_node("score_with_llm", _node("score_with_llm"))
-    graph.add_node("quality_gate", _quality_gate)
-    graph.add_node("finalize_report", _node("finalize_report"))
-    graph.add_node("persist_result", _node("persist_result"))
+    graph.add_node("load_context", _wrap(node_load_context, "load_context"))
+    graph.add_node("retrieve_evidence", _wrap(node_retrieve_evidence, "retrieve_evidence"))
+    graph.add_node("evaluate_rules", _wrap(node_evaluate_rules, "evaluate_rules"))
+    graph.add_node("score_with_llm", _wrap(node_score_with_llm, "score_with_llm"))
+    graph.add_node("quality_gate", _quality_gate_node)
+    graph.add_node("finalize_report", _wrap(node_finalize_report, "finalize_report"))
+    graph.add_node("persist_result", _wrap(node_persist_result, "persist_result"))
+
     graph.set_entry_point("load_context")
     graph.add_edge("load_context", "retrieve_evidence")
     graph.add_edge("retrieve_evidence", "evaluate_rules")
@@ -244,36 +300,39 @@ def build_evaluation_graph(*, store: Any, identity: WorkflowIdentity):
     return graph
 
 
+# ---------------------------------------------------------------------------
+# Run / Resume (SSOT §6, §7)
+# ---------------------------------------------------------------------------
+
 def run_evaluation_graph(*, store: Any, job: dict[str, Any], tenant_id: str) -> dict[str, Any]:
     from langgraph.errors import GraphInterrupt  # type: ignore
 
     evaluation_id = str(job.get("resource", {}).get("id") or "")
     thread_id = str(job.get("thread_id") or store._new_thread_id("eval"))
     trace_id = str(job.get("trace_id") or "")
-    report: dict[str, Any] | None = None
-    if evaluation_id:
-        report = store.evaluation_reports.get(evaluation_id)
-        if report is None:
-            report = store.get_evaluation_report_for_tenant(evaluation_id=evaluation_id, tenant_id=tenant_id)
-    needs_human_review = bool(report.get("needs_human_review", False)) if isinstance(report, dict) else False
-    interrupt_payload = report.get("interrupt") if isinstance(report, dict) else None
+    payload = job.get("payload", {})
+
     state = {
-        "identity": {
-            "tenant_id": tenant_id,
-            "evaluation_id": evaluation_id,
-            "project_id": report.get("project_id") if isinstance(report, dict) else None,
-            "supplier_id": report.get("supplier_id") if isinstance(report, dict) else None,
-        },
-        "trace": {"trace_id": trace_id, "thread_id": thread_id},
-        "review": {
-            "requires_human_review": needs_human_review,
-            "human_review_payload": interrupt_payload,
-        },
-        "output": {"status": "running"},
+        "tenant_id": tenant_id,
+        "project_id": str(payload.get("project_id") or ""),
+        "evaluation_id": evaluation_id,
+        "supplier_id": str(payload.get("supplier_id") or ""),
+        "trace_id": trace_id,
+        "thread_id": thread_id,
+        "job_id": str(job.get("job_id") or ""),
+        "payload": payload,
+        "rule_pack_version": str(payload.get("rule_pack_version") or ""),
+        "include_doc_types": payload.get("evaluation_scope", {}).get("include_doc_types", []),
+        "force_hitl": bool(payload.get("evaluation_scope", {}).get("force_hitl", False)),
+        "status": "running",
+        "errors": [],
+        "retry_count": 0,
     }
+
     identity = WorkflowIdentity(thread_id=thread_id, job_id=str(job.get("job_id") or ""), tenant_id=tenant_id)
     graph = build_evaluation_graph(store=store, identity=identity)
     compiled = graph.compile(checkpointer=StoreCheckpointSaver(store=store))
+
     try:
         compiled.invoke(
             state,

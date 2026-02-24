@@ -18,7 +18,7 @@ from urllib.error import URLError
 from app.db.postgres import PostgresTxRunner
 from app.db.rls import PostgresRlsManager
 from app.errors import ApiError
-from app.llm_provider import is_real_llm_available, llm_score_criteria
+from app.llm_provider import is_real_llm_available  # noqa: F401 - re-exported
 from app.mock_llm import (
     MOCK_LLM_ENABLED,
     mock_retrieve_evidence,
@@ -454,6 +454,8 @@ class InMemoryStore:
 
     @staticmethod
     def _normalize_and_rewrite_query(query: str, include_terms: list[str], exclude_terms: list[str]) -> dict[str, Any]:
+        from app.constraint_extractor import extract_constraints
+
         normalized = re.sub(r"\s+", " ", query).strip()
         rewritten = normalized
         parts: list[str] = []
@@ -471,11 +473,17 @@ class InMemoryStore:
         for term in exclude_terms:
             if term not in lower_rewritten:
                 diff.append(f"missing_exclude:{term}")
+
+        constraints = extract_constraints(normalized)
+
         return {
             "rewritten_query": rewritten,
             "rewrite_reason": "normalize_whitespace_and_constraints",
             "constraints_preserved": len(diff) == 0,
             "constraint_diff": diff,
+            "entity_constraints": constraints["entity_constraints"],
+            "numeric_constraints": constraints["numeric_constraints"],
+            "time_constraints": constraints["time_constraints"],
         }
 
     @staticmethod
@@ -783,15 +791,11 @@ class InMemoryStore:
         return out
 
     @staticmethod
-    def _rerank_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _rerank_items(items: list[dict[str, Any]], query: str = "") -> list[dict[str, Any]]:
         if os.environ.get("BEA_FORCE_RERANK_ERROR", "").strip().lower() in {"1", "true", "yes", "on"}:
             raise RuntimeError("forced rerank error")
-        ranked: list[dict[str, Any]] = []
-        for item in items:
-            copied = dict(item)
-            copied["score_rerank"] = min(1.0, float(copied.get("score_raw", 0.5)) + 0.05)
-            ranked.append(copied)
-        return sorted(ranked, key=lambda x: float(x.get("score_rerank", 0.0)), reverse=True)
+        from app.reranker import rerank_items
+        return rerank_items(query=query, items=items)
 
     def run_idempotent(
         self,
@@ -824,218 +828,32 @@ class InMemoryStore:
         return data
 
     def create_evaluation_job(self, payload: dict[str, Any]) -> dict[str, Any]:
+        from app.evaluation_nodes import EvaluationState, run_evaluation_nodes_sequentially
+
         evaluation_id = f"ev_{uuid.uuid4().hex[:12]}"
         job_id = f"job_{uuid.uuid4().hex[:12]}"
         thread_id = self._new_thread_id("eval")
         tenant_id = payload.get("tenant_id", "tenant_default")
-        force_hitl = bool(payload.get("evaluation_scope", {}).get("force_hitl", False))
-        include_doc_types = payload.get("evaluation_scope", {}).get("include_doc_types", [])
-        include_doc_types_normalized = {str(x).lower() for x in include_doc_types}
-        hard_constraint_pass = "bid" in include_doc_types_normalized
-        rule_pack = self.get_rule_pack_for_tenant(
-            rule_pack_version=str(payload.get("rule_pack_version") or ""),
-            tenant_id=tenant_id,
-        )
-        rules = rule_pack.get("rules") if isinstance(rule_pack, dict) else {}
-        criteria_defs = rules.get("criteria") if isinstance(rules, dict) else None
-        if not isinstance(criteria_defs, list) or not criteria_defs:
-            criteria_defs = [
-                {
-                    "criteria_id": "delivery",
-                    "max_score": 20.0,
-                    "weight": 1.0,
-                }
-            ]
 
-        # Phase 1: 检索证据 (Chroma向量检索 > Mock LLM > stub)
-        citations_all_ids: list[str] = []
-        criteria_weights: dict[str, float] = {}
-        criteria_evidence: dict[str, list[dict[str, Any]]] = {}
+        initial_state: EvaluationState = {
+            "tenant_id": tenant_id,
+            "project_id": str(payload.get("project_id") or ""),
+            "evaluation_id": evaluation_id,
+            "supplier_id": str(payload.get("supplier_id") or ""),
+            "trace_id": str(payload.get("trace_id") or ""),
+            "thread_id": thread_id,
+            "job_id": job_id,
+            "payload": payload,
+            "rule_pack_version": str(payload.get("rule_pack_version") or ""),
+            "include_doc_types": payload.get("evaluation_scope", {}).get("include_doc_types", []),
+            "force_hitl": bool(payload.get("evaluation_scope", {}).get("force_hitl", False)),
+            "status": "running",
+            "errors": [],
+            "retry_count": 0,
+        }
 
-        for criteria in criteria_defs:
-            if not isinstance(criteria, dict):
-                continue
-            criteria_id = str(criteria.get("criteria_id") or "criteria")
-            weight = float(criteria.get("weight", 1.0))
-            criteria_weights[criteria_id] = weight
-            requirement_text = str(criteria.get("requirement_text") or criteria.get("requirement") or "")
+        final_state = run_evaluation_nodes_sequentially(initial_state, store=self)
 
-            evidence = self._retrieve_evidence_for_criteria(
-                query=requirement_text,
-                tenant_id=tenant_id,
-                project_id=str(payload.get("project_id") or ""),
-                supplier_id=str(payload.get("supplier_id") or ""),
-                doc_scope=include_doc_types,
-                top_k=5,
-                criteria_id=criteria_id,
-                evaluation_id=evaluation_id,
-                hard_constraint_pass=hard_constraint_pass,
-            )
-
-            criteria_evidence[criteria_id] = evidence
-            for ev in evidence:
-                citations_all_ids.append(ev["chunk_id"])
-
-        # 注册所有 citation_sources（来自 Mock LLM 检索结果）
-        for chunk_id in citations_all_ids:
-            if chunk_id not in self.citation_sources:
-                # 从 evidence 中查找完整信息
-                source_data = None
-                for ev_list in criteria_evidence.values():
-                    for ev in ev_list:
-                        if ev.get("chunk_id") == chunk_id:
-                            source_data = ev
-                            break
-                    if source_data:
-                        break
-
-                if source_data:
-                    self.register_citation_source(
-                        chunk_id=chunk_id,
-                        source={
-                            "chunk_id": chunk_id,
-                            "document_id": f"doc_{evaluation_id[:8]}",
-                            "tenant_id": tenant_id,
-                            "project_id": payload.get("project_id"),
-                            "supplier_id": payload.get("supplier_id"),
-                            "doc_type": include_doc_types[0] if include_doc_types else "bid",
-                            "page": source_data.get("page", 1),
-                            "bbox": source_data.get("bbox", [0.0, 0.0, 1.0, 1.0]),
-                            "heading_path": ["auto", "mock_llm"],
-                            "chunk_type": "text",
-                            "content_source": "mock_llm" if MOCK_LLM_ENABLED else "stub",
-                            "text": source_data.get("text", "mock citation"),
-                            "context": source_data.get("text", "")[:200],
-                            "score_raw": source_data.get("score_raw", 0.78),
-                            "chunk_hash": f"hash_{chunk_id}",
-                        },
-                    )
-
-        # Phase 2: 创建 criteria_results（使用 Mock LLM 评分）
-        criteria_results: list[dict[str, Any]] = []
-        unsupported_claims: list[str] = []
-        redline_conflict = False
-
-        for idx, criteria in enumerate(criteria_defs):
-            if not isinstance(criteria, dict):
-                continue
-            criteria_id = str(criteria.get("criteria_id") or "criteria")
-            max_score = float(criteria.get("max_score", 20.0))
-            criteria_name = criteria.get("criteria_name") or criteria.get("name") or criteria_id
-            requirement_text = criteria.get("requirement_text") or criteria.get("requirement")
-            response_text = criteria.get("response_text") or criteria.get("response")
-
-            # 获取该 criteria 的证据
-            evidence = criteria_evidence.get(criteria_id, [])
-            citation_ids_for_criteria = [ev.get("chunk_id") for ev in evidence if ev.get("chunk_id")]
-
-            llm_result = llm_score_criteria(
-                criteria_id=criteria_id,
-                requirement_text=str(requirement_text or ""),
-                evidence_chunks=evidence,
-                max_score=max_score,
-                criteria_name=str(criteria_name),
-                hard_constraint_pass=hard_constraint_pass,
-            )
-            score = llm_result["score"]
-            hard_pass = llm_result.get("hard_pass", True) and hard_constraint_pass
-            reason = llm_result.get("reason", "evaluation completed")
-            confidence = float(llm_result.get("confidence", 0.85 if hard_pass else 0.65))
-
-            # SSOT: citations 为对象数组，无 quote
-            resolved_citations = self._resolve_citations_batch(citation_ids_for_criteria, include_quote=False)
-
-            criteria_results.append(
-                {
-                    "criteria_id": criteria_id,
-                    "criteria_name": str(criteria_name),
-                    "requirement_text": str(requirement_text) if requirement_text is not None else None,
-                    "response_text": str(response_text) if response_text is not None else None,
-                    "score": score,
-                    "max_score": max_score,
-                    "hard_pass": hard_pass,
-                    "reason": reason,
-                    "citations": resolved_citations,
-                    "confidence": confidence,
-                }
-            )
-            if criteria.get("require_citation") and not resolved_citations:
-                unsupported_claims.append(criteria_id)
-
-        resolvable = [cid for cid in citations_all_ids if self.citation_sources.get(cid) is not None]
-        if len(resolvable) < len(citations_all_ids):
-            for missing in set(citations_all_ids) - set(resolvable):
-                unsupported_claims.append(missing)
-        if isinstance(rules, dict):
-            redlines = rules.get("redlines")
-            if isinstance(redlines, list):
-                for item in redlines:
-                    if not isinstance(item, dict):
-                        continue
-                    if item.get("violated") is True:
-                        redline_conflict = True
-                        break
-                    status = str(item.get("status") or "").strip().lower()
-                    if status in {"blocked", "violation", "failed", "conflict"}:
-                        redline_conflict = True
-                        break
-            required_doc_types = rules.get("required_doc_types")
-            if isinstance(required_doc_types, list) and required_doc_types:
-                required = {str(x).lower() for x in required_doc_types}
-                if not required.issubset(include_doc_types_normalized):
-                    redline_conflict = True
-
-        # 使用 criteria_weights 计算总分（不从 criteria_results 取 weight）
-        total_score = 0.0
-        max_total = 0.0
-        for item in criteria_results:
-            cid = item.get("criteria_id", "")
-            w = criteria_weights.get(cid, 1.0)
-            total_score += float(item.get("score", 0.0)) * w
-            max_total += float(item.get("max_score", 0.0)) * w
-        max_total = max_total or 1.0
-        citation_coverage = len(resolvable) / max(len(citations_all_ids), 1)
-        evidence_quality = citation_coverage
-        retrieval_agreement = self._calculate_retrieval_agreement(citations_all_ids)
-        model_stability = 0.85 if hard_constraint_pass else 0.7
-        base_confidence = 0.4 * evidence_quality + 0.3 * retrieval_agreement + 0.3 * model_stability
-        score_calibration = self.strategy_config.get("score_calibration", {})
-        confidence_scale = float(score_calibration.get("confidence_scale", 1.0))
-        score_bias = float(score_calibration.get("score_bias", 0.0))
-        confidence_avg = max(0.0, min(1.0, base_confidence * confidence_scale + score_bias))
-        score_deviation_pct = abs(total_score - max_total) / max_total * 100.0
-        # 收集 HITL 触发原因
-        hitl_reasons: list[str] = []
-        if force_hitl:
-            hitl_reasons.append("force_hitl")
-        if confidence_avg < 0.65:
-            hitl_reasons.append(f"confidence_low ({confidence_avg:.2f} < 0.65)")
-        if citation_coverage < 0.90:
-            hitl_reasons.append(f"citation_coverage_low ({citation_coverage:.2%} < 90%)")
-        if score_deviation_pct > 20.0:
-            hitl_reasons.append(f"score_deviation_high ({score_deviation_pct:.1f}% > 20%)")
-        if redline_conflict:
-            hitl_reasons.append("redline_conflict")
-        if unsupported_claims:
-            hitl_reasons.append("unsupported_claims")
-
-        needs_human_review = bool(hitl_reasons)
-        interrupt_payload = None
-        if needs_human_review:
-            resume_token = f"rt_{uuid.uuid4().hex[:12]}"
-            interrupt_payload = {
-                "type": "human_review",
-                "evaluation_id": evaluation_id,
-                "reasons": hitl_reasons,
-                "suggested_actions": ["approve", "reject", "edit_scores"],
-                "resume_token": resume_token,
-            }
-            self.register_resume_token(
-                evaluation_id=evaluation_id,
-                resume_token=resume_token,
-                tenant_id=tenant_id,
-                reasons=hitl_reasons,
-            )
         self._persist_job(
             job={
                 "job_id": job_id,
@@ -1051,29 +869,7 @@ class InMemoryStore:
                 },
                 "payload": payload,
                 "last_error": None,
-                "errors": [],  # SSOT: errors array
-            }
-        )
-        self._persist_evaluation_report(
-            report={
-                "evaluation_id": evaluation_id,
-                "supplier_id": payload.get("supplier_id", ""),
-                "total_score": total_score if hard_constraint_pass else 0.0,
-                "confidence": confidence_avg,
-                "citation_coverage": citation_coverage,
-                "score_deviation_pct": round(score_deviation_pct, 2),
-                "risk_level": "medium" if hard_constraint_pass else "high",
-                "criteria_results": criteria_results,
-                "citations": self._resolve_citations_batch(
-                    citations_all_ids, include_quote=True
-                ),  # SSOT: citations 为对象数组
-                "needs_human_review": needs_human_review,
-                "trace_id": payload.get("trace_id") or "",
-                "tenant_id": tenant_id,
-                "thread_id": thread_id,
-                "interrupt": interrupt_payload,
-                "unsupported_claims": unsupported_claims,
-                "redline_conflict": redline_conflict,
+                "errors": [],
             }
         )
         self.append_outbox_event(
@@ -2566,7 +2362,7 @@ class InMemoryStore:
         degrade_reason = ""
         if enable_rerank:
             try:
-                items = self._rerank_items(items)
+                items = self._rerank_items(items, query=query)
             except Exception:
                 degraded = True
                 degrade_reason = "rerank_failed"
@@ -2588,6 +2384,9 @@ class InMemoryStore:
             "rewrite_reason": rewrite["rewrite_reason"],
             "constraints_preserved": rewrite["constraints_preserved"],
             "constraint_diff": rewrite["constraint_diff"],
+            "entity_constraints": rewrite.get("entity_constraints", []),
+            "numeric_constraints": rewrite.get("numeric_constraints", []),
+            "time_constraints": rewrite.get("time_constraints", []),
             "query_type": query_type,
             "selected_mode": selected_mode,
             "index_name": index_name,

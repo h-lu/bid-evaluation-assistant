@@ -47,6 +47,9 @@ lightrag = [
 openai = [
   "openai>=1.30.0,<2.0.0",
 ]
+budget = [
+  "tiktoken>=0.7.0,<1.0.0",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

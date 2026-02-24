@@ -225,6 +225,12 @@ def test_retrieval_query_exposes_rewrite_and_constraint_fields(client):
     assert data["rewrite_reason"] == "normalize_whitespace_and_constraints"
     assert data["constraints_preserved"] is True
     assert data["constraint_diff"] == []
+    assert "entity_constraints" in data
+    assert "numeric_constraints" in data
+    assert "time_constraints" in data
+    assert isinstance(data["entity_constraints"], list)
+    assert isinstance(data["numeric_constraints"], list)
+    assert isinstance(data["time_constraints"], list)
 
 
 def test_retrieval_query_degrades_when_rerank_raises(client, monkeypatch):
