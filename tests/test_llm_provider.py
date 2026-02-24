@@ -120,7 +120,13 @@ class TestIsRealLlmAvailable:
 
 
 class TestLlmScoreCriteria:
-    def test_fallback_to_mock_when_mock_enabled(self):
+    def test_fallback_to_mock_when_mock_enabled(self, monkeypatch):
+        # Ensure mock is enabled for this test
+        monkeypatch.setenv("MOCK_LLM_ENABLED", "true")
+        from app import mock_llm
+        import importlib
+        importlib.reload(mock_llm)
+
         result = llm_score_criteria(
             criteria_id="delivery",
             requirement_text="交付时间不超过30天",
@@ -136,7 +142,13 @@ class TestLlmScoreCriteria:
         assert "reason" in result
         assert 0 <= result["score"] <= 20.0
 
-    def test_no_evidence_returns_result(self):
+    def test_no_evidence_returns_result(self, monkeypatch):
+        # Ensure mock is enabled for this test
+        monkeypatch.setenv("MOCK_LLM_ENABLED", "true")
+        from app import mock_llm
+        import importlib
+        importlib.reload(mock_llm)
+
         result = llm_score_criteria(
             criteria_id="price",
             requirement_text="报价合理",
@@ -146,7 +158,13 @@ class TestLlmScoreCriteria:
         assert "score" in result
         assert result["max_score"] == 10.0
 
-    def test_multiple_evidence_chunks(self):
+    def test_multiple_evidence_chunks(self, monkeypatch):
+        # Ensure mock is enabled for this test
+        monkeypatch.setenv("MOCK_LLM_ENABLED", "true")
+        from app import mock_llm
+        import importlib
+        importlib.reload(mock_llm)
+
         evidence = [
             {"chunk_id": f"ck_{i}", "text": f"证据 {i} 的内容", "page": i, "score_raw": 0.8}
             for i in range(5)

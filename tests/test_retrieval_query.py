@@ -21,7 +21,8 @@ class TestIndexNameInjectionPrevention:
 
     def test_accept_valid_ids(self):
         name = store._retrieval_index_name(tenant_id="tenant-1", project_id="prj_abc-02")
-        assert name == "lightrag:tenant-1:prj_abc-02"
+        # Index name uses underscore separator for Chroma compatibility (chroma requires [a-zA-Z0-9._-]+)
+        assert name == "lightrag_tenant-1_prj_abc-02"
 
     def test_cross_tenant_drop_metric_increments(self, monkeypatch):
         """When external service returns cross-tenant data, metric counter increments."""
@@ -128,7 +129,7 @@ def test_retrieval_query_selects_mode_for_relation_and_filters_scope(client):
     assert resp.status_code == 200
     data = resp.json()["data"]
     assert data["selected_mode"] == "global"
-    assert data["index_name"] == "lightrag:tenant_a:prj_a"
+    assert data["index_name"] == "lightrag_tenant_a_prj_a"
     assert data["degraded"] is False
     assert data["constraints_preserved"] is True
     assert data["constraint_diff"] == []
@@ -197,7 +198,7 @@ def test_retrieval_preview_returns_minimal_evidence_fields(client):
     assert resp.status_code == 200
     data = resp.json()["data"]
     assert data["selected_mode"] == "global"
-    assert data["index_name"] == "lightrag:tenant_a:prj_a"
+    assert data["index_name"] == "lightrag_tenant_a_prj_a"
     assert data["total"] == 1
     item = data["items"][0]
     assert item["chunk_id"] == "ck_retr_a1"
@@ -318,7 +319,7 @@ def test_retrieval_query_uses_lightrag_index_prefix_and_filters_metadata(client,
 
     def fake_post_json(*, endpoint: str, payload: dict[str, object], timeout_s: float) -> object:
         assert endpoint.endswith("/query")
-        assert payload["index_name"] == "lightragx:tenant_a:prj_a"
+        assert payload["index_name"] == "lightragx_tenant_a_prj_a"
         assert timeout_s > 0
         return {
             "items": [
@@ -368,6 +369,6 @@ def test_retrieval_query_uses_lightrag_index_prefix_and_filters_metadata(client,
     )
     assert resp.status_code == 200
     data = resp.json()["data"]
-    assert data["index_name"] == "lightragx:tenant_a:prj_a"
+    assert data["index_name"] == "lightragx_tenant_a_prj_a"
     assert data["total"] == 1
     assert data["items"][0]["chunk_id"] == "ck_retr_a1"
