@@ -224,7 +224,7 @@ def test_retrieval_preview_returns_minimal_evidence_fields(client):
         assert item["document_id"] == "doc_a1"
         assert item["page"] == 3
         assert item["bbox"] == [10, 20, 120, 160]
-    assert item["text"] == "delivery period is 30 days"
+        assert item["text"] == "delivery period is 30 days"
 
 
 def test_retrieval_preview_uses_hybrid_for_summary(client):
