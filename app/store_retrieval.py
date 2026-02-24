@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
 from typing import Any
 from urllib import request
 from urllib.error import URLError
@@ -9,14 +11,32 @@ from urllib.error import URLError
 from app.errors import ApiError
 from app.sql_whitelist import query_structured, validate_structured_filters
 
+logger = logging.getLogger(__name__)
+
+_SAFE_ID_RE = re.compile(r"^[a-zA-Z0-9_\-]+$")
+
 
 class StoreRetrievalMixin:
     @staticmethod
     def _lightrag_index_prefix() -> str:
         return os.environ.get("LIGHTRAG_INDEX_PREFIX", "lightrag").strip() or "lightrag"
 
+    @staticmethod
+    def _validate_index_segment(value: str, field_name: str) -> str:
+        if not value or not _SAFE_ID_RE.match(value):
+            raise ApiError(
+                code="REQ_VALIDATION_FAILED",
+                message=f"Invalid {field_name} for index name: must match [a-zA-Z0-9_-]+",
+                error_class="client",
+                retryable=False,
+                http_status=400,
+            )
+        return value
+
     def _retrieval_index_name(self, *, tenant_id: str, project_id: str) -> str:
         prefix = self._lightrag_index_prefix()
+        self._validate_index_segment(tenant_id, "tenant_id")
+        self._validate_index_segment(project_id, "project_id")
         return f"{prefix}:{tenant_id}:{project_id}"
 
     @staticmethod
@@ -123,6 +143,10 @@ class StoreRetrievalMixin:
             try:
                 result = self._post_json(endpoint=endpoint, payload=payload, timeout_s=timeout_s)
                 if not isinstance(result, dict):
+                    logger.warning("external_lightrag_invalid_response type=%s", type(result).__name__)
+                    result = None
+                elif "items" in result and not isinstance(result["items"], list):
+                    logger.warning("external_lightrag_invalid_items type=%s", type(result["items"]).__name__)
                     result = None
             except (TimeoutError, URLError, ValueError, OSError):
                 self.parser_retrieval_metrics["retrieval_lightrag_fail_total"] += 1
@@ -151,6 +175,7 @@ class StoreRetrievalMixin:
         if not isinstance(rows, list):
             return []
         out: list[dict[str, Any]] = []
+        dropped_cross_tenant = 0
         for row in rows:
             if not isinstance(row, dict):
                 continue
@@ -158,10 +183,13 @@ class StoreRetrievalMixin:
             if not isinstance(metadata, dict):
                 metadata = {}
             if metadata.get("tenant_id") != tenant_id:
+                dropped_cross_tenant += 1
                 continue
             if metadata.get("project_id") != project_id:
+                dropped_cross_tenant += 1
                 continue
             if metadata.get("supplier_id") != supplier_id:
+                dropped_cross_tenant += 1
                 continue
             row_doc_type = metadata.get("doc_type")
             if doc_scope and row_doc_type not in set(doc_scope):
@@ -183,6 +211,15 @@ class StoreRetrievalMixin:
             if row.get("text"):
                 entry["text"] = row["text"]
             out.append(entry)
+        if dropped_cross_tenant > 0:
+            logger.warning(
+                "retrieval_post_filter_drop tenant_id=%s project_id=%s dropped=%d",
+                tenant_id, project_id, dropped_cross_tenant,
+            )
+            self.parser_retrieval_metrics["retrieval_cross_tenant_drops_total"] = (
+                self.parser_retrieval_metrics.get("retrieval_cross_tenant_drops_total", 0)
+                + dropped_cross_tenant
+            )
         return out
 
     @staticmethod

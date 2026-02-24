@@ -1,4 +1,61 @@
+import pytest
+
+from app.errors import ApiError
 from app.store import store
+
+
+class TestIndexNameInjectionPrevention:
+    """Validate that tenant_id/project_id with special chars are rejected."""
+
+    def test_reject_colon_in_tenant_id(self):
+        with pytest.raises(ApiError, match="Invalid tenant_id"):
+            store._retrieval_index_name(tenant_id="evil:tenant", project_id="prj_ok")
+
+    def test_reject_slash_in_project_id(self):
+        with pytest.raises(ApiError, match="Invalid project_id"):
+            store._retrieval_index_name(tenant_id="tenant_ok", project_id="prj/../secret")
+
+    def test_reject_empty_tenant_id(self):
+        with pytest.raises(ApiError, match="Invalid tenant_id"):
+            store._retrieval_index_name(tenant_id="", project_id="prj_ok")
+
+    def test_accept_valid_ids(self):
+        name = store._retrieval_index_name(tenant_id="tenant-1", project_id="prj_abc-02")
+        assert name == "lightrag:tenant-1:prj_abc-02"
+
+    def test_cross_tenant_drop_metric_increments(self, monkeypatch):
+        """When external service returns cross-tenant data, metric counter increments."""
+        store.parser_retrieval_metrics["retrieval_cross_tenant_drops_total"] = 0
+        monkeypatch.setenv("LIGHTRAG_DSN", "http://lightrag.local")
+
+        def fake_post_json(*, endpoint, payload, timeout_s):
+            return {
+                "items": [
+                    {
+                        "chunk_id": "ck_alien",
+                        "score_raw": 0.99,
+                        "reason": "should be dropped",
+                        "metadata": {
+                            "tenant_id": "other_tenant",
+                            "project_id": "prj_test",
+                            "supplier_id": "sup_test",
+                        },
+                    }
+                ]
+            }
+
+        monkeypatch.setattr(store, "_post_json", fake_post_json)
+        result = store._query_lightrag(
+            tenant_id="tenant_mine",
+            project_id="prj_test",
+            supplier_id="sup_test",
+            query="test",
+            selected_mode="local",
+            top_k=10,
+            doc_scope=[],
+        )
+        assert result == []
+        assert store.parser_retrieval_metrics["retrieval_cross_tenant_drops_total"] >= 1
 
 
 def _seed_retrieval_sources():
