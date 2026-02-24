@@ -53,6 +53,9 @@ logs/
 .coverage
 htmlcov/
 
+# Ruff
+.ruff_cache/
+
 # Frontend
 node_modules/
 frontend/node_modules/
