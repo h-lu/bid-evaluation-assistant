@@ -1,7 +1,9 @@
 # 对象存储与 WORM 保全规范
 
-> 版本：v2026.02.23-r1  
-> 状态：Active  
+> 版本：v2026.02.23-r1
+> 状态：Verified
+> 实现完成：2026-02-24
+> 验收测试：全部通过
 > 对齐：`docs/plans/2026-02-21-end-to-end-unified-design.md`
 
 ## 1. 目标
@@ -122,3 +124,26 @@ object://local/bea/tenants/tenant_a/reports/ev_x/report.json
 2. `docs/design/2026-02-21-data-model-and-storage-spec.md`
 3. `docs/design/2026-02-21-rest-api-specification.md`
 4. `docs/design/2026-02-22-persistence-and-queue-production-spec.md`
+
+## 11. 实现状态
+
+| 组件 | 文件 | 状态 |
+|------|------|------|
+| LocalObjectStorage | app/object_storage.py | ✅ |
+| S3ObjectStorage | app/object_storage.py | ✅ |
+| Legal Hold Integration | app/store_ops.py | ✅ |
+| Retention Support | app/object_storage.py | ✅ |
+| API Endpoints | app/routes/internal.py | ✅ |
+| Unit Tests | tests/test_object_storage_worm.py | ✅ |
+| API Tests | tests/test_legal_hold_api.py | ✅ |
+| S3 Mock Tests | tests/test_s3_object_storage.py | ✅ |
+
+### SSOT 对齐验证
+
+| SSOT 约束 | 验证状态 |
+|-----------|----------|
+| §2.2 trace_id 贯穿 | ✅ test_cleanup_audit_log_includes_trace_id |
+| §2.2 幂等策略 | ✅ test_worm_mode_idempotent_put |
+| §2.3 legal hold 不可自动清理 | ✅ test_legal_hold_blocks_object_storage_cleanup |
+| §2.3 高风险动作双人复核 | ✅ test_legal_hold_lifecycle_and_cleanup_guard |
+| §7.3 legal hold 违规删除 = 0 | ✅ 全部门禁测试通过 |
