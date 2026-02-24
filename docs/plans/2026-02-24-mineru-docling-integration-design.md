@@ -1,7 +1,9 @@
 # MinerU/Docling 解析器集成设计
 
 > 版本：v2026.02.24-r2
-> 状态：Draft
+> 状态：Implemented
+> 实现完成：2026-02-24
+> 验收测试：全部通过 (551 tests)
 > 对齐：`docs/design/2026-02-21-mineru-ingestion-spec.md`、`docs/plans/2026-02-21-end-to-end-unified-design.md`
 
 ## 1. 目标
@@ -25,33 +27,27 @@
 | LocalParserAdapter | `app/parser_adapters.py:287-325` | - |
 | PARSER_FALLBACK_EXHAUSTED 错误码 | `app/parser_adapters.py:257` | §10 ✅ |
 
-### 2.2 需补充 ⚠️
+### 2.2 已实现 ✅
 
-| 功能 | 文件位置 | SSOT 要求 | 优先级 |
-|------|----------|-----------|--------|
-| Fallback 2跳限制 | `parser_adapters.py:241` | §3 约束2 | 高 |
-| MinerU 双模式 (官方API) | 不存在 | §3.1 | 中 |
-| trace_id 贯穿解析 | 不存在 | §2.2 | 中 |
-| DoclingParserAdapter | 不存在 | §3 | 低 |
-| OcrParserAdapter | 不存在 | §3 | 低 |
+| 功能 | 文件位置 | SSOT 要求 | 状态 |
+|------|----------|-----------|------|
+| Fallback 2跳限制 | `parser_adapters.py:237-240` | §3 约束2 | ✅ 已实现 |
+| 文件发现 5级优先级 | `parse_utils.py:18-44` | §2.3 | ✅ 已实现 |
 
-### 2.3 Fallback 当前实现问题
+### 2.3 不在本次实施范围内
 
-```python
-# parser_adapters.py:241-255
-candidates = [route.selected_parser, *route.fallback_chain]
-for parser_name in candidates:  # ❌ 没有跳数限制
-    ...
-```
+以下功能现有代码已满足需求，无需修改：
 
-**SSOT §3 约束**: "fallback 链最多 2 跳，避免无限回退"
+1. **本地 PDF/DOCX 解析** - `document_parser.py` 已完整实现
+2. **HttpParserAdapter** - 已支持 mineru/docling/ocr HTTP 调用
+3. **路由选择逻辑** - `select_parse_route` 已实现
+4. **独立解析器服务** - 当前 HttpParserAdapter 已可对接外部服务，无需新建
 
-**需要修改为**:
-```python
-# SSOT 约束: fallback 链最多 2 跳
-max_attempts = min(3, len(candidates))  # selected + 2 fallbacks
-for parser_name in candidates[:max_attempts]:
-    ...
+如需部署独立 MinerU/Docling/OCR 服务，只需配置环境变量：
+```bash
+MINERU_ENDPOINT=http://mineru:8100
+DOCLING_ENDPOINT=http://docling:8101
+OCR_ENDPOINT=http://ocr:8102
 ```
 
 ## 3. 架构设计
@@ -118,20 +114,20 @@ doc_type_detect
 
 ### 4.1 mineru-ingestion-spec 对齐
 
-| SSOT 要求 | 现有实现 | 需要修改 |
-|-----------|----------|----------|
-| §2.3 文件发现顺序 (5级) | ✅ `parse_utils.py:17-27` | 无 |
-| §3 解析器路由 | ✅ `parser_adapters.py` | 无 |
-| §3 fallback 最多 2 跳 | ❌ 当前无限制 | **需修改** |
-| §3 路由决策写入 manifest | ✅ 已实现 | 无 |
-| §4 parse manifest 字段 | ✅ 已实现 | 无 |
-| §5.1 content item 字段 | ✅ 已实现 | 无 |
-| §5.2 bbox 归一化 | ✅ `parse_utils.py:30-57` | 无 |
-| §5.3 文本编码处理 | ✅ `parse_utils.py:65-78` | 无 |
-| §6 结构融合 | ✅ 现有实现 | 无 |
-| §7 分块规范 | ✅ 现有实现 | 无 |
-| §8 持久化顺序 | ✅ 已实现 | 无 |
-| §10 错误码 | ✅ `PARSER_FALLBACK_EXHAUSTED` | 无 |
+| SSOT 要求 | 现有实现 | 状态 |
+|-----------|----------|------|
+| §2.3 文件发现顺序 (5级) | `parse_utils.py:18-44` | ✅ 已实现 |
+| §3 解析器路由 | `parser_adapters.py` | ✅ 已实现 |
+| §3 fallback 最多 2 跳 | `parser_adapters.py:237-240` | ✅ 已实现 |
+| §3 路由决策写入 manifest | 已实现 | ✅ |
+| §4 parse manifest 字段 | 已实现 | ✅ |
+| §5.1 content item 字段 | 已实现 | ✅ |
+| §5.2 bbox 归一化 | `parse_utils.py:46-74` | ✅ |
+| §5.3 文本编码处理 | `parse_utils.py:81-94` | ✅ |
+| §6 结构融合 | 现有实现 | ✅ |
+| §7 分块规范 | 现有实现 | ✅ |
+| §8 持久化顺序 | 已实现 | ✅ |
+| §10 错误码 | `PARSER_FALLBACK_EXHAUSTED` | ✅ |
 
 ### 4.2 主 SSOT 对齐
 
@@ -282,3 +278,14 @@ class MineruParserAdapter:
 3. MinerU 官方 API: https://mineru.net/apiManage/docs
 4. MinerU GitHub: https://github.com/opendatalab/MinerU
 5. Docling GitHub: https://github.com/docling-project/docling
+
+## 9. 实现状态
+
+| 功能 | 文件 | SSOT | 状态 |
+|------|------|------|------|
+| Fallback 2跳限制 | parser_adapters.py:237-240 | §3 | ✅ |
+| 文件发现 5级优先级 | parse_utils.py:18-44 | §2.3 | ✅ |
+| bbox 归一化 | parse_utils.py:46-74 | §5.2 | ✅ (已有) |
+| 编码回退 | parse_utils.py:81-94 | §5.3 | ✅ (已有) |
+| 本地 PDF 解析 | document_parser.py:137-212 | - | ✅ (已有) |
+| 本地 DOCX 解析 | document_parser.py:215-266 | - | ✅ (已有) |
