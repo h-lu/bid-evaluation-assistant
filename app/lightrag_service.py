@@ -107,14 +107,15 @@ def _embedding_fn():
         return (os.environ.get("EMBEDDING_MODEL") or os.environ.get("EMBEDDING_MODEL_NAME") or fallback).strip()
 
     if backend == "auto":
+        api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+        if api_key:
+            model = _emb_model()
+            _log.info("auto embedding: using OpenAI-compatible API (%s)", model)
+            return OpenAICompatEmbeddingFunction(model=model)
         if SentenceTransformerEmbeddingFunction is not None:
             model_name = _emb_model("all-MiniLM-L6-v2")
             _log.info("auto embedding: using sentence-transformers (%s)", model_name)
             return SentenceTransformerEmbeddingFunction(model_name=model_name)
-        if os.environ.get("OPENAI_API_KEY", "").strip():
-            model = _emb_model()
-            _log.info("auto embedding: using OpenAI (%s)", model)
-            return OpenAICompatEmbeddingFunction(model=model)
         dim = int(os.environ.get("EMBEDDING_DIM", "128"))
         _log.warning(
             "auto embedding: sentence-transformers not installed and OPENAI_API_KEY not set; "

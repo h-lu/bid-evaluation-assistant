@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from unittest import mock
+
 import pytest
 
-from app.reranker import _rerank_simple, _sigmoid, _tokenize, rerank_items
+from app.reranker import _rerank_api, _rerank_simple, _sigmoid, _tokenize, rerank_items
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -155,3 +157,103 @@ class TestRerankItems:
         result = rerank_items("q", items, backend="cross-encoder")
         assert len(result) == 3
         assert all("score_rerank" in it for it in result)
+
+
+# ---------------------------------------------------------------------------
+# API rerank backends (Cohere / Jina)
+# ---------------------------------------------------------------------------
+
+class _FakeResponse:
+    status_code = 200
+
+    def __init__(self, data: dict):
+        self._data = data
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._data
+
+
+class TestRerankApi:
+    def test_cohere_api_rerank_success(self, monkeypatch):
+        monkeypatch.setenv("COHERE_API_KEY", "test-key")
+        items = _make_items(3)
+        fake_resp = _FakeResponse({
+            "results": [
+                {"index": 2, "relevance_score": 0.95},
+                {"index": 0, "relevance_score": 0.80},
+                {"index": 1, "relevance_score": 0.60},
+            ]
+        })
+        with mock.patch("httpx.post", return_value=fake_resp) as mock_post:
+            result = _rerank_api("test query", items, backend="cohere")
+
+        mock_post.assert_called_once()
+        call_kwargs = mock_post.call_args
+        assert "api.cohere.com" in call_kwargs.args[0]
+        assert call_kwargs.kwargs["json"]["model"] == "rerank-v3.5"
+
+        assert len(result) == 3
+        assert result[0]["chunk_id"] == "ck_2"
+        assert result[0]["score_rerank"] == 0.95
+
+    def test_jina_api_rerank_success(self, monkeypatch):
+        monkeypatch.setenv("JINA_API_KEY", "test-key")
+        items = _make_items(2)
+        fake_resp = _FakeResponse({
+            "results": [
+                {"index": 1, "relevance_score": 0.9},
+                {"index": 0, "relevance_score": 0.3},
+            ]
+        })
+        with mock.patch("httpx.post", return_value=fake_resp) as mock_post:
+            result = _rerank_api("query", items, backend="jina")
+
+        assert "api.jina.ai" in mock_post.call_args.args[0]
+        assert result[0]["chunk_id"] == "ck_1"
+        assert result[0]["score_rerank"] == 0.9
+
+    def test_api_rerank_no_key_falls_back(self, monkeypatch):
+        monkeypatch.delenv("COHERE_API_KEY", raising=False)
+        items = _make_items(3)
+        result = _rerank_api("query", items, backend="cohere")
+        assert len(result) == 3
+        assert all("score_rerank" in it for it in result)
+
+    def test_api_rerank_http_error_falls_back(self, monkeypatch):
+        monkeypatch.setenv("COHERE_API_KEY", "test-key")
+        items = _make_items(3)
+        with mock.patch("httpx.post", side_effect=Exception("connection failed")):
+            result = _rerank_api("query", items, backend="cohere")
+        assert len(result) == 3
+        assert all("score_rerank" in it for it in result)
+
+    def test_api_rerank_custom_model(self, monkeypatch):
+        monkeypatch.setenv("JINA_API_KEY", "test-key")
+        monkeypatch.setenv("JINA_RERANK_MODEL", "jina-reranker-v3-custom")
+        items = _make_items(2)
+        fake_resp = _FakeResponse({
+            "results": [
+                {"index": 0, "relevance_score": 0.5},
+                {"index": 1, "relevance_score": 0.4},
+            ]
+        })
+        with mock.patch("httpx.post", return_value=fake_resp) as mock_post:
+            _rerank_api("q", items, backend="jina")
+        assert mock_post.call_args.kwargs["json"]["model"] == "jina-reranker-v3-custom"
+
+    def test_rerank_items_dispatches_to_api(self, monkeypatch):
+        monkeypatch.setenv("COHERE_API_KEY", "test-key")
+        items = _make_items(2)
+        fake_resp = _FakeResponse({
+            "results": [
+                {"index": 0, "relevance_score": 0.8},
+                {"index": 1, "relevance_score": 0.6},
+            ]
+        })
+        with mock.patch("httpx.post", return_value=fake_resp):
+            result = rerank_items("q", items, backend="cohere")
+        assert len(result) == 2
+        assert result[0]["score_rerank"] == 0.8

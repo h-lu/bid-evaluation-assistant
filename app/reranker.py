@@ -3,7 +3,7 @@
 Backends controlled by RERANK_BACKEND env var:
   - simple         : lightweight TF-IDF reranker with CJK support
   - cross-encoder  : local cross-encoder model via sentence-transformers
-  - cohere/jina    : API-based rerank (placeholder)
+  - cohere/jina    : API-based rerank (Cohere v2 / Jina v1)
 
 Cross-encoder timeout controlled by RERANK_TIMEOUT_MS (default 2000).
 """
@@ -168,9 +168,78 @@ def _rerank_cross_encoder(query: str, items: list[dict[str, Any]]) -> list[dict[
 def _rerank_api(
     query: str, items: list[dict[str, Any]], *, backend: str = "cohere"
 ) -> list[dict[str, Any]]:
-    """Placeholder for API-based rerankers (Cohere / Jina)."""
-    logger.warning("API rerank backend '%s' not yet implemented; falling back to simple", backend)
-    return _rerank_simple(query, items)
+    """API-based rerankers via Cohere or Jina.
+
+    Env vars:
+      COHERE_API_KEY / JINA_API_KEY   — authentication
+      RERANK_MODEL_NAME               — model override (optional, auto-detected per backend)
+      RERANK_API_TIMEOUT_MS           — HTTP timeout (default 5000)
+    """
+    try:
+        import httpx
+    except ImportError:
+        logger.warning("httpx not installed; falling back to simple reranker")
+        return _rerank_simple(query, items)
+
+    if backend == "cohere":
+        api_key = os.environ.get("COHERE_API_KEY", "").strip()
+        url = "https://api.cohere.com/v2/rerank"
+        default_model = "rerank-v3.5"
+        model_env = "COHERE_RERANK_MODEL"
+    else:
+        api_key = os.environ.get("JINA_API_KEY", "").strip()
+        url = "https://api.jina.ai/v1/rerank"
+        default_model = "jina-reranker-v2-base-multilingual"
+        model_env = "JINA_RERANK_MODEL"
+
+    if not api_key:
+        logger.warning(
+            "No API key for %s reranker (set %s_API_KEY); falling back to simple",
+            backend, backend.upper(),
+        )
+        return _rerank_simple(query, items)
+
+    model = os.environ.get(model_env, "").strip() or default_model
+    timeout_ms = int(os.environ.get("RERANK_API_TIMEOUT_MS", "5000"))
+    documents = [str(item.get("text", "")) for item in items]
+
+    try:
+        resp = httpx.post(
+            url,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model,
+                "query": query,
+                "documents": documents,
+                "top_n": len(documents),
+            },
+            timeout=timeout_ms / 1000.0,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception:
+        logger.warning(
+            "%s rerank API call failed; falling back to simple reranker",
+            backend,
+            exc_info=True,
+        )
+        return _rerank_simple(query, items)
+
+    score_map: dict[int, float] = {}
+    for result in data.get("results", []):
+        idx = int(result["index"])
+        score_map[idx] = float(result["relevance_score"])
+
+    ranked: list[dict[str, Any]] = []
+    for i, item in enumerate(items):
+        copied = dict(item)
+        copied["score_rerank"] = round(score_map.get(i, 0.0), 4)
+        ranked.append(copied)
+
+    return sorted(ranked, key=lambda x: float(x.get("score_rerank", 0.0)), reverse=True)
 
 
 # ---------------------------------------------------------------------------

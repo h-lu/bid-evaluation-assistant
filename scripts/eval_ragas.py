@@ -21,13 +21,18 @@ Aligned with:
 
 from __future__ import annotations
 
-from dotenv import load_dotenv
-load_dotenv()
+import os
 
-import argparse
+os.environ.setdefault("RAGAS_DO_NOT_TRACK", "true")
+
+import argparse  # noqa: I001
 import json
 import sys
 from pathlib import Path
+
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from app.ragas_evaluator import (
     EvalSample,
