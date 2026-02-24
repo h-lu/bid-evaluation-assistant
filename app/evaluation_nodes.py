@@ -9,6 +9,7 @@ Aligned with SSOT langgraph-agent-workflow-spec §2-§4:
 from __future__ import annotations
 
 import logging
+import math
 import uuid
 from typing import Any, TypedDict
 
@@ -60,6 +61,8 @@ class EvaluationState(TypedDict, total=False):
     # output
     report: dict[str, Any]
     status: str
+    # resume (HITL)
+    resume_payload: dict[str, Any]
     # runtime
     retry_count: int
     errors: list[dict[str, Any]]
@@ -277,7 +280,7 @@ def node_quality_gate(state: EvaluationState, *, store: Any) -> dict[str, Any]:
     citation_coverage = len(resolvable) / max(len(citations_all_ids), 1)
     evidence_quality = citation_coverage
     retrieval_agreement = store._calculate_retrieval_agreement(citations_all_ids)
-    model_stability = 0.85 if hard_constraint_pass else 0.7
+    model_stability = _compute_model_stability(criteria_results, hard_constraint_pass)
     base_confidence = 0.4 * evidence_quality + 0.3 * retrieval_agreement + 0.3 * model_stability
 
     score_calibration = store.strategy_config.get("score_calibration", {})
@@ -331,6 +334,19 @@ def node_quality_gate(state: EvaluationState, *, store: Any) -> dict[str, Any]:
 
 def node_finalize_report(state: EvaluationState, *, store: Any) -> dict[str, Any]:
     """Assemble the evaluation report dict.  No side effects."""
+    criteria_results = [
+        dict(cr) for cr in state.get("criteria_results", [])
+    ]
+
+    resume_payload = state.get("resume_payload") or {}
+    edited_scores: dict[str, Any] = resume_payload.get("edited_scores", {})
+    if edited_scores:
+        for cr in criteria_results:
+            cid = cr.get("criteria_id", "")
+            if cid in edited_scores:
+                cr["score"] = float(edited_scores[cid])
+                cr["human_edited"] = True
+
     report = {
         "evaluation_id": state["evaluation_id"],
         "supplier_id": state.get("supplier_id", ""),
@@ -339,7 +355,7 @@ def node_finalize_report(state: EvaluationState, *, store: Any) -> dict[str, Any
         "citation_coverage": state.get("citation_coverage", 0.0),
         "score_deviation_pct": state.get("score_deviation_pct", 0.0),
         "risk_level": "medium" if state.get("hard_constraint_pass", True) else "high",
-        "criteria_results": state.get("criteria_results", []),
+        "criteria_results": criteria_results,
         "citations": store._resolve_citations_batch(
             state.get("citations_all_ids", []), include_quote=True,
         ),
@@ -365,6 +381,35 @@ def node_persist_result(state: EvaluationState, *, store: Any) -> dict[str, Any]
 # ---------------------------------------------------------------------------
 # Helpers (internal)
 # ---------------------------------------------------------------------------
+
+def _compute_model_stability(
+    criteria_results: list[dict[str, Any]],
+    hard_constraint_pass: bool,
+) -> float:
+    """Derive model_stability from score coefficient of variation.
+
+    With >= 2 scores: stability = clamp(1.0 - CV, 0.5, 1.0).
+    With < 2 scores: default 0.75.
+    If hard_constraint_pass is False, apply a 0.15 penalty (floor 0.5).
+    """
+    scores = [float(r["score"]) for r in criteria_results if "score" in r]
+    if len(scores) >= 2:
+        mean = sum(scores) / len(scores)
+        if mean > 0:
+            variance = sum((s - mean) ** 2 for s in scores) / len(scores)
+            std = math.sqrt(variance)
+            cv = std / mean
+        else:
+            cv = 0.0
+        stability = max(0.5, min(1.0, 1.0 - cv))
+    else:
+        stability = 0.75
+
+    if not hard_constraint_pass:
+        stability = max(0.5, stability - 0.15)
+
+    return stability
+
 
 def _register_citation_sources(
     *,

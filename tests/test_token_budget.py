@@ -7,20 +7,23 @@ import pytest
 from app.token_budget import (
     MAX_EVIDENCE_PER_CRITERIA,
     MIN_EVIDENCE_PER_CRITERIA,
+    _dedup_by_document,
     apply_report_budget,
     count_tokens,
     trim_evidence_to_budget,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_evidence(n: int, text_len: int = 200, base_score: float = 0.5) -> list[dict]:
+def _make_evidence(
+    n: int, text_len: int = 200, base_score: float = 0.5, doc_id: str | None = None,
+) -> list[dict]:
     return [
         {
             "chunk_id": f"ck_{i}",
+            "document_id": doc_id or f"doc_{i}",
             "score_raw": round(base_score + 0.05 * i, 3),
             "text": f"x{'あ' * text_len}",
             "page": 1,
@@ -125,3 +128,59 @@ class TestApplyReportBudget:
         }
         result = apply_report_budget(data, max_tokens=100_000)
         assert set(result.keys()) == {"c1", "c2", "c3"}
+
+
+# ---------------------------------------------------------------------------
+# _dedup_by_document (P1-6: redundant source trimming)
+# ---------------------------------------------------------------------------
+
+class TestDedupByDocument:
+    def test_removes_duplicates_keeps_highest(self):
+        items = [
+            {"chunk_id": "a", "document_id": "d1", "score_raw": 0.9},
+            {"chunk_id": "b", "document_id": "d1", "score_raw": 0.8},
+            {"chunk_id": "c", "document_id": "d2", "score_raw": 0.7},
+        ]
+        result = _dedup_by_document(items)
+        assert len(result) == 2
+        ids = {r["chunk_id"] for r in result}
+        assert "a" in ids
+        assert "c" in ids
+
+    def test_no_document_id_kept(self):
+        items = [
+            {"chunk_id": "a", "score_raw": 0.9},
+            {"chunk_id": "b", "score_raw": 0.8},
+        ]
+        result = _dedup_by_document(items)
+        assert len(result) == 2
+
+    def test_retains_duplicates_to_meet_minimum(self):
+        items = [
+            {"chunk_id": "a", "document_id": "d1", "score_raw": 0.9},
+            {"chunk_id": "b", "document_id": "d1", "score_raw": 0.8},
+        ]
+        result = _dedup_by_document(items)
+        assert len(result) >= MIN_EVIDENCE_PER_CRITERIA
+
+    def test_all_unique_documents_unchanged(self):
+        items = [
+            {"chunk_id": "a", "document_id": "d1", "score_raw": 0.9},
+            {"chunk_id": "b", "document_id": "d2", "score_raw": 0.8},
+            {"chunk_id": "c", "document_id": "d3", "score_raw": 0.7},
+        ]
+        result = _dedup_by_document(items)
+        assert len(result) == 3
+
+
+class TestTrimEvidenceDedup:
+    def test_trim_deduplicates_same_document(self):
+        ev = [
+            {"chunk_id": "a", "document_id": "d1", "score_raw": 0.9, "text": "short"},
+            {"chunk_id": "b", "document_id": "d1", "score_raw": 0.8, "text": "short"},
+            {"chunk_id": "c", "document_id": "d2", "score_raw": 0.7, "text": "short"},
+            {"chunk_id": "d", "document_id": "d3", "score_raw": 0.6, "text": "short"},
+        ]
+        result = trim_evidence_to_budget(ev, max_tokens=100_000)
+        doc_ids = [r["document_id"] for r in result]
+        assert doc_ids.count("d1") == 1

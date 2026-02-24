@@ -1,11 +1,11 @@
-"""Constraint extraction from queries: entity, numeric, time.
+"""Constraint extraction from queries.
 
 Spec: retrieval-and-scoring-spec §3.2
   1. entity_constraints
   2. numeric_constraints
   3. time_constraints
-  4. must_include_terms  (handled externally)
-  5. must_exclude_terms  (handled externally)
+  4. must_include_terms
+  5. must_exclude_terms
 """
 
 from __future__ import annotations
@@ -14,12 +14,14 @@ import re
 from typing import Any
 
 
-def extract_constraints(query: str) -> dict[str, list[dict[str, Any]]]:
+def extract_constraints(query: str) -> dict[str, Any]:
     """Extract structured constraints from *query*."""
     return {
         "entity_constraints": _extract_entities(query),
         "numeric_constraints": _extract_numerics(query),
         "time_constraints": _extract_times(query),
+        "must_include_terms": _extract_must_include(query),
+        "must_exclude_terms": _extract_must_exclude(query),
     }
 
 
@@ -61,10 +63,14 @@ def _extract_entities(query: str) -> list[dict[str, str]]:
 _AMOUNT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(万元|亿元|元|万)")
 _PERCENT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*%")
 _RANGE_RE = re.compile(r"(\d+(?:\.\d+)?)\s*[~\-到至]\s*(\d+(?:\.\d+)?)")
-_MIN_BOUND_RE = re.compile(r"(?:不少于|不低于|至少|大于等于|>=?)\s*(\d+(?:\.\d+)?)")
-_MAX_BOUND_RE = re.compile(r"(?:不超过|不高于|最多|小于等于|<=?)\s*(\d+(?:\.\d+)?)")
+_MIN_BOUND_RE = re.compile(
+    r"(?:不少于|不低于|至少|大于等于|>=?)\s*(\d+(?:\.\d+)?)\s*(万元|亿元|元|万|亿)?"
+)
+_MAX_BOUND_RE = re.compile(
+    r"(?:不超过|不高于|最多|小于等于|<=?)\s*(\d+(?:\.\d+)?)\s*(万元|亿元|元|万|亿)?"
+)
 
-_UNIT_MULTIPLIER = {"万元": 10_000, "万": 10_000, "亿元": 100_000_000, "元": 1}
+_UNIT_MULTIPLIER = {"万元": 10_000, "万": 10_000, "亿元": 100_000_000, "亿": 100_000_000, "元": 1}
 
 
 def _extract_numerics(query: str) -> list[dict[str, Any]]:
@@ -92,15 +98,17 @@ def _extract_numerics(query: str) -> list[dict[str, Any]]:
             "raw": m.group(),
         })
     for m in _MIN_BOUND_RE.finditer(query):
+        val = float(m.group(1)) * _UNIT_MULTIPLIER.get(m.group(2) or "", 1)
         numerics.append({
             "type": "min_bound",
-            "value": float(m.group(1)),
+            "value": val,
             "raw": m.group(),
         })
     for m in _MAX_BOUND_RE.finditer(query):
+        val = float(m.group(1)) * _UNIT_MULTIPLIER.get(m.group(2) or "", 1)
         numerics.append({
             "type": "max_bound",
-            "value": float(m.group(1)),
+            "value": val,
             "raw": m.group(),
         })
     return numerics
@@ -114,6 +122,12 @@ _ISO_DATE_RE = re.compile(r"(\d{4})[/\-](\d{1,2})[/\-](\d{1,2})")
 _CN_DATE_RE = re.compile(r"(\d{4})年(\d{1,2})月(?:(\d{1,2})日)?")
 _DURATION_RE = re.compile(r"(\d+)\s*(?:个)?(天|日|周|月|年)")
 _DEADLINE_RE = re.compile(r"(\d+)\s*(?:个)?(?:工作日|天|日|月|年)\s*(?:以?内|之内)")
+_RELATIVE_TIME_RE = re.compile(r"近(\d+|[一二两三四五六七八九十]+)(?:个)?(年|月)")
+
+_CN_NUM_MAP: dict[str, int] = {
+    "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
+    "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
+}
 
 
 def _extract_times(query: str) -> list[dict[str, Any]]:
@@ -148,4 +162,48 @@ def _extract_times(query: str) -> list[dict[str, Any]]:
                 "unit": m.group(2),
                 "raw": m.group(),
             })
+    for m in _RELATIVE_TIME_RE.finditer(query):
+        num_str = m.group(1)
+        num = int(num_str) if num_str.isdigit() else _CN_NUM_MAP.get(num_str, 0)
+        times.append({
+            "type": "relative_time",
+            "value": num,
+            "unit": m.group(2),
+            "raw": m.group(),
+        })
     return times
+
+
+# ---------------------------------------------------------------------------
+# Must-include / must-exclude term extraction
+# ---------------------------------------------------------------------------
+
+_MUST_INCLUDE_RE = re.compile(
+    r"(?:必须包含|必须有|须具备|应具备|须有|应有|要求有|需要)"
+    r"([^，。；！？\n]+)"
+)
+_MUST_EXCLUDE_RE = re.compile(
+    r"(?:不得包含|不得有|禁止|不允许|排除)"
+    r"([^，。；！？\n]+)"
+)
+_TERM_SPLIT_RE = re.compile(r"[、,]\s*")
+
+
+def _extract_must_include(query: str) -> list[str]:
+    terms: list[str] = []
+    for m in _MUST_INCLUDE_RE.finditer(query):
+        for t in _TERM_SPLIT_RE.split(m.group(1).strip()):
+            t = t.strip()
+            if t:
+                terms.append(t)
+    return terms
+
+
+def _extract_must_exclude(query: str) -> list[str]:
+    terms: list[str] = []
+    for m in _MUST_EXCLUDE_RE.finditer(query):
+        for t in _TERM_SPLIT_RE.split(m.group(1).strip()):
+            t = t.strip()
+            if t:
+                terms.append(t)
+    return terms

@@ -63,6 +63,8 @@ def trim_evidence_to_budget(
     )
     ranked = ranked[:MAX_EVIDENCE_PER_CRITERIA]
 
+    ranked = _dedup_by_document(ranked)
+
     result: list[dict[str, Any]] = []
     total = 0
     for item in ranked:
@@ -72,6 +74,35 @@ def trim_evidence_to_budget(
         result.append(item)
         total += tokens
     return result
+
+
+def _dedup_by_document(ranked: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Remove redundant sources: keep only the highest-scored item per document_id.
+
+    Items are assumed to be pre-sorted by score_raw descending.
+    If dedup would leave fewer than MIN_EVIDENCE_PER_CRITERIA items, extra
+    duplicates are retained (in score order) to meet the minimum.
+    """
+    seen_docs: dict[str, int] = {}
+    kept: list[dict[str, Any]] = []
+    deferred: list[dict[str, Any]] = []
+
+    for item in ranked:
+        doc_id = item.get("document_id")
+        if doc_id is None:
+            kept.append(item)
+            continue
+        if doc_id not in seen_docs:
+            seen_docs[doc_id] = 1
+            kept.append(item)
+        else:
+            deferred.append(item)
+
+    if len(kept) < MIN_EVIDENCE_PER_CRITERIA:
+        needed = MIN_EVIDENCE_PER_CRITERIA - len(kept)
+        kept.extend(deferred[:needed])
+
+    return kept
 
 
 def apply_report_budget(

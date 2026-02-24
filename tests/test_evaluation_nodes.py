@@ -6,6 +6,7 @@ import pytest
 
 from app.evaluation_nodes import (
     EvaluationState,
+    _compute_model_stability,
     node_evaluate_rules,
     node_finalize_report,
     node_load_context,
@@ -229,3 +230,105 @@ class TestRunSequentially:
         assert "hitl_reasons" in keys
         assert "errors" in keys
         assert "retry_count" in keys
+        assert "resume_payload" in keys
+
+
+# ---------------------------------------------------------------------------
+# P1-8: Dynamic model_stability
+# ---------------------------------------------------------------------------
+
+class TestComputeModelStability:
+    def test_uniform_scores_high_stability(self):
+        results = [{"score": 10.0}, {"score": 10.0}, {"score": 10.0}]
+        s = _compute_model_stability(results, hard_constraint_pass=True)
+        assert s == 1.0
+
+    def test_varied_scores_lower_stability(self):
+        results = [{"score": 5.0}, {"score": 15.0}, {"score": 25.0}]
+        s = _compute_model_stability(results, hard_constraint_pass=True)
+        assert 0.5 <= s < 1.0
+
+    def test_hard_constraint_fail_penalty(self):
+        results = [{"score": 10.0}, {"score": 10.0}]
+        s_pass = _compute_model_stability(results, hard_constraint_pass=True)
+        s_fail = _compute_model_stability(results, hard_constraint_pass=False)
+        assert s_fail <= s_pass - 0.14
+
+    def test_single_score_default(self):
+        results = [{"score": 10.0}]
+        s = _compute_model_stability(results, hard_constraint_pass=True)
+        assert s == 0.75
+
+    def test_empty_scores_default(self):
+        s = _compute_model_stability([], hard_constraint_pass=True)
+        assert s == 0.75
+
+    def test_floor_at_half(self):
+        results = [{"score": 1.0}, {"score": 100.0}]
+        s = _compute_model_stability(results, hard_constraint_pass=False)
+        assert s >= 0.5
+
+    def test_zero_scores(self):
+        results = [{"score": 0.0}, {"score": 0.0}]
+        s = _compute_model_stability(results, hard_constraint_pass=True)
+        assert s == 1.0
+
+
+# ---------------------------------------------------------------------------
+# P1-9: Merge edited_scores from resume
+# ---------------------------------------------------------------------------
+
+class TestFinalizeReportEditedScores:
+    def test_edited_scores_merged(self, store):
+        state = _initial_state()
+        state.update(node_load_context(state, store=store))
+        state.update(node_retrieve_evidence(state, store=store))
+        state.update(node_evaluate_rules(state, store=store))
+        state.update(node_score_with_llm(state, store=store))
+        state.update(node_quality_gate(state, store=store))
+
+        state["resume_payload"] = {"edited_scores": {"quality": 99.0}}
+        updates = node_finalize_report(state, store=store)
+        report = updates["report"]
+
+        quality_cr = next(
+            cr for cr in report["criteria_results"] if cr["criteria_id"] == "quality"
+        )
+        assert quality_cr["score"] == 99.0
+        assert quality_cr["human_edited"] is True
+
+    def test_unedited_criteria_unchanged(self, store):
+        state = _initial_state()
+        state.update(node_load_context(state, store=store))
+        state.update(node_retrieve_evidence(state, store=store))
+        state.update(node_evaluate_rules(state, store=store))
+        state.update(node_score_with_llm(state, store=store))
+        state.update(node_quality_gate(state, store=store))
+
+        original_price = next(
+            cr["score"]
+            for cr in state["criteria_results"]
+            if cr["criteria_id"] == "price"
+        )
+        state["resume_payload"] = {"edited_scores": {"quality": 50.0}}
+        updates = node_finalize_report(state, store=store)
+        report = updates["report"]
+
+        price_cr = next(
+            cr for cr in report["criteria_results"] if cr["criteria_id"] == "price"
+        )
+        assert price_cr["score"] == original_price
+        assert price_cr.get("human_edited") is not True
+
+    def test_no_resume_payload_no_change(self, store):
+        state = _initial_state()
+        state.update(node_load_context(state, store=store))
+        state.update(node_retrieve_evidence(state, store=store))
+        state.update(node_evaluate_rules(state, store=store))
+        state.update(node_score_with_llm(state, store=store))
+        state.update(node_quality_gate(state, store=store))
+
+        updates = node_finalize_report(state, store=store)
+        report = updates["report"]
+        for cr in report["criteria_results"]:
+            assert cr.get("human_edited") is not True

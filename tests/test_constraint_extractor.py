@@ -1,11 +1,10 @@
-"""Tests for app.constraint_extractor – entity / numeric / time extraction."""
+"""Tests for app.constraint_extractor – all five constraint types."""
 
 from __future__ import annotations
 
 import pytest
 
 from app.constraint_extractor import extract_constraints
-
 
 # ---------------------------------------------------------------------------
 # Entity constraints
@@ -68,6 +67,31 @@ class TestNumericExtraction:
         bounds = [n for n in r["numeric_constraints"] if n["type"] == "max_bound"]
         assert any(n["value"] == 120 for n in bounds)
 
+    def test_min_bound_with_wan_unit(self):
+        r = extract_constraints("注册资本不低于500万")
+        bounds = [n for n in r["numeric_constraints"] if n["type"] == "min_bound"]
+        assert any(n["value"] == 5_000_000 for n in bounds)
+
+    def test_min_bound_with_wan_yuan_unit(self):
+        r = extract_constraints("项目金额不少于200万元")
+        bounds = [n for n in r["numeric_constraints"] if n["type"] == "min_bound"]
+        assert any(n["value"] == 2_000_000 for n in bounds)
+
+    def test_max_bound_with_yi_unit(self):
+        r = extract_constraints("总投资不超过3亿")
+        bounds = [n for n in r["numeric_constraints"] if n["type"] == "max_bound"]
+        assert any(n["value"] == 300_000_000 for n in bounds)
+
+    def test_max_bound_with_yi_yuan_unit(self):
+        r = extract_constraints("预算不高于1.5亿元")
+        bounds = [n for n in r["numeric_constraints"] if n["type"] == "max_bound"]
+        assert any(n["value"] == 150_000_000 for n in bounds)
+
+    def test_min_bound_without_unit_unchanged(self):
+        r = extract_constraints("项目经验不少于5个")
+        bounds = [n for n in r["numeric_constraints"] if n["type"] == "min_bound"]
+        assert any(n["value"] == 5 for n in bounds)
+
     def test_no_false_positives(self):
         r = extract_constraints("请提供投标文件")
         assert r["numeric_constraints"] == []
@@ -103,9 +127,79 @@ class TestTimeExtraction:
         deadlines = [t for t in r["time_constraints"] if t["type"] == "deadline"]
         assert any(d["value"] == 30 for d in deadlines)
 
+    def test_relative_time_chinese_num(self):
+        r = extract_constraints("近三年业绩不少于5个")
+        rel = [t for t in r["time_constraints"] if t["type"] == "relative_time"]
+        assert any(t["value"] == 3 and t["unit"] == "年" for t in rel)
+
+    def test_relative_time_arabic_num(self):
+        r = extract_constraints("近5年中标项目")
+        rel = [t for t in r["time_constraints"] if t["type"] == "relative_time"]
+        assert any(t["value"] == 5 and t["unit"] == "年" for t in rel)
+
+    def test_relative_time_liang(self):
+        r = extract_constraints("近两年合同")
+        rel = [t for t in r["time_constraints"] if t["type"] == "relative_time"]
+        assert any(t["value"] == 2 and t["unit"] == "年" for t in rel)
+
+    def test_relative_time_months(self):
+        r = extract_constraints("近12个月营收情况")
+        rel = [t for t in r["time_constraints"] if t["type"] == "relative_time"]
+        assert any(t["value"] == 12 and t["unit"] == "月" for t in rel)
+
     def test_no_false_positives(self):
         r = extract_constraints("请提供完整技术方案")
         assert r["time_constraints"] == []
+
+
+# ---------------------------------------------------------------------------
+# Must-include / must-exclude terms
+# ---------------------------------------------------------------------------
+
+class TestMustIncludeExtraction:
+    def test_single_term(self):
+        r = extract_constraints("必须包含ISO9001认证")
+        assert "ISO9001认证" in r["must_include_terms"]
+
+    def test_multiple_terms(self):
+        r = extract_constraints("须有甲级资质、安全生产许可证")
+        terms = r["must_include_terms"]
+        assert "甲级资质" in terms
+        assert "安全生产许可证" in terms
+
+    def test_should_have(self):
+        r = extract_constraints("应具备消防施工资质")
+        assert "消防施工资质" in r["must_include_terms"]
+
+    def test_must_have(self):
+        r = extract_constraints("必须有三年以上施工经验")
+        assert "三年以上施工经验" in r["must_include_terms"]
+
+    def test_no_false_positives(self):
+        r = extract_constraints("请查看项目清单")
+        assert r["must_include_terms"] == []
+
+
+class TestMustExcludeExtraction:
+    def test_single_term(self):
+        r = extract_constraints("不得包含虚假材料")
+        assert "虚假材料" in r["must_exclude_terms"]
+
+    def test_prohibit(self):
+        r = extract_constraints("禁止转包行为")
+        assert "转包行为" in r["must_exclude_terms"]
+
+    def test_not_allowed(self):
+        r = extract_constraints("不允许联合体投标")
+        assert "联合体投标" in r["must_exclude_terms"]
+
+    def test_exclude(self):
+        r = extract_constraints("排除有不良信用记录的企业")
+        assert "有不良信用记录的企业" in r["must_exclude_terms"]
+
+    def test_no_false_positives(self):
+        r = extract_constraints("请查看项目清单")
+        assert r["must_exclude_terms"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -113,11 +207,13 @@ class TestTimeExtraction:
 # ---------------------------------------------------------------------------
 
 class TestExtractConstraintsIntegration:
-    def test_returns_all_three_keys(self):
+    def test_returns_all_five_keys(self):
         r = extract_constraints("简单查询")
         assert "entity_constraints" in r
         assert "numeric_constraints" in r
         assert "time_constraints" in r
+        assert "must_include_terms" in r
+        assert "must_exclude_terms" in r
 
     def test_complex_query(self):
         q = "中国建设工程公司注册资本不少于500万元，一级资质，工期不超过180天，截止2026-06-30"
@@ -132,4 +228,6 @@ class TestExtractConstraintsIntegration:
             "entity_constraints": [],
             "numeric_constraints": [],
             "time_constraints": [],
+            "must_include_terms": [],
+            "must_exclude_terms": [],
         }

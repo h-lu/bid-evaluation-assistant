@@ -98,7 +98,27 @@ OpenAIEmbeddingFunction = OpenAICompatEmbeddingFunction
 
 @lru_cache(maxsize=1)
 def _embedding_fn():
-    backend = os.environ.get("EMBEDDING_BACKEND", "simple").strip().lower()
+    import logging
+
+    _log = logging.getLogger(__name__)
+    backend = os.environ.get("EMBEDDING_BACKEND", "auto").strip().lower()
+
+    if backend == "auto":
+        if SentenceTransformerEmbeddingFunction is not None:
+            model_name = os.environ.get("EMBEDDING_MODEL_NAME", "all-MiniLM-L6-v2")
+            _log.info("auto embedding: using sentence-transformers (%s)", model_name)
+            return SentenceTransformerEmbeddingFunction(model_name=model_name)
+        if os.environ.get("OPENAI_API_KEY", "").strip():
+            model = os.environ.get("EMBEDDING_MODEL_NAME", "text-embedding-3-small")
+            _log.info("auto embedding: using OpenAI (%s)", model)
+            return OpenAICompatEmbeddingFunction(model=model)
+        dim = int(os.environ.get("EMBEDDING_DIM", "128"))
+        _log.warning(
+            "auto embedding: sentence-transformers not installed and OPENAI_API_KEY not set; "
+            "falling back to SimpleEmbeddingFunction (SHA256 hashes — NOT suitable for production)"
+        )
+        return SimpleEmbeddingFunction(dim=dim)
+
     if backend == "simple":
         dim = int(os.environ.get("EMBEDDING_DIM", "128"))
         return SimpleEmbeddingFunction(dim=dim)
