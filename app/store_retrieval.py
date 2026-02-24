@@ -37,7 +37,9 @@ class StoreRetrievalMixin:
         prefix = self._lightrag_index_prefix()
         self._validate_index_segment(tenant_id, "tenant_id")
         self._validate_index_segment(project_id, "project_id")
-        return f"{prefix}:{tenant_id}:{project_id}"
+        # Use underscore instead of colon to satisfy Chroma collection naming rules
+        # Chroma requires names to match [a-zA-Z0-9._-]+
+        return f"{prefix}_{tenant_id}_{project_id}"
 
     @staticmethod
     def _post_json(
