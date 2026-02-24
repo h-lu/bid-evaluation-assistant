@@ -239,6 +239,12 @@ class ParserAdapterRegistry:
         default_text: str,
     ) -> dict[str, object]:
         candidates = [route.selected_parser, *route.fallback_chain]
+
+        # SSOT §3 约束: fallback 链最多 2 跳
+        # selected_parser + 最多 2 个 fallback = 最多 3 次尝试
+        max_attempts = min(3, len(candidates))
+        candidates = candidates[:max_attempts]
+
         last_error: ApiError | None = None
         for parser_name in candidates:
             adapter = self._adapters.get(parser_name)
@@ -253,10 +259,11 @@ class ParserAdapterRegistry:
             except ApiError as exc:
                 last_error = exc
                 continue
+
         raise ApiError(
             code="PARSER_FALLBACK_EXHAUSTED",
             message=(
-                f"no parser adapter available after failures: {last_error.code}"
+                f"no parser adapter available after {len(candidates)} attempts: {last_error.code}"
                 if last_error is not None
                 else "no parser adapter available"
             ),
