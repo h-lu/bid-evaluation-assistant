@@ -286,6 +286,45 @@ def disabled_parsers_from_env(env: dict[str, str] | None = None) -> set[str]:
     return {x.strip().lower() for x in raw.split(",") if x.strip()}
 
 
+class LocalParserAdapter:
+    """Parse files locally using pymupdf/python-docx without external service."""
+
+    def __init__(self, *, name: str = "local", version: str = "v1") -> None:
+        self.name = name
+        self.version = version
+
+    def parse(self, *, document_id: str, default_text: str, parser_version: str) -> dict[str, object]:
+        return {
+            "document_id": document_id,
+            "pages": [1],
+            "positions": [{"page": 1, "bbox": [0.0, 0.0, 1.0, 1.0], "start": 0, "end": len(default_text)}],
+            "section": "local_parsed",
+            "heading_path": ["content"],
+            "chunk_type": "text",
+            "parser": self.name,
+            "parser_version": parser_version or self.version,
+            "content_source": "local",
+            "text": default_text,
+        }
+
+    def parse_file(
+        self,
+        *,
+        file_bytes: bytes,
+        filename: str,
+        document_id: str,
+    ) -> list[dict[str, object]]:
+        from app.document_parser import parse_file_bytes
+
+        return parse_file_bytes(
+            file_bytes,
+            filename=filename,
+            document_id=document_id,
+            parser_name=self.name,
+            parser_version=self.version,
+        )
+
+
 def build_default_parser_registry(
     *,
     disabled_parsers: Iterable[str] | None = None,
@@ -296,6 +335,9 @@ def build_default_parser_registry(
     mineru_timeout = float(source.get("MINERU_TIMEOUT_S", "30") or "30")
     docling_timeout = float(source.get("DOCLING_TIMEOUT_S", "30") or "30")
     ocr_timeout = float(source.get("OCR_TIMEOUT_S", "30") or "30")
+
+    use_local = source.get("BEA_PARSER_LOCAL_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off"}
+
     adapters: dict[str, ParserAdapter] = {
         "mineru": HttpParserAdapter(
             name="mineru",
@@ -316,6 +358,8 @@ def build_default_parser_registry(
             timeout_s=ocr_timeout,
         ),
     }
+    if use_local:
+        adapters["local"] = LocalParserAdapter(name="local", version="v1")
     if disabled:
         adapters = {name: adapter for name, adapter in adapters.items() if name not in disabled}
     return ParserAdapterRegistry(adapters)
