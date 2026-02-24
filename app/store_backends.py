@@ -724,14 +724,23 @@ class PostgresBackedStore(InMemoryStore):
         return psycopg.connect(self._dsn)
 
     def _initialize_database(self) -> None:
-        create_sql = f"""
-                CREATE TABLE IF NOT EXISTS {self._table_name} (
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                # Check if main table already exists (handles concurrent initialization)
+                cur.execute(
+                    "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name = %s)",
+                    (self._table_name,),
+                )
+                if cur.fetchone()[0]:
+                    conn.commit()
+                    return
+
+                create_sql = f"""
+                CREATE TABLE {self._table_name} (
                   id SMALLINT PRIMARY KEY,
                   payload JSONB NOT NULL
                 )
                 """
-        with self._connect() as conn:
-            with conn.cursor() as cur:
                 cur.execute(create_sql)
                 cur.execute(
                     """
