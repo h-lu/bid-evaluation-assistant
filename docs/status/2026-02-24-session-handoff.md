@@ -101,7 +101,7 @@ StateGraph (7 nodes):
 ### 1.4 测试状态
 
 ```
-总测试数: 459
+总测试数: 533
 通过率:   100%
 失败数:   0
 Lint:     0 errors (ruff)
@@ -190,62 +190,51 @@ auto 降级链：sentence-transformers -> OpenAI (需 API key) -> simple (带警
 
 ### 3.2 剩余偏差
 
-| SSOT 章节 | 要求 | 偏差 | 优先级 |
-|-----------|------|------|--------|
-| §6.2 (retrieval spec §5.3) | SQL 白名单支路 | 未真实实现 | P2 |
-| §7.4 | 成本 P95 不超基线 1.2x | 有 token 追踪，无预算阻断 | P2 |
+全部已修复，无剩余 SSOT 偏差。
+
+| 原始偏差 | 修复状态 |
+|---------|---------|
+| SQL 白名单支路 (§6.2) | 已实现 — `app/sql_whitelist.py` + 集成到 retrieval |
+| 成本预算阻断 (§7.4) | 已实现 — `CostBudgetTracker` + 1.2x 阻断 |
 
 ---
 
 ## 4. 后续任务（供 Agent 继续）
 
-### 4.1 P2 — 剩余偏差修复
+### 4.1 已完成任务
 
-#### T11: SQL 白名单支路
+| 任务 | 完成状态 |
+|------|---------|
+| T11: SQL 白名单支路 | 已完成 — `app/sql_whitelist.py` (23 tests) |
+| T12: 成本预算阻断 | 已完成 — `CostBudgetTracker` (22 tests) |
+| T10: 前端 E2E | 已完成 — API E2E (29 tests) + Playwright 扩展 |
+| Gate D 证据报告 | 已完成 — `docs/reports/gate-d-evidence.md` |
 
-```
-目标: 实现检索时的 SQL 白名单查询支路
-SSOT: §6.2 "SQL 支路只允许白名单字段，禁止自由 SQL"
-方案:
-  1. 定义白名单字段集合（tenant_id, project_id, supplier_id, doc_type, etc.）
-  2. 验证传入 SQL/filter 条件仅含白名单字段
-  3. 拒绝非白名单查询并记录审计日志
-文件: app/store_retrieval.py, app/lightrag_service.py
-验收: 白名单外字段查询被拒; 白名单内查询正常返回
-```
+### 4.2 建议后续
 
-#### T12: 成本预算阻断
+#### Gate E: 灰度发布准备
 
 ```
-目标: 单任务成本超基线 1.2x 时阻断或降级
-SSOT: §7.4 "单任务成本 P95 不高于基线 1.2x"
-方案:
-  1. 在 llm_provider 累计 token 成本
-  2. 超过阈值时触发模型降级（primary -> fallback -> mock）
-  3. 超过硬上限时中断评估并标记 cost_exceeded
-文件: app/llm_provider.py, app/evaluation_nodes.py
-验收: 超基线任务自动降级; 成本追踪可查询
+目标: 进入灰度发布阶段
+前提:
+  1. 配置真实 LLM API 环境
+  2. 运行 scripts/eval_ragas.py --backend ragas 产出 D-1 质量数值
+  3. 运行 scripts/benchmark_performance.py 产出 D-2 性能数值
+  4. 合并分支到 main
+对齐: SSOT §8.1 Gate E
 ```
 
-### 4.2 P3 — 前端
-
-#### T10: 前端 E2E
+#### Production Capability 填充
 
 ```
-目标: 前端关键流程自动化测试
-覆盖: 上传 -> 评估 -> HITL -> 报告查看 -> DLQ 操作
-```
-
-### 4.3 Gate D — 四门禁证据报告
-
-```
-目标: 收集 Gate D 所需的四门禁通过证据
+目标: 补充生产能力
 内容:
-  D-1 质量: RAGAS 评估结果 (precision/recall >= 0.80, faithfulness >= 0.90)
-  D-2 性能: API/检索/评估/解析 P95 基准数据
-  D-3 安全: 安全回归测试 100% 通过
-  D-4 成本: 单任务成本 P95 <= 1.2x 基线
-输出: docs/reports/gate-d-evidence.md
+  1. PostgreSQL 持久化（替代 InMemoryStore）
+  2. Redis 队列（替代内存队列）
+  3. 外部 MinerU/Docling 解析器对接
+  4. 真实 embedding（sentence-transformers / OpenAI）
+  5. Cohere/Jina rerank API 对接
+对齐: SSOT §8.1 Production Capability Stage
 ```
 
 ---
@@ -311,6 +300,7 @@ MOCK_LLM_ENABLED=false LLM_PROVIDER=ollama OLLAMA_MODEL=qwen2.5:7b \
 | `app/constraint_extractor.py` | 约束抽取（5 类：entity/numeric/time/include/exclude） |
 | `app/ragas_evaluator.py` | RAGAS + DeepEval 双后端离线评估 |
 | `app/performance_benchmark.py` | 性能基准工具（P50/P95/P99） |
+| `app/sql_whitelist.py` | SQL 白名单支路（6 字段 + 租户隔离） |
 
 ### 设计文档
 
@@ -323,8 +313,9 @@ MOCK_LLM_ENABLED=false LLM_PROVIDER=ollama OLLAMA_MODEL=qwen2.5:7b \
 | `docs/design/2026-02-21-security-design.md` | 安全设计 |
 | `docs/design/2026-02-22-gate-d-four-gates-checklist.md` | Gate D 检查清单 |
 | `docs/status/2026-02-24-session-handoff.md` | 本文件 |
+| `docs/reports/gate-d-evidence.md` | Gate D 四门禁证据报告 |
 
 ---
 
 > 本文件由 2026-02-24 会话更新，供后续 Agent 接续执行。
-> 执行原则：先读本文件 -> 确认测试基线 (459 passed) -> 按 §4 任务优先级推进。
+> 执行原则：先读本文件 -> 确认测试基线 (533 passed) -> 按 §4 建议后续推进。
