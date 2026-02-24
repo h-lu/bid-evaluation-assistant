@@ -34,12 +34,16 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ProviderConfig:
     provider: str = "openai"
-    model: str = "gpt-4o-mini"
+    model: str = ""
     fallback_model: str = ""
     api_key: str = ""
     base_url: str = ""
     temperature: float = 0.1
     max_tokens: int = 1024
+
+    def __post_init__(self) -> None:
+        if not self.model:
+            self.model = os.environ.get("LLM_MODEL", "gpt-4o-mini").strip()
 
 
 @dataclass
@@ -134,24 +138,26 @@ def reset_usage_log() -> None:
 
 def _get_provider_config() -> ProviderConfig:
     provider = os.environ.get("LLM_PROVIDER", "openai").strip().lower()
+    fallback = os.environ.get("LLM_FALLBACK_MODEL", "").strip()
+    temperature = float(os.environ.get("LLM_TEMPERATURE", "0.1").strip())
 
     if provider == "ollama":
         return ProviderConfig(
             provider="ollama",
-            model=os.environ.get("OLLAMA_MODEL", os.environ.get("LLM_MODEL", "qwen2.5:7b")).strip(),
-            fallback_model=os.environ.get("LLM_FALLBACK_MODEL", "").strip(),
+            model=os.environ.get("OLLAMA_MODEL", os.environ.get("LLM_MODEL", "")).strip(),
+            fallback_model=fallback,
             api_key=os.environ.get("OPENAI_API_KEY", "ollama").strip() or "ollama",
             base_url=os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1").strip(),
-            temperature=float(os.environ.get("LLM_TEMPERATURE", "0.1").strip()),
+            temperature=temperature,
         )
 
     return ProviderConfig(
         provider=provider,
-        model=os.environ.get("LLM_MODEL", "gpt-4o-mini").strip(),
-        fallback_model=os.environ.get("LLM_FALLBACK_MODEL", "").strip(),
+        model=os.environ.get("LLM_MODEL", "").strip(),
+        fallback_model=fallback,
         api_key=os.environ.get("OPENAI_API_KEY", "").strip(),
         base_url=os.environ.get("OPENAI_BASE_URL", "").strip(),
-        temperature=float(os.environ.get("LLM_TEMPERATURE", "0.1").strip()),
+        temperature=temperature,
     )
 
 
@@ -340,7 +346,7 @@ def llm_score_criteria(
 
     try:
         content, usage = _call_with_degradation(
-            config=config, messages=messages, json_mode=True, max_tokens=512,
+            config=config, messages=messages, json_mode=True, max_tokens=4096,
         )
         result = json.loads(content)
         score = float(result.get("score", max_score * 0.5))
@@ -434,7 +440,7 @@ def llm_generate_explanation(
 
     try:
         content, _ = _call_with_degradation(
-            config=config, messages=messages, max_tokens=300,
+            config=config, messages=messages, max_tokens=2048,
         )
         return content or f"评分项 {criteria_id}: {score}/{max_score}"
     except Exception:

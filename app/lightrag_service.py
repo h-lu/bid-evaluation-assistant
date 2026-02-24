@@ -62,11 +62,11 @@ class OpenAICompatEmbeddingFunction:
     def __init__(
         self,
         *,
-        model: str = "text-embedding-3-small",
+        model: str | None = None,
         api_key: str | None = None,
         base_url: str | None = None,
     ) -> None:
-        self._model = model
+        self._model = model or os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small")
         self._api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
         self._base_url = base_url or os.environ.get("OPENAI_BASE_URL", "") or os.environ.get("EMBEDDING_BASE_URL", "")
 
@@ -103,13 +103,16 @@ def _embedding_fn():
     _log = logging.getLogger(__name__)
     backend = os.environ.get("EMBEDDING_BACKEND", "auto").strip().lower()
 
+    def _emb_model(fallback: str = "text-embedding-3-small") -> str:
+        return (os.environ.get("EMBEDDING_MODEL") or os.environ.get("EMBEDDING_MODEL_NAME") or fallback).strip()
+
     if backend == "auto":
         if SentenceTransformerEmbeddingFunction is not None:
-            model_name = os.environ.get("EMBEDDING_MODEL_NAME", "all-MiniLM-L6-v2")
+            model_name = _emb_model("all-MiniLM-L6-v2")
             _log.info("auto embedding: using sentence-transformers (%s)", model_name)
             return SentenceTransformerEmbeddingFunction(model_name=model_name)
         if os.environ.get("OPENAI_API_KEY", "").strip():
-            model = os.environ.get("EMBEDDING_MODEL_NAME", "text-embedding-3-small")
+            model = _emb_model()
             _log.info("auto embedding: using OpenAI (%s)", model)
             return OpenAICompatEmbeddingFunction(model=model)
         dim = int(os.environ.get("EMBEDDING_DIM", "128"))
@@ -123,18 +126,18 @@ def _embedding_fn():
         dim = int(os.environ.get("EMBEDDING_DIM", "128"))
         return SimpleEmbeddingFunction(dim=dim)
     if backend in {"openai", "ollama", "custom"}:
-        model = os.environ.get("EMBEDDING_MODEL_NAME", "text-embedding-3-small")
+        model = _emb_model()
         api_key = os.environ.get("OPENAI_API_KEY", "")
         base_url = os.environ.get("EMBEDDING_BASE_URL", "") or os.environ.get("OPENAI_BASE_URL", "")
         if backend == "ollama":
             base_url = base_url or os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
             api_key = api_key or "ollama"
-            model = os.environ.get("EMBEDDING_MODEL_NAME", "nomic-embed-text")
+            model = _emb_model("nomic-embed-text")
         return OpenAICompatEmbeddingFunction(model=model, api_key=api_key, base_url=base_url)
     if backend == "sentence-transformers":
         if SentenceTransformerEmbeddingFunction is None:
             raise RuntimeError("sentence-transformers is required when EMBEDDING_BACKEND='sentence-transformers'")
-        model_name = os.environ.get("EMBEDDING_MODEL_NAME", "all-MiniLM-L6-v2")
+        model_name = _emb_model("all-MiniLM-L6-v2")
         return SentenceTransformerEmbeddingFunction(model_name=model_name)
     dim = int(os.environ.get("EMBEDDING_DIM", "128"))
     return SimpleEmbeddingFunction(dim=dim)

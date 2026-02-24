@@ -10,6 +10,9 @@ Aligned with Gate D-2 performance gate thresholds.
 
 from __future__ import annotations
 
+from dotenv import load_dotenv
+load_dotenv()
+
 import argparse
 import sys
 from io import BytesIO

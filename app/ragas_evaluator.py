@@ -85,34 +85,47 @@ class EvalMetrics:
 # ===================================================================
 
 
-def _build_ragas_llm():
-    """Build a ragas-compatible LLM wrapper from environment."""
+def _build_openai_clients() -> tuple[Any, Any]:
+    """Build sync + async openai clients from environment (supports OpenRouter).
+
+    Returns (sync_client, async_client).
+    """
+    import openai
+
     api_key = os.environ.get("OPENAI_API_KEY", "").strip()
     if not api_key:
         raise OSError("OPENAI_API_KEY not set")
+    base_url = os.environ.get("OPENAI_BASE_URL", "").strip() or None
 
-    model_name = os.environ.get("RAGAS_MODEL", "gpt-4o-mini")
+    kwargs: dict[str, Any] = {"api_key": api_key}
+    if base_url:
+        kwargs["base_url"] = base_url
+    return openai.OpenAI(**kwargs), openai.AsyncOpenAI(**kwargs)
 
-    from langchain_openai import ChatOpenAI
-    from ragas.llms import LangchainLLMWrapper
 
-    llm = ChatOpenAI(model=model_name, api_key=api_key)
-    return LangchainLLMWrapper(llm)
+def _build_ragas_llm():
+    """Build a ragas-compatible LLM via llm_factory (ragas >= 0.4).
+
+    Supports OpenAI, OpenRouter, and any OpenAI-compatible endpoint.
+    Uses AsyncOpenAI so score() -> asyncio.run(ascore()) works correctly.
+    """
+    from ragas.llms import llm_factory
+
+    model_name = os.environ.get("RAGAS_MODEL", os.environ.get("LLM_MODEL", "gpt-4o-mini"))
+    _, async_client = _build_openai_clients()
+    return llm_factory(model_name, client=async_client)
 
 
 def _build_ragas_embeddings():
-    """Build ragas-compatible embeddings from environment."""
-    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
-    if not api_key:
-        raise OSError("OPENAI_API_KEY not set")
+    """Build ragas-compatible embeddings via embedding_factory (ragas >= 0.4).
 
-    model_name = os.environ.get("RAGAS_EMBEDDING_MODEL", "text-embedding-3-small")
+    Uses EMBEDDING_MODEL env var through the same OpenAI-compatible client.
+    """
+    from ragas.embeddings import embedding_factory
 
-    from langchain_openai import OpenAIEmbeddings
-    from ragas.embeddings import LangchainEmbeddingsWrapper
-
-    emb = OpenAIEmbeddings(model=model_name, api_key=api_key)
-    return LangchainEmbeddingsWrapper(emb)
+    model_name = os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small")
+    _, async_client = _build_openai_clients()
+    return embedding_factory("openai", model=model_name, client=async_client)
 
 
 def evaluate_dataset_ragas(
@@ -131,7 +144,6 @@ def evaluate_dataset_ragas(
     Returns:
         EvalMetrics with real LLM-computed scores.
     """
-    from ragas import EvaluationDataset, evaluate
     from ragas.metrics.collections import (
         AnswerRelevancy,
         ContextPrecision,
@@ -144,40 +156,65 @@ def evaluate_dataset_ragas(
     if evaluator_embeddings is None:
         evaluator_embeddings = _build_ragas_embeddings()
 
-    ragas_data = []
+    faithfulness_metric = Faithfulness(llm=evaluator_llm)
+    precision_metric = ContextPrecision(llm=evaluator_llm)
+    recall_metric = ContextRecall(llm=evaluator_llm)
+    relevancy_metric = AnswerRelevancy(llm=evaluator_llm, embeddings=evaluator_embeddings)
+
+    faith_scores: list[float] = []
+    prec_scores: list[float] = []
+    rec_scores: list[float] = []
+    rel_scores: list[float] = []
+
     for s in samples:
-        ragas_data.append({
-            "user_input": s.query,
-            "retrieved_contexts": list(s.retrieved_contexts),
-            "response": s.generated_answer,
-            "reference": s.ground_truth_answer,
-        })
+        ctxs = list(s.retrieved_contexts)
 
-    dataset = EvaluationDataset.from_list(ragas_data)
+        try:
+            r = faithfulness_metric.score(
+                user_input=s.query, response=s.generated_answer,
+                retrieved_contexts=ctxs,
+            )
+            faith_scores.append(float(r.value))
+        except Exception as exc:
+            logger.warning("faithfulness score failed: %s", exc)
 
-    metrics = [
-        Faithfulness(llm=evaluator_llm),
-        ContextPrecision(llm=evaluator_llm),
-        ContextRecall(llm=evaluator_llm),
-        AnswerRelevancy(llm=evaluator_llm, embeddings=evaluator_embeddings),
-    ]
+        try:
+            r = precision_metric.score(
+                user_input=s.query, reference=s.ground_truth_answer,
+                retrieved_contexts=ctxs,
+            )
+            prec_scores.append(float(r.value))
+        except Exception as exc:
+            logger.warning("context_precision score failed: %s", exc)
 
-    result = evaluate(dataset=dataset, metrics=metrics)
+        try:
+            r = recall_metric.score(
+                user_input=s.query, retrieved_contexts=ctxs,
+                reference=s.ground_truth_answer,
+            )
+            rec_scores.append(float(r.value))
+        except Exception as exc:
+            logger.warning("context_recall score failed: %s", exc)
 
-    scores = result.to_pandas()
-    faithfulness_score = float(scores["faithfulness"].mean())
-    context_precision_score = float(scores["context_precision"].mean())
-    context_recall_score = float(scores["context_recall"].mean())
-    response_relevancy_score = float(scores["answer_relevancy"].mean())
+        try:
+            r = relevancy_metric.score(
+                user_input=s.query, response=s.generated_answer,
+            )
+            rel_scores.append(float(r.value))
+        except Exception as exc:
+            logger.warning("answer_relevancy score failed: %s", exc)
+
+    def _safe_mean(values: list[float]) -> float:
+        return sum(values) / len(values) if values else 0.0
 
     hallucination_rate = _compute_deepeval_hallucination(samples, evaluator_llm=evaluator_llm)
     citation_resolvable = _compute_citation_resolvable(samples)
 
     return EvalMetrics(
-        context_precision=context_precision_score,
-        context_recall=context_recall_score,
-        faithfulness=faithfulness_score,
-        response_relevancy=response_relevancy_score,
+        context_precision=_safe_mean(prec_scores),
+        context_recall=_safe_mean(rec_scores),
+        faithfulness=_safe_mean(faith_scores),
+        response_relevancy=_safe_mean(rel_scores),
         hallucination_rate=hallucination_rate,
         citation_resolvable_rate=citation_resolvable,
         backend="ragas",
@@ -189,11 +226,14 @@ def _compute_deepeval_hallucination(
     *,
     evaluator_llm: Any = None,
 ) -> float:
-    """Compute hallucination rate using deepeval's HallucinationMetric."""
+    """Compute hallucination rate using deepeval's HallucinationMetric.
+
+    Supports OpenRouter and any OpenAI-compatible endpoint via OPENAI_BASE_URL.
+    """
     from deepeval.metrics import HallucinationMetric
     from deepeval.test_case import LLMTestCase
 
-    model_name = os.environ.get("RAGAS_MODEL", "gpt-4o-mini")
+    model_name = os.environ.get("DEEPEVAL_MODEL", os.environ.get("LLM_MODEL", "gpt-4o-mini"))
 
     hallucinated_count = 0
     total = 0
@@ -206,10 +246,13 @@ def _compute_deepeval_hallucination(
             actual_output=s.generated_answer,
             context=list(s.retrieved_contexts),
         )
-        metric = HallucinationMetric(threshold=0.5, model=model_name)
-        metric.measure(test_case)
-        if metric.score < 0.5:
-            hallucinated_count += 1
+        try:
+            metric = HallucinationMetric(threshold=0.5, model=model_name)
+            metric.measure(test_case)
+            if not metric.is_successful():
+                hallucinated_count += 1
+        except Exception as exc:
+            logger.warning("DeepEval hallucination check failed for sample: %s", exc)
 
     if total == 0:
         return 0.0
