@@ -63,6 +63,9 @@ class EvaluationState(TypedDict, total=False):
     status: str
     # resume (HITL)
     resume_payload: dict[str, Any]
+    # cost tracking (SSOT §7.4)
+    cost_exceeded: bool
+    cost_total_tokens: int
     # runtime
     retry_count: int
     errors: list[dict[str, Any]]
@@ -188,16 +191,26 @@ def node_evaluate_rules(state: EvaluationState, *, store: Any) -> dict[str, Any]
 
 
 def node_score_with_llm(state: EvaluationState, *, store: Any) -> dict[str, Any]:
-    """LLM soft-scoring for each criteria.  No side effects."""
-    from app.llm_provider import llm_score_criteria
+    """LLM soft-scoring for each criteria.  No side effects.
+
+    Integrates CostBudgetTracker (SSOT §7.4) to enforce per-task token
+    budget.  When cumulative tokens hit the warn threshold the remaining
+    criteria are scored with mock LLM; when the hard threshold is exceeded
+    scoring stops entirely and ``cost_exceeded`` is set.
+    """
+    from app.llm_provider import CostBudgetTracker, LLMUsage, llm_score_criteria
 
     criteria_defs = state.get("criteria_defs", [])
     criteria_evidence = state.get("criteria_evidence", {})
     hard_constraint_pass = state.get("hard_constraint_pass", True)
     citations_all_ids = state.get("citations_all_ids", [])
 
+    evaluation_id = state.get("evaluation_id", "unknown")
+    cost_tracker = CostBudgetTracker(task_id=evaluation_id)
+
     criteria_results: list[dict[str, Any]] = []
     unsupported_claims: list[str] = []
+    cost_exceeded = False
 
     for criteria in criteria_defs:
         if not isinstance(criteria, dict):
@@ -211,14 +224,54 @@ def node_score_with_llm(state: EvaluationState, *, store: Any) -> dict[str, Any]
         evidence = criteria_evidence.get(cid, [])
         citation_ids = [ev.get("chunk_id") for ev in evidence if ev.get("chunk_id")]
 
-        llm_result = llm_score_criteria(
-            criteria_id=cid,
-            requirement_text=str(requirement_text or ""),
-            evidence_chunks=evidence,
-            max_score=max_score,
-            criteria_name=str(criteria_name),
-            hard_constraint_pass=hard_constraint_pass,
+        budget_status = cost_tracker.check_budget()
+
+        if budget_status == "blocked":
+            logger.warning(
+                "Cost budget exceeded for task %s (tokens=%d), skipping criteria %s",
+                evaluation_id, cost_tracker.total_tokens, cid,
+            )
+            cost_exceeded = True
+            break
+
+        if budget_status == "degrade":
+            logger.warning(
+                "Cost budget degraded for task %s (tokens=%d), using mock for criteria %s",
+                evaluation_id, cost_tracker.total_tokens, cid,
+            )
+            from app.mock_llm import mock_score_criteria
+            llm_result = mock_score_criteria(
+                criteria_id=cid,
+                requirement_text=str(requirement_text or ""),
+                evidence_chunks=evidence,
+                max_score=max_score,
+                hard_constraint_pass=hard_constraint_pass,
+            )
+            llm_result["degraded"] = True
+            llm_result["degrade_reason"] = "cost_budget"
+        else:
+            if budget_status == "warn":
+                logger.warning(
+                    "Cost budget warning for task %s (tokens=%d/%d)",
+                    evaluation_id, cost_tracker.total_tokens, cost_tracker.max_tokens_budget,
+                )
+            llm_result = llm_score_criteria(
+                criteria_id=cid,
+                requirement_text=str(requirement_text or ""),
+                evidence_chunks=evidence,
+                max_score=max_score,
+                criteria_name=str(criteria_name),
+                hard_constraint_pass=hard_constraint_pass,
+            )
+
+        usage_dict = llm_result.get("usage", {})
+        usage = LLMUsage(
+            prompt_tokens=int(usage_dict.get("prompt_tokens", 0)),
+            completion_tokens=int(usage_dict.get("completion_tokens", 0)),
+            total_tokens=int(usage_dict.get("total_tokens", 0)),
         )
+        cost_tracker.record_usage(usage)
+
         score = llm_result["score"]
         hard_pass = llm_result.get("hard_pass", True) and hard_constraint_pass
         reason = llm_result.get("reason", "evaluation completed")
@@ -248,6 +301,8 @@ def node_score_with_llm(state: EvaluationState, *, store: Any) -> dict[str, Any]
     return {
         "criteria_results": criteria_results,
         "unsupported_claims": unsupported_claims,
+        "cost_exceeded": cost_exceeded,
+        "cost_total_tokens": cost_tracker.total_tokens,
     }
 
 

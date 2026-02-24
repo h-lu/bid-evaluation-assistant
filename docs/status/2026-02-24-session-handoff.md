@@ -1,47 +1,59 @@
 # 会话交接文档（Session Handoff）
 
-> 日期：2026-02-24
+> 日期：2026-02-24（更新）
 > 基线：`v2026.02.21-r3`
-> 分支：`main`（含未提交变更）
+> 分支：`feat/t7-t8-t9-quality-security-perf`
 > 前序文档：`docs/status/2026-02-23-project-status-and-roadmap.md`
 
 ---
 
 ## 1. 本次会话完成的工作
 
-### 1.1 P0 核心业务逻辑：从 Mock 到真实实现
+### 1.1 全部任务完成状态
 
-本次会话完成了 P0 四项核心任务的实装，主链路 `upload -> parse -> index -> retrieve -> evaluate` 现已端到端贯通。
+T1-T9 全部完成，从 Mock 到真实实现的端到端贯通。
 
-| P0 任务 | 完成度 | 核心文件 |
-|---------|--------|---------|
-| 文档解析 | 100% | `app/document_parser.py` (新增 353 行) |
-| 向量检索 | 100% | `app/lightrag_service.py` (改造 +170 行) |
-| Embedding 生成 | 100% | `app/lightrag_service.py` (3 种后端) |
-| 真实 LLM 集成 | 100% | `app/llm_provider.py` (新增 340 行) |
+| 任务 | 内容 | 完成度 | 核心文件 |
+|------|------|--------|---------|
+| T1 | Rerank 真实实现 | 100% | `app/reranker.py` (191行，TF-IDF + cross-encoder + 超时降级) |
+| T2 | Token Budget 控制 | 100% | `app/token_budget.py` (157行，tiktoken + 冗余来源去重) |
+| T3 | LangGraph 真实图 | 100% | `app/langgraph_runtime.py` (403行，7节点 StateGraph + interrupt) |
+| T4 | 约束抽取器 | 100% | `app/constraint_extractor.py` (209行，5类约束 + 中文单位 + 近X年) |
+| T5 | store.py 拆分 | 100% | `app/store.py` (449行核心) + 8 个 mixin |
+| T6 | main.py 拆分 | 100% | `app/main.py` (231行核心) + 5 个路由模块 |
+| T7 | RAGAS 评估 | 100% | `app/ragas_evaluator.py` (505行，ragas+deepeval 双后端) |
+| T8 | 性能基准 | 100% | `app/performance_benchmark.py` (121行，P50/P95/P99) |
+| T9 | 安全回归 | 100% | `tests/test_security_regression.py` (多维度安全测试套件) |
 
-### 1.2 新增与修改文件清单
+### 1.2 模块架构现状
 
-#### 新增文件（未提交，需 git add）
+#### store 模块（T5 拆分后）
 
-| 文件 | 行数 | 说明 |
+| 文件 | 行数 | 职责 |
 |------|------|------|
-| `app/document_parser.py` | 353 | 真实文档解析：PDF(PyMuPDF) / DOCX(python-docx) / 纯文本 |
-| `app/llm_provider.py` | 413 | 多 provider LLM 抽象：OpenAI/Ollama/自定义 base_url，三级降级，成本追踪 |
-| `tests/test_document_parser.py` | 230 | 文档解析单元测试 |
-| `tests/test_llm_provider.py` | 200 | LLM provider 多场景测试（18 个用例） |
-| `tests/test_end_to_end_real_parsing.py` | 440 | 端到端集成测试（8 个用例含完整链路） |
+| `app/store.py` | 449 | 核心协调 + mixin 继承 |
+| `app/store_parse.py` | 314 | 解析相关方法 |
+| `app/store_eval.py` | 419 | 评估相关方法 |
+| `app/store_retrieval.py` | 461 | 检索 + rerank + token budget |
+| `app/store_release.py` | 535 | 发布管理 |
+| `app/store_admin.py` | 834 | 管理操作 |
+| `app/store_workflow.py` | 422 | 工作流编排 |
+| `app/store_ops.py` | 537 | 运维指标 |
+| `app/store_backends.py` | 1652 | Sqlite/Postgres 持久化实现 |
 
-#### 修改文件（已 tracked，未提交）
+#### routes 模块（T6 拆分后）
 
-| 文件 | 变更量 | 说明 |
-|------|--------|------|
-| `app/store.py` | +440/-158 | Chroma 直接索引/查询、证据检索优先向量搜索、工作流保存真实数据 |
-| `app/lightrag_service.py` | +170/-13 | 公共 API (`index_chunks_to_collection`, `query_collection`)、Embedding 支持 base_url |
-| `app/parser_adapters.py` | +44 | `LocalParserAdapter.parse_file()` 桥接 document_parser |
-| `pyproject.toml` | +5 | 新增 `pymupdf>=1.24.0` 和 `python-docx>=1.1.0` 依赖 |
+| 文件 | 行数 | 职责 |
+|------|------|------|
+| `app/main.py` | 231 | 核心 (middleware + exception handlers + health) |
+| `app/routes/documents.py` | 176 | 文档上传/解析/查看 |
+| `app/routes/evaluations.py` | 152 | 评估/恢复/报告 |
+| `app/routes/retrieval.py` | 63 | 检索/预览/引用 |
+| `app/routes/admin.py` | 461 | 项目/供应商/规则/作业/DLQ |
+| `app/routes/internal.py` | 959 | 内部调试接口 |
+| `app/routes/_deps.py` | 147 | 共享依赖 (trace_id, audit, approval) |
 
-### 1.3 关键集成点说明
+### 1.3 关键集成点
 
 #### 解析 -> 索引流程
 
@@ -65,40 +77,35 @@ upload(file_bytes)
 create_evaluation_job
   -> _retrieve_evidence_for_criteria (每个评分项)
     -> 优先: _query_lightrag -> Chroma 向量检索
-    -> 降级1: mock_retrieve_evidence (MOCK_LLM_ENABLED=true)
-    -> 降级2: stub 证据
+    -> rerank: TF-IDF (默认) / cross-encoder (可选，含超时降级)
+    -> token_budget: 冗余来源去重 -> 低相关裁剪 -> 预算控制
+    -> 降级: mock_retrieve_evidence / stub 证据
   -> llm_score_criteria (每个评分项)
     -> 优先: 真实 LLM (primary model)
     -> 降级1: fallback model
     -> 降级2: mock_score_criteria
-  -> 计算 total_score, confidence, HITL 判定
+  -> node_quality_gate: 动态 model_stability + HITL 判定
+  -> node_finalize_report: 合并 edited_scores (如有 HITL)
   -> 生成 evaluation_report
 ```
 
-#### LLM Provider 降级链
+#### LangGraph 工作流
 
 ```text
-Primary Model (LLM_MODEL)
-  -> 失败 -> Fallback Model (LLM_FALLBACK_MODEL)
-    -> 失败 -> Mock LLM (mock_score_criteria)
+StateGraph (7 nodes):
+  load_context -> retrieve_evidence -> score_criteria
+    -> quality_gate -> [pass] -> finalize_report -> persist
+                    -> [hitl] -> interrupt -> resume -> finalize_report -> persist
 ```
 
 ### 1.4 测试状态
 
 ```
-总测试数: 297 (从 283 增加 14)
+总测试数: 459
 通过率:   100%
 失败数:   0
-Lint:     0 errors
+Lint:     0 errors (ruff)
 ```
-
-新增测试分布：
-
-| 模块 | 新增测试数 | 覆盖范围 |
-|------|-----------|---------|
-| LLM Provider | 18 | 多 provider 配置、Ollama 支持、降级、成本追踪 |
-| 文档解析 | 6+ | PDF/DOCX 解析、chunk 元数据 |
-| 端到端集成 | 8 | upload->parse->index->retrieve->evaluate 完整链路 |
 
 ---
 
@@ -122,12 +129,23 @@ Lint:     0 errors
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `EMBEDDING_BACKEND` | `simple` | `simple` / `openai` / `ollama` / `sentence-transformers` |
+| `EMBEDDING_BACKEND` | `auto` | `auto` / `simple` / `openai` / `ollama` / `sentence-transformers` |
 | `EMBEDDING_MODEL_NAME` | `text-embedding-3-small` | Embedding 模型 |
 | `EMBEDDING_BASE_URL` | (空) | 自定义 Embedding 端点 |
 | `EMBEDDING_DIM` | `128` | Simple 模式维度 |
 
-### 2.3 Chroma / 检索配置
+auto 降级链：sentence-transformers -> OpenAI (需 API key) -> simple (带警告)
+
+### 2.3 Rerank 配置
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `RERANK_BACKEND` | `simple` | `simple` (TF-IDF) / `cross-encoder` / `cohere` / `jina` |
+| `RERANK_MODEL_NAME` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Cross-encoder 模型 |
+| `RERANK_TOP_K` | `0` | 重排后截取数（0=不截取） |
+| `RERANK_TIMEOUT_MS` | `2000` | Cross-encoder 超时（ms），超时降级到 TF-IDF |
+
+### 2.4 Chroma / 检索配置
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
@@ -135,6 +153,13 @@ Lint:     0 errors
 | `CHROMA_PERSIST_DIR` | (空) | Chroma 持久化目录（空则内存模式） |
 | `CHROMA_HOST` | (空) | Chroma 远程 host |
 | `LIGHTRAG_INDEX_PREFIX` | `lightrag` | 索引名称前缀 |
+
+### 2.5 Token Budget 配置
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `EVIDENCE_SINGLE_BUDGET` | `6000` | 单项评分 token 上限 |
+| `EVIDENCE_TOTAL_BUDGET` | `24000` | 全报告 token 上限 |
 
 ---
 
@@ -146,147 +171,63 @@ Lint:     0 errors
 |-----------|------|------|
 | §6.1 | chunk 元数据: page/bbox/heading_path/chunk_type | 已对齐 |
 | §6.2 | 检索模式 local/global/hybrid/mix | 已对齐 |
-| §6.2 | 规则引擎硬判定 + LLM 软评分 | 已对齐（基础） |
+| §6.2 | 规则引擎硬判定 + LLM 软评分 | 已对齐 |
+| §6.2 | 查询约束保持改写 (5类约束) | 已对齐 |
+| §6.3 | 工作流 LangGraph interrupt/resume | 已对齐 |
 | §6.5 | 向量查询强制 tenant_id+project_id 过滤 | 已对齐 |
+| §7.1 | 性能基准 P95 阈值 | 已对齐（T8 框架） |
+| §7.2 | RAGAS precision/recall/faithfulness + DeepEval 幻觉率 | 已对齐（T7 双后端） |
+| §7.3 | 跨租户=0, 审计=100%, legal hold 违规=0 | 已对齐（T9 回归测试） |
 | §7.4 | 模型降级策略 | 已对齐（三级降级链） |
 | §8.1 | 评分项输出: criteria_id/score/max_score/hard_pass/reason/citations/confidence | 已对齐 |
 | §8.2 | 总分公式: sum(score * weight) | 已对齐 |
-| §8.3 | 置信度: 0.4*evidence + 0.3*agreement + 0.3*stability | 已对齐 |
-| §9 | HITL 触发条件（5 项） | 已对齐 |
+| §8.3 | 置信度: 0.4*evidence + 0.3*agreement + 0.3*stability (动态) | 已对齐 |
+| §9 | HITL 触发条件（5 项）+ edited_scores 合并 | 已对齐 |
 | §10 | claim->citation 映射检查 | 已对齐 |
+| retrieval spec §6.1 | rerank: score_raw + score_rerank (TF-IDF + cross-encoder) | 已对齐 |
+| retrieval spec §6.3 | token budget: 单项 <=6k, 全报告 <=24k, 冗余来源去重 | 已对齐 |
+| retrieval spec §3.2 | 约束抽取: entity/numeric/time/must_include/must_exclude | 已对齐 |
 
-### 3.2 已知偏差（需后续处理）
+### 3.2 剩余偏差
 
 | SSOT 章节 | 要求 | 偏差 | 优先级 |
 |-----------|------|------|--------|
-| retrieval spec §3.2 | 约束抽取: entity/numeric/time constraints | 仅 include/exclude terms | P1 |
-| retrieval spec §6.1 | rerank 输出: score_raw + score_rerank | rerank 为 stub (+0.05) | P1 |
-| retrieval spec §6.3 | token budget: 单项 <=6k, 全报告 <=24k | 未实现 | P1 |
-| retrieval spec §5.3 | SQL 白名单支路 | 未真实实现 | P2 |
-| workflow spec §6 | LangGraph 真实图执行 + typed edges | 仅 compat 模式 | P1 |
-| SSOT §7.4 | 成本 P95 不超基线 1.2x | 有 token 追踪，无预算阻断 | P2 |
+| §6.2 (retrieval spec §5.3) | SQL 白名单支路 | 未真实实现 | P2 |
+| §7.4 | 成本 P95 不超基线 1.2x | 有 token 追踪，无预算阻断 | P2 |
 
 ---
 
 ## 4. 后续任务（供 Agent 继续）
 
-### 4.1 P1 — 质量强化（建议下一阶段）
+### 4.1 P2 — 剩余偏差修复
 
-#### T1: Rerank 真实实现
+#### T11: SQL 白名单支路
 
 ```
-目标: 替换 _rerank_items 的 stub 实现
+目标: 实现检索时的 SQL 白名单查询支路
+SSOT: §6.2 "SQL 支路只允许白名单字段，禁止自由 SQL"
 方案:
-  1. 使用 cross-encoder/ms-marco-MiniLM-L-6-v2 本地 rerank
-  2. 或对接 Cohere/Jina rerank API
-输入: retrieval candidates list
-输出: candidates with score_rerank
-验收: rerank 降级测试通过; 精度提升可测量
-文件: app/store.py (_rerank_items), app/lightrag_service.py
+  1. 定义白名单字段集合（tenant_id, project_id, supplier_id, doc_type, etc.）
+  2. 验证传入 SQL/filter 条件仅含白名单字段
+  3. 拒绝非白名单查询并记录审计日志
+文件: app/store_retrieval.py, app/lightrag_service.py
+验收: 白名单外字段查询被拒; 白名单内查询正常返回
 ```
 
-#### T2: Token Budget 控制
+#### T12: 成本预算阻断
 
 ```
-目标: 评分上下文不超预算
+目标: 单任务成本超基线 1.2x 时阻断或降级
+SSOT: §7.4 "单任务成本 P95 不高于基线 1.2x"
 方案:
-  1. 使用 tiktoken 计算 token 数
-  2. 单项评分 <= 6k tokens
-  3. 全报告 <= 24k tokens
-  4. 超预算按"低相关 -> 冗余来源"裁剪
-输入: evidence list per criteria
-输出: trimmed evidence list
-验收: 大文档评估不超 token 限制
-文件: app/llm_provider.py, app/store.py (create_evaluation_job)
+  1. 在 llm_provider 累计 token 成本
+  2. 超过阈值时触发模型降级（primary -> fallback -> mock）
+  3. 超过硬上限时中断评估并标记 cost_exceeded
+文件: app/llm_provider.py, app/evaluation_nodes.py
+验收: 超基线任务自动降级; 成本追踪可查询
 ```
 
-#### T3: LangGraph 真实图执行
-
-```
-目标: 将 compat 模式工作流替换为真实 LangGraph 图
-方案:
-  1. 定义 TypedDict state
-  2. 定义 node functions (load_context, retrieve_evidence, etc.)
-  3. 定义 conditional edges (quality_gate -> pass/hitl)
-  4. 使用 MemorySaver 或 PostgresSaver
-验收: 评估工作流通过 LangGraph 图执行; interrupt/resume 真实工作
-文件: app/langgraph_runtime.py, app/store.py (_run_evaluation_workflow)
-对齐: docs/design/2026-02-21-langgraph-agent-workflow-spec.md
-```
-
-#### T4: 约束抽取器
-
-```
-目标: 查询标准化 + 约束抽取
-方案:
-  1. entity_constraints: 正则/NER 抽取
-  2. numeric_constraints: 数值范围抽取
-  3. time_constraints: 日期范围抽取
-  4. 写入 rewrite 输出
-验收: 约束保持改写输出完整
-文件: app/store.py (_normalize_and_rewrite_query)
-对齐: docs/design/2026-02-21-retrieval-and-scoring-spec.md §3.2
-```
-
-### 4.2 P1 — 基础设施
-
-#### T5: store.py 拆分
-
-```
-目标: InMemoryStore 从 ~5700 行拆为多模块
-方案:
-  app/store.py          -> 核心 store 协调
-  app/store_parse.py    -> 解析相关方法
-  app/store_eval.py     -> 评估相关方法
-  app/store_retrieval.py -> 检索相关方法
-  app/store_release.py  -> 发布相关方法
-注意: 保持 store 单例对外接口不变
-验收: 全量测试通过; 单文件不超 1500 行
-```
-
-#### T6: main.py 拆分
-
-```
-目标: API 路由从单文件拆为模块
-方案:
-  app/routes/documents.py
-  app/routes/evaluations.py
-  app/routes/retrieval.py
-  app/routes/admin.py
-  app/routes/internal.py
-验收: 全量测试通过; 路由可独立阅读
-```
-
-### 4.3 P2 — 质量门禁（Gate D）
-
-#### T7: RAGAS 评估脚本
-
-```
-目标: 实现离线检索质量评估
-方案: 使用 ragas 库，评估 precision/recall/faithfulness
-阈值: precision/recall >= 0.80, faithfulness >= 0.90
-对齐: docs/design/2026-02-21-retrieval-and-scoring-spec.md §12
-```
-
-#### T8: 性能基准
-
-```
-目标: 建立 API / 检索 / 评估性能基线
-阈值:
-  API P95 <= 1.5s
-  检索 P95 <= 4s
-  评估 P95 <= 120s
-  解析 50页 P95 <= 180s
-```
-
-#### T9: 安全回归
-
-```
-目标: 跨租户越权 = 0; 高风险审计 = 100%
-对齐: docs/design/2026-02-21-security-design.md
-```
-
-### 4.4 P3 — 前端
+### 4.2 P3 — 前端
 
 #### T10: 前端 E2E
 
@@ -295,17 +236,28 @@ Lint:     0 errors
 覆盖: 上传 -> 评估 -> HITL -> 报告查看 -> DLQ 操作
 ```
 
+### 4.3 Gate D — 四门禁证据报告
+
+```
+目标: 收集 Gate D 所需的四门禁通过证据
+内容:
+  D-1 质量: RAGAS 评估结果 (precision/recall >= 0.80, faithfulness >= 0.90)
+  D-2 性能: API/检索/评估/解析 P95 基准数据
+  D-3 安全: 安全回归测试 100% 通过
+  D-4 成本: 单任务成本 P95 <= 1.2x 基线
+输出: docs/reports/gate-d-evidence.md
+```
+
 ---
 
 ## 5. 技术债务
 
 | 问题 | 严重程度 | 说明 |
 |------|----------|------|
-| `app/store.py` ~5700 行 | 高 | 需拆分为多模块（见 T5） |
-| `app/main.py` ~2100 行 | 中 | 需拆分路由（见 T6） |
-| rerank 为 stub | 中 | 仅 +0.05 分，非真实 rerank（见 T1） |
-| LangGraph 为 compat 模式 | 中 | 非真实图执行（见 T3） |
-| 无 token budget | 低 | 大文档可能超出 context window（见 T2） |
+| `app/store_backends.py` 1652 行 | 中 | Sqlite/Postgres 后端，可考虑进一步拆分 |
+| `app/routes/internal.py` 959 行 | 低 | 内部调试接口，功能密集但低风险 |
+| Cohere/Jina rerank API | 低 | placeholder，降级到 TF-IDF |
+| HttpParserAdapter 默认 stub | 低 | 外部解析服务端点未配置时为 stub |
 
 ---
 
@@ -315,14 +267,17 @@ Lint:     0 errors
 # 安装依赖
 python3 -m pip install -e '.[dev]'
 
-# 运行全量测试（应显示 297 passed）
+# 运行全量测试（应显示 459 passed）
 python3 -m pytest -q
 
-# 运行端到端集成测试
-python3 -m pytest tests/test_end_to_end_real_parsing.py -v
+# 运行安全回归测试
+python3 -m pytest tests/test_security_regression.py -v
 
-# 运行 LLM provider 测试
-python3 -m pytest tests/test_llm_provider.py -v
+# 运行 RAGAS 评估（lightweight 模式，无需 API key）
+python3 scripts/eval_ragas.py --backend lightweight --dataset samples/eval_dataset.json
+
+# 运行性能基准
+python3 scripts/benchmark_performance.py
 
 # 代码检查
 ruff check app/
@@ -338,20 +293,24 @@ MOCK_LLM_ENABLED=false LLM_PROVIDER=ollama OLLAMA_MODEL=qwen2.5:7b \
 
 ---
 
-## 7. 关键文件索引（更新）
+## 7. 关键文件索引
 
-### 核心代码
+### 核心业务
 
 | 文件 | 说明 |
 |------|------|
-| `app/store.py` | 存储层核心（解析、评估、检索、工作流协调） |
-| `app/llm_provider.py` | LLM 多 provider 抽象（OpenAI/Ollama/Custom + 降级 + 成本追踪） |
+| `app/store.py` + `app/store_*.py` | 存储层（核心 + 8 个 mixin + backends） |
+| `app/main.py` + `app/routes/*.py` | API 层（核心 + 5 个路由模块） |
+| `app/langgraph_runtime.py` | LangGraph 7 节点 StateGraph |
+| `app/evaluation_nodes.py` | 评估节点（LLM 评分 + 质量门 + 报告生成） |
+| `app/llm_provider.py` | LLM 多 provider 抽象 + 三级降级 + 成本追踪 |
 | `app/document_parser.py` | 文档解析（PDF/DOCX/Text + 分块 + 元数据） |
-| `app/lightrag_service.py` | Chroma 向量索引/检索（内建 + HTTP 双模式） |
-| `app/parser_adapters.py` | 解析器适配层（路由 + fallback + local adapter） |
-| `app/mock_llm.py` | Mock LLM（确定性测试用） |
-| `app/main.py` | FastAPI 路由 |
-| `app/langgraph_runtime.py` | LangGraph 运行时（待完善真实图执行） |
+| `app/lightrag_service.py` | Chroma 向量索引/检索（auto embedding 降级） |
+| `app/reranker.py` | 重排器（TF-IDF + cross-encoder + 超时降级） |
+| `app/token_budget.py` | Token 预算（冗余去重 + 低相关裁剪 + 预算控制） |
+| `app/constraint_extractor.py` | 约束抽取（5 类：entity/numeric/time/include/exclude） |
+| `app/ragas_evaluator.py` | RAGAS + DeepEval 双后端离线评估 |
+| `app/performance_benchmark.py` | 性能基准工具（P50/P95/P99） |
 
 ### 设计文档
 
@@ -361,9 +320,11 @@ MOCK_LLM_ENABLED=false LLM_PROVIDER=ollama OLLAMA_MODEL=qwen2.5:7b \
 | `docs/design/2026-02-21-implementation-plan.md` | Gate A-F 实施计划 |
 | `docs/design/2026-02-21-retrieval-and-scoring-spec.md` | 检索评分规范 |
 | `docs/design/2026-02-21-langgraph-agent-workflow-spec.md` | 工作流规范 |
+| `docs/design/2026-02-21-security-design.md` | 安全设计 |
+| `docs/design/2026-02-22-gate-d-four-gates-checklist.md` | Gate D 检查清单 |
 | `docs/status/2026-02-24-session-handoff.md` | 本文件 |
 
 ---
 
-> 本文件由 2026-02-24 会话生成，供后续 Agent 接续执行。
-> 执行原则：先读本文件 -> 确认测试基线 (297 passed) -> 按 §4 任务优先级推进。
+> 本文件由 2026-02-24 会话更新，供后续 Agent 接续执行。
+> 执行原则：先读本文件 -> 确认测试基线 (459 passed) -> 按 §4 任务优先级推进。

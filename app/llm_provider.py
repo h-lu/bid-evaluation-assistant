@@ -55,6 +55,74 @@ class LLMUsage:
 
 _call_usage_log: list[LLMUsage] = []
 
+_TASK_TOKEN_BUDGET = int(os.environ.get("TASK_TOKEN_BUDGET", "50000"))
+_TASK_COST_WARN_RATIO = float(os.environ.get("TASK_COST_WARN_RATIO", "0.8"))
+_TASK_COST_HARD_RATIO = float(os.environ.get("TASK_COST_HARD_RATIO", "1.2"))
+
+
+@dataclass
+class CostBudgetTracker:
+    """Per-task cost budget tracker.
+
+    Tracks cumulative token usage for a single evaluation task.
+    When cost exceeds budget thresholds, triggers degradation or blocking.
+
+    SSOT §7.4: "单任务成本 P95 不高于基线 1.2x"
+    """
+
+    task_id: str
+    max_tokens_budget: int = field(default_factory=lambda: _TASK_TOKEN_BUDGET)
+    warn_threshold_ratio: float = field(default_factory=lambda: _TASK_COST_WARN_RATIO)
+    hard_threshold_ratio: float = field(default_factory=lambda: _TASK_COST_HARD_RATIO)
+
+    _cumulative_prompt_tokens: int = field(default=0, init=False)
+    _cumulative_completion_tokens: int = field(default=0, init=False)
+    _cumulative_total_tokens: int = field(default=0, init=False)
+    _degraded: bool = field(default=False, init=False)
+    _blocked: bool = field(default=False, init=False)
+
+    def record_usage(self, usage: LLMUsage) -> None:
+        self._cumulative_prompt_tokens += usage.prompt_tokens
+        self._cumulative_completion_tokens += usage.completion_tokens
+        self._cumulative_total_tokens += usage.total_tokens
+
+    @property
+    def total_tokens(self) -> int:
+        return self._cumulative_total_tokens
+
+    @property
+    def is_over_budget(self) -> bool:
+        if self.max_tokens_budget <= 0:
+            return False
+        return self._cumulative_total_tokens > int(
+            self.max_tokens_budget * self.hard_threshold_ratio
+        )
+
+    @property
+    def should_degrade(self) -> bool:
+        if self.max_tokens_budget <= 0:
+            return False
+        return self._cumulative_total_tokens >= int(
+            self.max_tokens_budget * self.warn_threshold_ratio
+        )
+
+    def check_budget(self) -> str:
+        """Returns 'ok', 'warn', 'degrade', or 'blocked'."""
+        if self._blocked:
+            return "blocked"
+        if self.max_tokens_budget <= 0:
+            return "ok"
+
+        if self.is_over_budget:
+            self._blocked = True
+            return "blocked"
+        if self._degraded:
+            return "degrade"
+        if self.should_degrade:
+            self._degraded = True
+            return "degrade"
+        return "ok"
+
 
 def get_usage_log() -> list[LLMUsage]:
     return list(_call_usage_log)

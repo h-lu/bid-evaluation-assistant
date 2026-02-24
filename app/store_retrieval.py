@@ -7,6 +7,7 @@ from urllib import request
 from urllib.error import URLError
 
 from app.errors import ApiError
+from app.sql_whitelist import query_structured, validate_structured_filters
 
 
 class StoreRetrievalMixin:
@@ -308,6 +309,7 @@ class StoreRetrievalMixin:
         enable_rerank: bool = True,
         must_include_terms: list[str] | None = None,
         must_exclude_terms: list[str] | None = None,
+        structured_filters: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         self.parser_retrieval_metrics["retrieval_queries_total"] += 1
         selected_mode = self._select_retrieval_mode(query_type=query_type, high_risk=high_risk)
@@ -346,6 +348,29 @@ class StoreRetrievalMixin:
                         },
                     }
                 )
+        if structured_filters:
+            validated = validate_structured_filters(structured_filters)
+            if validated:
+                struct_hits = query_structured(
+                    store=self,
+                    tenant_id=tenant_id,
+                    project_id=project_id,
+                    supplier_id=supplier_id,
+                    structured_filters=validated,
+                )
+                existing_ids = {c.get("chunk_id") for c in candidates}
+                for hit in struct_hits:
+                    hid = hit.get("chunk_id")
+                    if hid in existing_ids:
+                        for i, c in enumerate(candidates):
+                            if c.get("chunk_id") == hid and float(hit.get("score_raw", 0)) > float(
+                                c.get("score_raw", 0)
+                            ):
+                                candidates[i] = hit
+                    else:
+                        candidates.append(hit)
+                        existing_ids.add(hid)
+
         include_terms = [x.lower() for x in (must_include_terms or []) if x.strip()]
         exclude_terms = [x.lower() for x in (must_exclude_terms or []) if x.strip()]
         rewrite = self._normalize_and_rewrite_query(
@@ -425,6 +450,7 @@ class StoreRetrievalMixin:
         enable_rerank: bool = True,
         must_include_terms: list[str] | None = None,
         must_exclude_terms: list[str] | None = None,
+        structured_filters: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         base = self.retrieval_query(
             tenant_id=tenant_id,
@@ -438,6 +464,7 @@ class StoreRetrievalMixin:
             enable_rerank=enable_rerank,
             must_include_terms=must_include_terms,
             must_exclude_terms=must_exclude_terms,
+            structured_filters=structured_filters,
         )
         preview_items = []
         for item in base["items"]:
