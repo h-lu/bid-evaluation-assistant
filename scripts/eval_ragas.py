@@ -2,8 +2,17 @@
 """Offline RAGAS evaluation CLI.
 
 Usage:
-    python scripts/eval_ragas.py --dataset golden_qa.json
+    # Real RAGAS (requires OPENAI_API_KEY):
+    python scripts/eval_ragas.py --dataset golden_qa.json --backend ragas
+
+    # Lightweight (CI, no API key needed):
+    python scripts/eval_ragas.py --dataset golden_qa.json --backend lightweight
+
+    # Auto-detect (tries ragas, falls back to lightweight):
     python scripts/eval_ragas.py --demo
+
+    # End-to-end through store retrieval pipeline:
+    python scripts/eval_ragas.py --demo --e2e
 
 Aligned with:
   - retrieval-scoring-spec §12 (precision/recall >= 0.80, faithfulness >= 0.90)
@@ -17,7 +26,12 @@ import json
 import sys
 from pathlib import Path
 
-from app.ragas_evaluator import EvalSample, evaluate_and_gate, evaluate_dataset
+from app.ragas_evaluator import (
+    EvalSample,
+    evaluate_and_gate,
+    evaluate_dataset,
+    run_e2e_evaluation,
+)
 
 
 def _load_dataset(path: str) -> list[EvalSample]:
@@ -67,6 +81,13 @@ def main() -> None:
     parser.add_argument("--dataset", help="Path to golden QA dataset JSON")
     parser.add_argument("--demo", action="store_true", help="Run with built-in demo samples")
     parser.add_argument("--dataset-id", default="eval_offline", help="Dataset ID for gate report")
+    parser.add_argument(
+        "--backend",
+        choices=["ragas", "lightweight", "auto"],
+        default="auto",
+        help="Evaluation backend (default: auto)",
+    )
+    parser.add_argument("--e2e", action="store_true", help="Run end-to-end through store retrieval")
     args = parser.parse_args()
 
     if args.dataset:
@@ -77,8 +98,20 @@ def main() -> None:
         parser.print_help()
         sys.exit(1)
 
-    print(f"Evaluating {len(samples)} sample(s)...")
-    metrics = evaluate_dataset(samples)
+    print(f"Evaluating {len(samples)} sample(s) [backend={args.backend}]...")
+
+    if args.e2e:
+        from app.store import store
+
+        metrics = run_e2e_evaluation(
+            golden_samples=samples,
+            store=store,
+            backend=args.backend,
+        )
+    else:
+        metrics = evaluate_dataset(samples, backend=args.backend)
+
+    print(f"  backend:                {metrics.backend}")
     print(f"  context_precision:      {metrics.context_precision:.4f}")
     print(f"  context_recall:         {metrics.context_recall:.4f}")
     print(f"  faithfulness:           {metrics.faithfulness:.4f}")
@@ -86,7 +119,11 @@ def main() -> None:
     print(f"  hallucination_rate:     {metrics.hallucination_rate:.4f}")
     print(f"  citation_resolvable:    {metrics.citation_resolvable_rate:.4f}")
 
-    result = evaluate_and_gate(samples=samples, dataset_id=args.dataset_id)
+    result = evaluate_and_gate(
+        samples=samples,
+        dataset_id=args.dataset_id,
+        backend=args.backend,
+    )
     passed = result["passed"]
     print(f"\nQuality Gate: {'PASSED' if passed else 'BLOCKED'}")
     if result["failed_checks"]:

@@ -1,4 +1,4 @@
-"""Offline retrieval quality evaluator (RAGAS-compatible).
+"""Offline retrieval quality evaluator with real RAGAS + DeepEval integration.
 
 Computes quality metrics aligned with SSOT retrieval-scoring-spec §12 and
 Gate D-1 quality gate thresholds:
@@ -11,16 +11,29 @@ Gate D-1 quality gate thresholds:
   citation_resolvable_rate >= 0.98
 
 Two backends:
-  1. ``lightweight`` (default) – heuristic token-overlap scoring,
-     zero external dependencies, suitable for CI.
-  2. ``ragas`` – delegates to the ragas library when installed.
+  1. ``ragas`` — calls ragas library + deepeval HallucinationMetric.
+     Requires LLM (OpenAI API key or injected LLM wrapper).
+  2. ``lightweight`` — heuristic token-overlap scoring,
+     zero external dependencies, suitable for CI without API keys.
+
+Auto-selection: ``backend="auto"`` tries ragas first, falls back to
+lightweight if ragas imports or LLM setup fails.
 """
 
 from __future__ import annotations
 
+import logging
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Data structures
+# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -45,6 +58,7 @@ class EvalMetrics:
     response_relevancy: float = 0.0
     hallucination_rate: float = 0.0
     citation_resolvable_rate: float = 0.0
+    backend: str = "unknown"
 
     def to_quality_gate_payload(self, dataset_id: str) -> dict[str, Any]:
         return {
@@ -66,9 +80,145 @@ class EvalMetrics:
         }
 
 
-# ---------------------------------------------------------------------------
-# Token-overlap helpers (lightweight backend)
-# ---------------------------------------------------------------------------
+# ===================================================================
+# Backend 1: Real RAGAS + DeepEval
+# ===================================================================
+
+
+def _build_ragas_llm():
+    """Build a ragas-compatible LLM wrapper from environment."""
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise OSError("OPENAI_API_KEY not set")
+
+    model_name = os.environ.get("RAGAS_MODEL", "gpt-4o-mini")
+
+    from langchain_openai import ChatOpenAI
+    from ragas.llms import LangchainLLMWrapper
+
+    llm = ChatOpenAI(model=model_name, api_key=api_key)
+    return LangchainLLMWrapper(llm)
+
+
+def _build_ragas_embeddings():
+    """Build ragas-compatible embeddings from environment."""
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise OSError("OPENAI_API_KEY not set")
+
+    model_name = os.environ.get("RAGAS_EMBEDDING_MODEL", "text-embedding-3-small")
+
+    from langchain_openai import OpenAIEmbeddings
+    from ragas.embeddings import LangchainEmbeddingsWrapper
+
+    emb = OpenAIEmbeddings(model=model_name, api_key=api_key)
+    return LangchainEmbeddingsWrapper(emb)
+
+
+def evaluate_dataset_ragas(
+    samples: list[EvalSample],
+    *,
+    evaluator_llm: Any = None,
+    evaluator_embeddings: Any = None,
+) -> EvalMetrics:
+    """Compute metrics using real ragas library + deepeval HallucinationMetric.
+
+    Args:
+        samples: Golden dataset samples with retrieved_contexts and generated_answer filled.
+        evaluator_llm: Optional ragas-compatible LLM wrapper. If None, built from env.
+        evaluator_embeddings: Optional ragas-compatible embeddings. If None, built from env.
+
+    Returns:
+        EvalMetrics with real LLM-computed scores.
+    """
+    from ragas import EvaluationDataset, evaluate
+    from ragas.metrics.collections import (
+        AnswerRelevancy,
+        ContextPrecision,
+        ContextRecall,
+        Faithfulness,
+    )
+
+    if evaluator_llm is None:
+        evaluator_llm = _build_ragas_llm()
+    if evaluator_embeddings is None:
+        evaluator_embeddings = _build_ragas_embeddings()
+
+    ragas_data = []
+    for s in samples:
+        ragas_data.append({
+            "user_input": s.query,
+            "retrieved_contexts": list(s.retrieved_contexts),
+            "response": s.generated_answer,
+            "reference": s.ground_truth_answer,
+        })
+
+    dataset = EvaluationDataset.from_list(ragas_data)
+
+    metrics = [
+        Faithfulness(llm=evaluator_llm),
+        ContextPrecision(llm=evaluator_llm),
+        ContextRecall(llm=evaluator_llm),
+        AnswerRelevancy(llm=evaluator_llm, embeddings=evaluator_embeddings),
+    ]
+
+    result = evaluate(dataset=dataset, metrics=metrics)
+
+    scores = result.to_pandas()
+    faithfulness_score = float(scores["faithfulness"].mean())
+    context_precision_score = float(scores["context_precision"].mean())
+    context_recall_score = float(scores["context_recall"].mean())
+    response_relevancy_score = float(scores["answer_relevancy"].mean())
+
+    hallucination_rate = _compute_deepeval_hallucination(samples, evaluator_llm=evaluator_llm)
+    citation_resolvable = _compute_citation_resolvable(samples)
+
+    return EvalMetrics(
+        context_precision=context_precision_score,
+        context_recall=context_recall_score,
+        faithfulness=faithfulness_score,
+        response_relevancy=response_relevancy_score,
+        hallucination_rate=hallucination_rate,
+        citation_resolvable_rate=citation_resolvable,
+        backend="ragas",
+    )
+
+
+def _compute_deepeval_hallucination(
+    samples: list[EvalSample],
+    *,
+    evaluator_llm: Any = None,
+) -> float:
+    """Compute hallucination rate using deepeval's HallucinationMetric."""
+    from deepeval.metrics import HallucinationMetric
+    from deepeval.test_case import LLMTestCase
+
+    model_name = os.environ.get("RAGAS_MODEL", "gpt-4o-mini")
+
+    hallucinated_count = 0
+    total = 0
+    for s in samples:
+        if not s.generated_answer or not s.retrieved_contexts:
+            continue
+        total += 1
+        test_case = LLMTestCase(
+            input=s.query,
+            actual_output=s.generated_answer,
+            context=list(s.retrieved_contexts),
+        )
+        metric = HallucinationMetric(threshold=0.5, model=model_name)
+        metric.measure(test_case)
+        if metric.score < 0.5:
+            hallucinated_count += 1
+
+    if total == 0:
+        return 0.0
+    return hallucinated_count / total
+
+
+# ===================================================================
+# Backend 2: Lightweight (token-overlap, no LLM needed)
+# ===================================================================
 
 _WORD_RE = re.compile(r"[a-zA-Z0-9]+", re.UNICODE)
 _CJK_RE = re.compile(
@@ -77,11 +227,7 @@ _CJK_RE = re.compile(
 
 
 def _tokenize(text: str) -> set[str]:
-    """Tokenize text into a set of lowercase tokens.
-
-    Latin/digit sequences are kept as whole words; CJK characters are
-    split into overlapping bigrams to approximate word boundaries.
-    """
+    """Tokenize into lowercase tokens with CJK bigram approximation."""
     tokens: set[str] = set()
     for w in _WORD_RE.findall(text.lower()):
         tokens.add(w)
@@ -101,13 +247,7 @@ def _overlap_ratio(reference_tokens: set[str], candidate_tokens: set[str]) -> fl
     return len(reference_tokens & candidate_tokens) / len(reference_tokens)
 
 
-# ---------------------------------------------------------------------------
-# Per-sample metric computation (lightweight)
-# ---------------------------------------------------------------------------
-
-
 def _precision_per_sample(sample: EvalSample) -> float:
-    """Fraction of retrieved contexts that are relevant to ground truth."""
     if not sample.retrieved_contexts:
         return 0.0
     gt_tokens = _tokenize(" ".join(sample.ground_truth_contexts))
@@ -120,7 +260,6 @@ def _precision_per_sample(sample: EvalSample) -> float:
 
 
 def _recall_per_sample(sample: EvalSample) -> float:
-    """Fraction of ground truth content covered by retrieved contexts."""
     if not sample.ground_truth_contexts:
         return 1.0
     retrieved_tokens = _tokenize(" ".join(sample.retrieved_contexts))
@@ -129,7 +268,6 @@ def _recall_per_sample(sample: EvalSample) -> float:
 
 
 def _faithfulness_per_sample(sample: EvalSample) -> float:
-    """Fraction of generated answer grounded in retrieved contexts."""
     if not sample.generated_answer:
         return 1.0
     answer_tokens = _tokenize(sample.generated_answer)
@@ -140,7 +278,6 @@ def _faithfulness_per_sample(sample: EvalSample) -> float:
 
 
 def _relevancy_per_sample(sample: EvalSample) -> float:
-    """How relevant the generated answer is to the query."""
     if not sample.generated_answer:
         return 0.0
     query_tokens = _tokenize(sample.query)
@@ -149,7 +286,6 @@ def _relevancy_per_sample(sample: EvalSample) -> float:
 
 
 def _hallucination_per_sample(sample: EvalSample) -> float:
-    """1.0 if answer contains hallucinated content, 0.0 otherwise."""
     if not sample.generated_answer:
         return 0.0
     answer_tokens = _tokenize(sample.generated_answer)
@@ -161,30 +297,10 @@ def _hallucination_per_sample(sample: EvalSample) -> float:
     return 1.0 if ratio > 0.50 else 0.0
 
 
-def _citation_resolvable_per_sample(sample: EvalSample) -> float:
-    """Fraction of citations that can be resolved to a chunk_id."""
-    if not sample.citations:
-        return 1.0
-    resolvable = sum(
-        1
-        for c in sample.citations
-        if c.get("chunk_id") and isinstance(c["chunk_id"], str) and c["chunk_id"].strip()
-    )
-    return resolvable / len(sample.citations)
-
-
-# ---------------------------------------------------------------------------
-# Aggregate evaluation
-# ---------------------------------------------------------------------------
-
-
-def evaluate_dataset(samples: list[EvalSample]) -> EvalMetrics:
-    """Compute aggregate RAGAS-compatible metrics over a golden dataset.
-
-    Uses the lightweight token-overlap backend (no external deps).
-    """
+def evaluate_dataset_lightweight(samples: list[EvalSample]) -> EvalMetrics:
+    """Compute metrics using token-overlap heuristics (no LLM needed)."""
     if not samples:
-        return EvalMetrics()
+        return EvalMetrics(backend="lightweight")
 
     n = len(samples)
     precision_sum = 0.0
@@ -209,13 +325,163 @@ def evaluate_dataset(samples: list[EvalSample]) -> EvalMetrics:
         response_relevancy=relevancy_sum / n,
         hallucination_rate=hallucination_count / n,
         citation_resolvable_rate=citation_sum / n,
+        backend="lightweight",
     )
+
+
+# ===================================================================
+# Common helpers
+# ===================================================================
+
+
+def _citation_resolvable_per_sample(sample: EvalSample) -> float:
+    if not sample.citations:
+        return 1.0
+    resolvable = sum(
+        1
+        for c in sample.citations
+        if c.get("chunk_id") and isinstance(c["chunk_id"], str) and c["chunk_id"].strip()
+    )
+    return resolvable / len(sample.citations)
+
+
+def _compute_citation_resolvable(samples: list[EvalSample]) -> float:
+    if not samples:
+        return 0.0
+    return sum(_citation_resolvable_per_sample(s) for s in samples) / len(samples)
+
+
+# ===================================================================
+# Unified entry point
+# ===================================================================
+
+
+def evaluate_dataset(
+    samples: list[EvalSample],
+    *,
+    backend: str = "auto",
+    evaluator_llm: Any = None,
+    evaluator_embeddings: Any = None,
+) -> EvalMetrics:
+    """Compute RAGAS-compatible metrics.
+
+    Args:
+        samples: Golden dataset samples.
+        backend: "ragas" | "lightweight" | "auto".
+            "auto" tries ragas first, falls back to lightweight.
+        evaluator_llm: Optional ragas-compatible LLM (for ragas backend).
+        evaluator_embeddings: Optional ragas-compatible embeddings (for ragas backend).
+
+    Returns:
+        EvalMetrics with computed scores and backend indicator.
+    """
+    if not samples:
+        return EvalMetrics(backend="lightweight")
+
+    if backend == "lightweight":
+        return evaluate_dataset_lightweight(samples)
+
+    if backend in ("ragas", "auto"):
+        try:
+            return evaluate_dataset_ragas(
+                samples,
+                evaluator_llm=evaluator_llm,
+                evaluator_embeddings=evaluator_embeddings,
+            )
+        except Exception:
+            if backend == "ragas":
+                raise
+            logger.warning("ragas backend unavailable, falling back to lightweight")
+            return evaluate_dataset_lightweight(samples)
+
+    raise ValueError(f"Unknown backend: {backend}")
+
+
+# ===================================================================
+# End-to-end evaluation (store integration)
+# ===================================================================
+
+
+def run_e2e_evaluation(
+    *,
+    golden_samples: list[EvalSample],
+    store: Any,
+    tenant_id: str = "tenant_eval",
+    project_id: str = "prj_eval",
+    supplier_id: str = "sup_eval",
+    backend: str = "auto",
+    evaluator_llm: Any = None,
+    evaluator_embeddings: Any = None,
+) -> EvalMetrics:
+    """Run end-to-end offline evaluation through the store's retrieval pipeline.
+
+    For each sample in golden_samples:
+      1. Runs store.retrieval_query() to fill retrieved_contexts.
+      2. Uses retrieved context text as generated_answer proxy (if not pre-filled).
+
+    Then computes metrics via evaluate_dataset().
+    """
+    filled_samples: list[EvalSample] = []
+
+    for sample in golden_samples:
+        result = store.retrieval_query(
+            tenant_id=tenant_id,
+            project_id=project_id,
+            supplier_id=supplier_id,
+            query=sample.query,
+            query_type="fact",
+            high_risk=False,
+            top_k=20,
+            doc_scope=[],
+            enable_rerank=True,
+        )
+
+        retrieved_texts: list[str] = []
+        citation_objects: list[dict[str, Any]] = []
+        for item in result.get("items", []):
+            chunk_id = item.get("chunk_id", "")
+            source = store.citation_sources.get(chunk_id, {})
+            text = source.get("text", "")
+            if text:
+                retrieved_texts.append(text)
+            citation_objects.append({
+                "chunk_id": chunk_id,
+                "page": item.get("metadata", {}).get("page"),
+            })
+
+        generated_answer = sample.generated_answer
+        if not generated_answer and retrieved_texts:
+            generated_answer = " ".join(retrieved_texts[:3])
+
+        filled_samples.append(EvalSample(
+            query=sample.query,
+            ground_truth_answer=sample.ground_truth_answer,
+            ground_truth_contexts=sample.ground_truth_contexts,
+            retrieved_contexts=retrieved_texts or sample.retrieved_contexts,
+            generated_answer=generated_answer,
+            citations=citation_objects or sample.citations,
+        ))
+
+    return evaluate_dataset(
+        filled_samples,
+        backend=backend,
+        evaluator_llm=evaluator_llm,
+        evaluator_embeddings=evaluator_embeddings,
+    )
+
+
+# ===================================================================
+# Quality gate integration
+# ===================================================================
 
 
 def evaluate_and_gate(
     *,
     samples: list[EvalSample],
     dataset_id: str = "eval_offline",
+    backend: str = "auto",
+    evaluator_llm: Any = None,
+    evaluator_embeddings: Any = None,
 ) -> dict[str, Any]:
     """Evaluate a dataset and run it through the quality gate.
 
@@ -223,7 +489,12 @@ def evaluate_and_gate(
     """
     from app.quality_gates import evaluate_quality_gate
 
-    metrics = evaluate_dataset(samples)
+    metrics = evaluate_dataset(
+        samples,
+        backend=backend,
+        evaluator_llm=evaluator_llm,
+        evaluator_embeddings=evaluator_embeddings,
+    )
     payload = metrics.to_quality_gate_payload(dataset_id)
     m = payload["metrics"]
     return evaluate_quality_gate(
