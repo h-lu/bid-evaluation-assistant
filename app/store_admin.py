@@ -52,8 +52,27 @@ class StoreAdminMixin:
         file_bytes: bytes | None = None,
         content_type: str | None = None,
     ) -> dict[str, Any]:
-        document_id = f"doc_{uuid.uuid4().hex[:12]}"
         tenant_id = payload.get("tenant_id", "tenant_default")
+        file_sha256 = payload.get("file_sha256")
+
+        # Check for duplicate by file_sha256
+        if file_sha256:
+            existing = self.find_document_by_file_sha256(
+                tenant_id=tenant_id,
+                file_sha256=file_sha256,
+            )
+            if existing:
+                # Return existing document info instead of creating duplicate
+                existing_job = self.jobs.get(existing["document_id"])
+                return {
+                    "document_id": existing["document_id"],
+                    "job_id": existing_job.get("job_id") if existing_job else None,
+                    "status": "duplicate",
+                    "existing_status": existing.get("status"),
+                    "next": f"/api/v1/documents/{existing['document_id']}",
+                }
+
+        document_id = f"doc_{uuid.uuid4().hex[:12]}"
         storage_uri = None
         if file_bytes is not None:
             storage_uri = self.object_storage.put_object(
@@ -100,6 +119,15 @@ class StoreAdminMixin:
             "status": parse_job["status"],
             "next": f"/api/v1/jobs/{parse_job['job_id']}",
         }
+
+    def find_document_by_file_sha256(
+        self, *, tenant_id: str, file_sha256: str
+    ) -> dict[str, Any] | None:
+        """Find document by file SHA256 hash for deduplication."""
+        for doc in self.documents.values():
+            if doc.get("tenant_id") == tenant_id and doc.get("file_sha256") == file_sha256:
+                return doc
+        return None
 
     def get_document_for_tenant(self, *, document_id: str, tenant_id: str) -> dict[str, Any] | None:
         doc = self.documents.get(document_id)

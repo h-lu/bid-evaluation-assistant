@@ -977,6 +977,20 @@ class PostgresBackedStore(InMemoryStore):
         self._workflow_pg_repo.append(checkpoint=saved)
         return saved
 
+    def find_document_by_file_sha256(
+        self, *, tenant_id: str, file_sha256: str
+    ) -> dict[str, Any] | None:
+        """Find document by file SHA256 hash using PostgreSQL repository."""
+        loaded = self._documents_pg_repo.find_by_file_sha256(
+            tenant_id=tenant_id, file_sha256=file_sha256
+        )
+        if loaded is not None:
+            self.documents[loaded["document_id"]] = loaded
+            return loaded
+        return super().find_document_by_file_sha256(
+            tenant_id=tenant_id, file_sha256=file_sha256
+        )
+
     def get_document_for_tenant(self, *, document_id: str, tenant_id: str) -> dict[str, Any] | None:
         loaded = self._documents_pg_repo.get(tenant_id=tenant_id, document_id=document_id)
         if loaded is not None:
