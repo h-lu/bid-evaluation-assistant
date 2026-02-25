@@ -493,10 +493,17 @@ class MineruOfficialApiClient:
             ApiError: If batch fails or times out
         """
         start_time = time.time()
+        poll_count = 0
 
         while time.time() - start_time < self._config.max_poll_time_s:
             data = self.get_batch_status(batch_id=batch_id)
             state = data.get("state", "unknown")
+            poll_count += 1
+
+            # Log progress every 10 polls
+            if poll_count % 10 == 1:
+                elapsed = time.time() - start_time
+                print(f"Poll #{poll_count}: state={state}, elapsed={elapsed:.0f}s")
 
             if state == "done":
                 results = data.get("results", [])
