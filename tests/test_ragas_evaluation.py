@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from app.ragas_evaluator import (
     EvalMetrics,
     EvalSample,
@@ -109,6 +111,7 @@ class TestRagasBackendStructure:
     """Verify ragas integration structure without real API calls."""
 
     def test_ragas_imports_are_available(self):
+        pytest.importorskip("ragas")
         from ragas import EvaluationDataset, evaluate
         from ragas.metrics.collections import (
             AnswerRelevancy,
@@ -130,6 +133,7 @@ class TestRagasBackendStructure:
         )
 
     def test_deepeval_hallucination_import(self):
+        pytest.importorskip("deepeval")
         from deepeval.metrics import HallucinationMetric
         from deepeval.test_case import LLMTestCase
 
@@ -137,6 +141,7 @@ class TestRagasBackendStructure:
         assert LLMTestCase is not None
 
     def test_ragas_dataset_construction(self):
+        pytest.importorskip("ragas")
         from ragas import EvaluationDataset
 
         sample = _high_quality_sample()
@@ -328,6 +333,7 @@ class TestSSOTAlignment:
         assert "resolvable_rate" in gate_payload["metrics"]["citation"]
 
     def test_evaluator_supports_both_backends(self):
+        pytest.importorskip("ragas")
         samples = [_high_quality_sample()]
         lw = evaluate_dataset(samples, backend="lightweight")
         assert lw.backend == "lightweight"
