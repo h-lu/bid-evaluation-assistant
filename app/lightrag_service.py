@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from functools import lru_cache
 from typing import Any
@@ -196,6 +197,11 @@ def _chunk_metadata(
                 bbox = [float(x) for x in bbox_raw]
             except (TypeError, ValueError):
                 pass
+    # Convert lists to JSON strings for ChromaDB compatibility
+    bbox_json = json.dumps(bbox) if isinstance(bbox, list) else str(bbox)
+    heading_path = chunk.get("heading_path", [])
+    heading_path_json = json.dumps(heading_path) if isinstance(heading_path, list) else str(heading_path)
+
     return {
         "tenant_id": tenant_id,
         "project_id": project_id,
@@ -203,9 +209,9 @@ def _chunk_metadata(
         "document_id": document_id,
         "doc_type": doc_type,
         "page": page,
-        "bbox": bbox,
+        "bbox": bbox_json,
         "chunk_type": str(chunk.get("chunk_type") or "text"),
-        "heading_path": chunk.get("heading_path", []),
+        "heading_path": heading_path_json,
     }
 
 
