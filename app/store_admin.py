@@ -793,8 +793,6 @@ class StoreAdminMixin:
             if isinstance(document_id, str):
                 document = self.get_document_for_tenant(document_id=document_id, tenant_id=tenant_id)
                 if document is not None:
-                    document["status"] = "indexed"
-                    self._persist_document(document=document)
                     existing_chunks = self.list_document_chunks_for_tenant(
                         document_id=document_id,
                         tenant_id=tenant_id,
@@ -846,6 +844,9 @@ class StoreAdminMixin:
                             doc_type=str(document.get("doc_type") or ""),
                             chunks=persisted_chunks,
                         )
+                    # SSOT: vectors indexed -> document status = indexed
+                    document["status"] = "indexed"
+                    self._persist_document(document=document)
         self.append_workflow_checkpoint(
             thread_id=thread_id,
             job_id=job_id,
