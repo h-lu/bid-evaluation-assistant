@@ -150,6 +150,7 @@ doc_type_detect
 raw_file stored
  -> parse manifest stored
  -> chunks stored (PostgreSQL)
+ -> images stored (Object Storage)  # 新增：图片持久化
  -> vectors indexed (Chroma/LightRAG)
  -> document status = indexed
 ```
@@ -159,6 +160,27 @@ raw_file stored
 1. PG chunks 失败：不进入向量写入。
 2. 向量写入部分成功：记录待修复任务，不标记 indexed。
 3. 全部失败：进入任务重试/最终 DLQ。
+
+### 8.1 图片存储规范（新增）
+
+MinerU 解析结果中的 `images/` 目录图片需持久化：
+
+**存储路径：**
+```text
+tenants/{tenant_id}/document_parse/{document_id}/images/{filename}
+```
+
+**支持格式：**
+- `.jpg`, `.jpeg`, `.png`, `.gif`, `.webp`, `.bmp`, `.tiff`, `.svg`
+
+**元数据记录：**
+- `manifest.images_count`: 图片数量
+- `result.images_storage_uris`: 图片 URI 列表
+
+**用途：**
+1. 引用回跳时展示上下文截图
+2. 表格/图表内容可视化
+3. OCR 结果校验
 
 ## 9. 引用回跳契约
 

@@ -55,6 +55,10 @@ budget = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+  "real_mineru: Tests that call the real MinerU Official API (requires MINERU_API_KEY, slow)",
+  "slow: Slow tests that may take more than 10 seconds",
+]
 
 # ============================================
 # Ruff configuration

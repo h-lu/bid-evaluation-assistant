@@ -330,6 +330,76 @@ class TestMineruParseService:
         assert service._infer_section(item_h2, None) == "section"
         assert service._infer_section(item_none, None) == "content"
 
+    def test_save_images_extracts_and_persists_images(self, service, object_storage):
+        """Images should be extracted from zip and saved to object storage."""
+        import io
+        import zipfile
+
+        # Create a test zip with images
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("images/test_image.jpg", b"\xff\xd8\xff\xe0test_jpeg_data")
+            zf.writestr("images/nested/deep.png", b"\x89PNGtest_png_data")
+            zf.writestr("full.md", "# Test")
+
+        zip_bytes = buf.getvalue()
+
+        # Call _save_images
+        uris = service._save_images(
+            tenant_id="tenant_test",
+            document_id="doc_test",
+            zip_bytes=zip_bytes,
+        )
+
+        # Verify URIs returned
+        assert len(uris) == 2
+        assert any("test_image.jpg" in uri for uri in uris)
+        assert any("deep.png" in uri for uri in uris)
+
+        # Verify images saved to storage
+        for uri in uris:
+            assert uri in object_storage.objects
+            assert len(object_storage.objects[uri]) > 0
+
+    def test_save_images_handles_empty_zip(self, service):
+        """Empty zip should return empty list."""
+        import io
+        import zipfile
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("full.md", "# Test")
+
+        zip_bytes = buf.getvalue()
+
+        uris = service._save_images(
+            tenant_id="tenant_test",
+            document_id="doc_test",
+            zip_bytes=zip_bytes,
+        )
+
+        assert uris == []
+
+    def test_save_images_handles_no_images_directory(self, service):
+        """Zip without images directory should return empty list."""
+        import io
+        import zipfile
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("full.md", "# Test")
+            zf.writestr("other.txt", "text")
+
+        zip_bytes = buf.getvalue()
+
+        uris = service._save_images(
+            tenant_id="tenant_test",
+            document_id="doc_test",
+            zip_bytes=zip_bytes,
+        )
+
+        assert uris == []
+
 
 class TestBuildMineruParseService:
     """Test factory function."""
@@ -387,6 +457,8 @@ class TestMineruParseResult:
             status="completed",
             chunks_count=5,
             zip_storage_uri="object://local/bea/tenants/t1/document_parse/doc_123/result.zip",
+            images_storage_uris=["object://.../img1.jpg"],
+            images_count=1,
             content_list=[{"text": "test"}],
             full_md="# Test",
             parse_time_s=12.5,
@@ -395,4 +467,5 @@ class TestMineruParseResult:
         assert result.document_id == "doc_123"
         assert result.status == "completed"
         assert result.chunks_count == 5
+        assert result.images_count == 1
         assert result.parse_time_s == 12.5

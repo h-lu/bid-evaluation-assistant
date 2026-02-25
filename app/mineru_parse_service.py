@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import time
 import zipfile
 from dataclasses import dataclass
@@ -80,6 +81,8 @@ class MineruParseResult:
     status: str
     chunks_count: int
     zip_storage_uri: str | None
+    images_storage_uris: list[str] | None  # URIs for extracted images
+    images_count: int  # Number of images extracted
     content_list: list[dict[str, Any]]
     full_md: str | None
     parse_time_s: float
@@ -183,6 +186,13 @@ class MineruParseService:
             content_list = self._parse_content_list(content)
             full_md = self._extract_full_md(content)
 
+            # Step 5.5: Extract and save images from zip
+            images_storage_uris = self._save_images(
+                tenant_id=tenant_id,
+                document_id=document_id,
+                zip_bytes=zip_bytes,
+            )
+
             # Step 6: Convert content_list to chunks
             chunks = self._content_list_to_chunks(
                 content_list=content_list,
@@ -205,6 +215,7 @@ class MineruParseService:
             manifest["status"] = "completed"
             manifest["ended_at"] = datetime.now(tz=UTC).isoformat()
             manifest["error_code"] = None
+            manifest["images_count"] = len(images_storage_uris)
             self._parse_manifests_repo.upsert(tenant_id=tenant_id, manifest=manifest)
 
             # Step 9: Update document status
@@ -222,6 +233,8 @@ class MineruParseService:
                 status="completed",
                 chunks_count=len(chunks),
                 zip_storage_uri=zip_storage_uri,
+                images_storage_uris=images_storage_uris,
+                images_count=len(images_storage_uris),
                 content_list=[self._item_to_dict(item) for item in content_list],
                 full_md=full_md,
                 parse_time_s=parse_time,
@@ -302,6 +315,70 @@ class MineruParseService:
                 http_status=503,
             ) from e
         return content
+
+    def _save_images(
+        self,
+        *,
+        tenant_id: str,
+        document_id: str,
+        zip_bytes: bytes,
+    ) -> list[str]:
+        """Extract and save images from zip to object storage.
+
+        Images are stored at: tenants/{tenant_id}/document_parse/{document_id}/images/{filename}
+
+        Returns list of storage URIs for saved images.
+        """
+        storage_uris: list[str] = []
+        image_extensions = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tiff", ".svg"}
+
+        try:
+            with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+                for name in zf.namelist():
+                    # Check if file is in images directory and has image extension
+                    lower_name = name.lower()
+                    if name.startswith("images/") or "/images/" in name:
+                        ext = os.path.splitext(name)[1].lower()
+                        if ext in image_extensions:
+                            # Extract filename from path
+                            filename = os.path.basename(name)
+                            if not filename:
+                                continue
+
+                            # Read image bytes
+                            image_bytes = zf.read(name)
+                            if len(image_bytes) == 0:
+                                continue
+
+                            # Determine content type
+                            content_type_map = {
+                                ".jpg": "image/jpeg",
+                                ".jpeg": "image/jpeg",
+                                ".png": "image/png",
+                                ".gif": "image/gif",
+                                ".webp": "image/webp",
+                                ".bmp": "image/bmp",
+                                ".tiff": "image/tiff",
+                                ".svg": "image/svg+xml",
+                            }
+                            content_type = content_type_map.get(ext, "application/octet-stream")
+
+                            # Save to object storage
+                            uri = self._object_storage.put_object(
+                                tenant_id=tenant_id,
+                                object_type="document_parse",
+                                object_id=f"{document_id}/images",
+                                filename=filename,
+                                content_bytes=image_bytes,
+                                content_type=content_type,
+                            )
+                            storage_uris.append(uri)
+
+        except zipfile.BadZipFile:
+            # Log warning but don't fail - images are optional
+            pass
+
+        return storage_uris
 
     def _parse_content_list(self, content: dict[str, str]) -> list[MineruContentItem]:
         """Parse content_list.json following SSOT §2.3 priority."""

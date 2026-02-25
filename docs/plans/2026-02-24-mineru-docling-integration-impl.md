@@ -491,6 +491,44 @@ OCR_ENDPOINT=http://ocr:8102
 |----------|--------|------|
 | `test_mineru_official_api.py` | 5 | ✅ |
 | `test_mineru_official_api_adapter.py` | 21 | ✅ |
-| `test_mineru_parse_service.py` | 13 | ✅ |
+| `test_mineru_parse_service.py` | 16 | ✅ |
+| `test_mineru_real_persistence.py` | 4 | ✅ (可选执行) |
 
-**总计:** 39 个新测试，
+**总计:** 46 个新测试
+
+---
+
+## 图片存储功能（新增）
+
+### 功能说明
+
+MinerU 解析结果中的 `images/` 目录图片会自动提取并保存到对象存储。
+
+**存储路径：**
+```
+tenants/{tenant_id}/document_parse/{document_id}/images/{filename}
+```
+
+**支持的图片格式：**
+- `.jpg`, `.jpeg`, `.png`, `.gif`, `.webp`, `.bmp`, `.tiff`, `.svg`
+
+**返回字段：**
+- `MineruParseResult.images_storage_uris`: 图片 URI 列表
+- `MineruParseResult.images_count`: 图片数量
+- `manifest.images_count`: 记录在 manifest 中的图片数量
+
+### 用途
+
+1. 引用回跳时展示上下文截图
+2. 表格/图表内容可视化
+3. OCR 结果校验
+
+### 运行实际持久化测试
+
+```bash
+# 运行真实 MinerU API 持久化测试（需要 MINERU_API_KEY）
+pytest tests/test_mineru_real_persistence.py -v -m real_mineru
+
+# 跳过真实 API 测试（默认行为）
+pytest -v -m "not real_mineru"
+```

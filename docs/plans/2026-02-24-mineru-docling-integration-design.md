@@ -291,6 +291,7 @@ class MineruParserAdapter:
 | 本地 DOCX 解析 | document_parser.py:215-266 | - | ✅ (已有) |
 | **MinerU Official API** | mineru_official_api.py | - | ✅ 新增 |
 | **MinerU Parse Service** | mineru_parse_service.py | - | ✅ 新增 |
+| **图片存储** | mineru_parse_service.py:_save_images | §8.1 | ✅ 新增 |
 | **StoreParse 集成** | store_parse.py:162-210 | §3 | ✅ 新增 |
 
 ## 10. 新增功能
@@ -313,9 +314,21 @@ class MineruParserAdapter:
 完整解析服务， 持久化:
 
 - 保存结果 zip 到对象存储
+- **提取并保存图片到对象存储**（新增）
 - 更新 parse manifest
 - 转换 content_list 为 chunks
 - 持久化 chunks 到数据库
+
+### 10.3 图片存储功能（新增）
+
+**存储路径:** `tenants/{tenant_id}/document_parse/{document_id}/images/{filename}`
+
+**支持格式:** `.jpg`, `.jpeg`, `.png`, `.gif`, `.webp`, `.bmp`, `.tiff`, `.svg`
+
+**用途:**
+1. 引用回跳时展示上下文截图
+2. 表格/图表内容可视化
+3. OCR 结果校验
 
 ### 10.3 StoreParse 集成
 
