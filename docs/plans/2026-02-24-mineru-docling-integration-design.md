@@ -289,3 +289,77 @@ class MineruParserAdapter:
 | 编码回退 | parse_utils.py:81-94 | §5.3 | ✅ (已有) |
 | 本地 PDF 解析 | document_parser.py:137-212 | - | ✅ (已有) |
 | 本地 DOCX 解析 | document_parser.py:215-266 | - | ✅ (已有) |
+| **MinerU Official API** | mineru_official_api.py | - | ✅ 新增 |
+| **MinerU Parse Service** | mineru_parse_service.py | - | ✅ 新增 |
+| **StoreParse 集成** | store_parse.py:162-210 | §3 | ✅ 新增 |
+
+## 10. 新增功能
+
+### 10.1 MinerU Official API Adapter
+
+**文件:** `app/mineru_official_api.py`
+
+异步任务模式的 MinerU 云 API 适配器：
+
+- `MineruApiConfig`: API 配置
+- `MineruContentItem`: SSOT §5.1 对齐的内容项
+- `MineruOfficialApiClient`: 低级 API 客户端
+- `MineruOfficialApiAdapter`: 高级解析适配器
+
+### 10.2 MinerU Parse Service
+
+**文件:** `app/mineru_parse_service.py`
+
+完整解析服务， 持久化:
+
+- 保存结果 zip 到对象存储
+- 更新 parse manifest
+- 转换 content_list 为 chunks
+- 持久化 chunks 到数据库
+
+### 10.3 StoreParse 集成
+
+**文件:** `app/store_parse.py`
+
+集成 MinerU Official API 到现有解析流程:
+
+- `_try_mineru_official_api()`: 尝试 MinerU Official API
+- 修改 `_parse_document_file()`: 优先使用 MinerU Official API
+
+## 11. 使用方式
+
+### 11.1 环境变量
+
+```bash
+# MinerU Official API (必需)
+export MINERU_API_KEY="your_api_key"
+
+# 可选配置
+export MINERU_TIMEOUT_S=30
+export MINERU_MAX_POLL_TIME_S=180
+export MINERU_IS_OCR=true
+export MINERU_ENABLE_FORMULA=false
+```
+
+### 11.2 上传文档
+
+```python
+POST /api/v1/documents/upload
+{
+    "filename": "document.pdf",
+    "source_url": "https://example.com/document.pdf",
+    "tenant_id": "tenant_abc"
+}
+```
+
+### 11.3 触发解析
+
+```python
+POST /api/v1/documents/{document_id}/parse
+```
+
+解析器会自动：
+1. 检测 `source_url` 和 `MINERU_API_KEY`
+2. 使用 MinerU Official API 解析
+3. 保存结果到对象存储
+4. 持久化 chunks 到数据库

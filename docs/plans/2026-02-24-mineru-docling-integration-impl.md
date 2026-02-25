@@ -372,11 +372,13 @@ Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
 
 ## Verification Checklist
 
-- [ ] Fallback 2跳限制已实现 (SSOT §3)
-- [ ] 文件发现 5级优先级已实现 (SSOT §2.3)
-- [ ] 所有现有测试继续通过
-- [ ] 新测试覆盖新功能
-- [ ] 设计文档已更新
+- [x] Fallback 2跳限制已实现 (SSOT §3)
+- [x] 文件发现 5级优先级已实现 (SSOT §2.3)
+- [x] 所有现有测试继续通过
+- [x] 新测试覆盖新功能
+- [x] 设计文档已更新
+- [x] MinerU Official API 集成完成
+- [x] 解析结果持久化完成
 
 ---
 
@@ -384,11 +386,13 @@ Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
 
 | SSOT 约束 | 实现任务 | 状态 |
 |-----------|----------|------|
-| §3 fallback 最多 2 跳 | Task 1.1 | 待实施 |
-| §2.3 文件发现 5 级优先级 | Task 1.2 | 待实施 |
+| §3 fallback 最多 2 跳 | Task 1.1 | ✅ |
+| §2.3 文件发现 5 级优先级 | Task 1.2 | ✅ |
 | §5.2 bbox 归一化 | 现有实现 | ✅ |
 | §5.3 编码回退 | 现有实现 | ✅ |
 | §10 错误码 | 现有实现 | ✅ |
+| §4 parse manifest | Task 1.3 | ✅ |
+| §8 持久化顺序 | Task 1.3 | ✅ |
 
 ---
 
@@ -407,3 +411,86 @@ MINERU_ENDPOINT=http://mineru:8100
 DOCLING_ENDPOINT=http://docling:8101
 OCR_ENDPOINT=http://ocr:8102
 ```
+
+---
+
+## Phase 4: MinerU Official API 集成 (已完成)
+
+### Task 4.1: 创建 MinerU Official API 适配器
+
+**Files:**
+- Create: `app/mineru_official_api.py`
+- Create: `tests/test_mineru_official_api.py`
+- Create: `tests/test_mineru_official_api_adapter.py`
+
+**实现内容:**
+- `MineruApiConfig`: API 配置类
+- `MineruContentItem`: 内容项模型 (SSOT §5.1)
+- `MineruOfficialApiClient`: 低级 API 客户端
+- `MineruOfficialApiAdapter`: 高级适配器
+
+**SSOT 对齐:**
+- §5.1 字段标准化: text, type, page_idx, bbox
+- §5.2 bbox 归一化
+- §10 错误码
+
+**Commit:** `e2c9844`
+
+### Task 4.2: 创建 MinerU 解析持久化服务
+
+**Files:**
+- Create: `app/mineru_parse_service.py`
+- Create: `tests/test_mineru_parse_service.py`
+
+**实现内容:**
+- `MineruParseService`: 完整解析流程服务
+- `MineruParseResult`: 解析结果数据类
+- `build_mineru_parse_service()`: 工厂函数
+
+**SSOT 对齐:**
+- §4 parse manifest 契约
+- §8 持久化顺序
+- §7.3 chunk 元数据字段
+
+**Commit:** `4db1bf0`
+
+### Task 4.3: 集成到现有解析流程
+
+**Files:**
+- Modify: `app/store_parse.py`
+
+**实现内容:**
+- 添加 `_try_mineru_official_api()` 方法
+- 修改 `_parse_document_file()` 集成 MinerU Official API
+- 支持 `source_url` 字段
+
+**解析路由:**
+1. MinerU Official API (MINERU_API_KEY + source_url)
+2. Local PyMuPDF (file_bytes available)
+3. Stub adapter (fallback)
+
+**Commit:** `aff9f09`
+
+---
+
+## 新增环境变量
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `MINERU_API_KEY` | MinerU Official API Key | (必需) |
+| `MINERU_TIMEOUT_S` | 请求超时 (秒) | 30 |
+| `MINERU_MAX_POLL_TIME_S` | 最大轮询时间 (秒) | 180 |
+| `MINERU_IS_OCR` | 启用 OCR | true |
+| `MINERU_ENABLE_FORMULA` | 启用公式识别 | false |
+
+---
+
+## 新增测试统计
+
+| 测试文件 | 测试数 | 状态 |
+|----------|--------|------|
+| `test_mineru_official_api.py` | 5 | ✅ |
+| `test_mineru_official_api_adapter.py` | 21 | ✅ |
+| `test_mineru_parse_service.py` | 13 | ✅ |
+
+**总计:** 39 个新测试，
