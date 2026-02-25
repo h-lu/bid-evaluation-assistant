@@ -45,23 +45,25 @@ def _make_docx_with_content(sections: list[tuple[str, str]]) -> bytes:
 
 class TestRealPdfParsingE2E:
     def test_upload_and_parse_pdf_produces_real_chunks(self, client):
-        pdf_bytes = _make_pdf_with_content([
-            "Supplier Qualification Report\n\n"
-            "The supplier holds ISO 9001 certification, certificate number CN-2025-12345. "
-            "The certification is valid until December 2026. Quality management system "
-            "has been independently audited and verified by third-party assessor. "
-            "All manufacturing processes comply with international standards.",
-            "Technical Proposal Summary\n\n"
-            "The proposed solution uses distributed microservices architecture. "
-            "Supports horizontal scaling and high availability deployments. "
-            "Response time SLA: 99.9% uptime guaranteed. "
-            "Backup and disaster recovery plan included in the proposal.",
-            "Pricing Details\n\n"
-            "Total quoted price: RMB 1,280,000 including tax. "
-            "Payment terms: 30% advance, 70% upon delivery acceptance. "
-            "Price validity period: 90 calendar days from submission date. "
-            "No hidden charges or additional fees beyond the quoted amount.",
-        ])
+        pdf_bytes = _make_pdf_with_content(
+            [
+                "Supplier Qualification Report\n\n"
+                "The supplier holds ISO 9001 certification, certificate number CN-2025-12345. "
+                "The certification is valid until December 2026. Quality management system "
+                "has been independently audited and verified by third-party assessor. "
+                "All manufacturing processes comply with international standards.",
+                "Technical Proposal Summary\n\n"
+                "The proposed solution uses distributed microservices architecture. "
+                "Supports horizontal scaling and high availability deployments. "
+                "Response time SLA: 99.9% uptime guaranteed. "
+                "Backup and disaster recovery plan included in the proposal.",
+                "Pricing Details\n\n"
+                "Total quoted price: RMB 1,280,000 including tax. "
+                "Payment terms: 30% advance, 70% upon delivery acceptance. "
+                "Price validity period: 90 calendar days from submission date. "
+                "No hidden charges or additional fees beyond the quoted amount.",
+            ]
+        )
 
         upload_resp = client.post(
             "/api/v1/documents/upload",
@@ -84,9 +86,7 @@ class TestRealPdfParsingE2E:
         result = store.run_job_once(job_id=job_id, tenant_id="tenant_e2e_test")
         assert result["final_status"] == "succeeded"
 
-        chunks = store.list_document_chunks_for_tenant(
-            document_id=document_id, tenant_id="tenant_e2e_test"
-        )
+        chunks = store.list_document_chunks_for_tenant(document_id=document_id, tenant_id="tenant_e2e_test")
         assert len(chunks) >= 1
 
         has_real_content = False
@@ -101,12 +101,14 @@ class TestRealPdfParsingE2E:
         assert has_real_content, "Chunks should contain real extracted text from PDF"
 
     def test_parse_pdf_registers_citation_sources(self, client):
-        pdf_bytes = _make_pdf_with_content([
-            "Section A: Delivery Timeline\n\n"
-            "All deliverables will be completed within 30 business days after contract signing. "
-            "Detailed milestone schedule is provided in Appendix B of this proposal. "
-            "Penalty clause for late delivery: 0.5% per day, capped at 10% of total value.",
-        ])
+        pdf_bytes = _make_pdf_with_content(
+            [
+                "Section A: Delivery Timeline\n\n"
+                "All deliverables will be completed within 30 business days after contract signing. "
+                "Detailed milestone schedule is provided in Appendix B of this proposal. "
+                "Penalty clause for late delivery: 0.5% per day, capped at 10% of total value.",
+            ]
+        )
 
         upload_resp = client.post(
             "/api/v1/documents/upload",
@@ -128,15 +130,11 @@ class TestRealPdfParsingE2E:
 
         store.run_job_once(job_id=job_id, tenant_id="tenant_citation_test")
 
-        chunks = store.list_document_chunks_for_tenant(
-            document_id=document_id, tenant_id="tenant_citation_test"
-        )
+        chunks = store.list_document_chunks_for_tenant(document_id=document_id, tenant_id="tenant_citation_test")
         for chunk in chunks:
             chunk_id = chunk.get("chunk_id")
             if chunk_id:
-                source = store.get_citation_source(
-                    chunk_id=chunk_id, tenant_id="tenant_citation_test"
-                )
+                source = store.get_citation_source(chunk_id=chunk_id, tenant_id="tenant_citation_test")
                 assert source is not None, f"Citation source missing for chunk {chunk_id}"
                 assert source.get("document_id") == document_id
 
@@ -170,20 +168,26 @@ class TestRealPdfParsingE2E:
 
         store.run_job_once(job_id=job_id, tenant_id="tenant_multipage")
 
-        chunks = store.list_document_chunks_for_tenant(
-            document_id=document_id, tenant_id="tenant_multipage"
-        )
+        chunks = store.list_document_chunks_for_tenant(document_id=document_id, tenant_id="tenant_multipage")
         assert len(chunks) >= 1
 
 
 class TestRealDocxParsingE2E:
     def test_upload_and_parse_docx(self, client):
-        docx_bytes = _make_docx_with_content([
-            ("Supplier Profile", "Company A has 15 years of experience in IT solutions. "
-             "Annual revenue exceeds 50 million RMB. Certified ISO 27001 for information security."),
-            ("Technical Approach", "Proposed architecture follows cloud-native principles. "
-             "Containerized deployment with Kubernetes orchestration. CI/CD pipeline included."),
-        ])
+        docx_bytes = _make_docx_with_content(
+            [
+                (
+                    "Supplier Profile",
+                    "Company A has 15 years of experience in IT solutions. "
+                    "Annual revenue exceeds 50 million RMB. Certified ISO 27001 for information security.",
+                ),
+                (
+                    "Technical Approach",
+                    "Proposed architecture follows cloud-native principles. "
+                    "Containerized deployment with Kubernetes orchestration. CI/CD pipeline included.",
+                ),
+            ]
+        )
 
         upload_resp = client.post(
             "/api/v1/documents/upload",
@@ -192,7 +196,13 @@ class TestRealDocxParsingE2E:
                 "supplier_id": "sup_docx_test",
                 "doc_type": "bid",
             },
-            files={"file": ("proposal.docx", docx_bytes, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")},
+            files={
+                "file": (
+                    "proposal.docx",
+                    docx_bytes,
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+            },
             headers={
                 "Idempotency-Key": "e2e-docx-upload-001",
                 "x-tenant-id": "tenant_docx_test",
@@ -206,9 +216,7 @@ class TestRealDocxParsingE2E:
         result = store.run_job_once(job_id=job_id, tenant_id="tenant_docx_test")
         assert result["final_status"] == "succeeded"
 
-        chunks = store.list_document_chunks_for_tenant(
-            document_id=document_id, tenant_id="tenant_docx_test"
-        )
+        chunks = store.list_document_chunks_for_tenant(document_id=document_id, tenant_id="tenant_docx_test")
         assert len(chunks) >= 1
         full_text = " ".join(c.get("text", "") for c in chunks)
         assert "experience" in full_text.lower() or "Kubernetes" in full_text
@@ -217,39 +225,45 @@ class TestRealDocxParsingE2E:
 class TestEvaluationWithLlmProvider:
     def test_evaluation_creates_scored_report(self, client):
         """Verify evaluation goes through llm_provider (falls back to mock in tests)."""
-        store.create_project(payload={
-            "project_code": "EVAL_E2E",
-            "name": "E2E Eval Test",
-            "tenant_id": "tenant_eval_e2e",
-        })
-        store.create_supplier(payload={
-            "supplier_code": "SUP_E2E",
-            "name": "Test Supplier",
-            "tenant_id": "tenant_eval_e2e",
-        })
-        store.create_rule_pack(payload={
-            "rule_pack_version": "v1.0.0",
-            "name": "E2E Rule Pack",
-            "tenant_id": "tenant_eval_e2e",
-            "rules": {
-                "criteria": [
-                    {
-                        "criteria_id": "qualification",
-                        "criteria_name": "Supplier Qualification",
-                        "max_score": 20.0,
-                        "weight": 1.0,
-                        "requirement_text": "Supplier must have ISO certification",
-                    },
-                    {
-                        "criteria_id": "technical",
-                        "criteria_name": "Technical Capability",
-                        "max_score": 30.0,
-                        "weight": 1.5,
-                        "requirement_text": "Technical solution must support high availability",
-                    },
-                ],
-            },
-        })
+        store.create_project(
+            payload={
+                "project_code": "EVAL_E2E",
+                "name": "E2E Eval Test",
+                "tenant_id": "tenant_eval_e2e",
+            }
+        )
+        store.create_supplier(
+            payload={
+                "supplier_code": "SUP_E2E",
+                "name": "Test Supplier",
+                "tenant_id": "tenant_eval_e2e",
+            }
+        )
+        store.create_rule_pack(
+            payload={
+                "rule_pack_version": "v1.0.0",
+                "name": "E2E Rule Pack",
+                "tenant_id": "tenant_eval_e2e",
+                "rules": {
+                    "criteria": [
+                        {
+                            "criteria_id": "qualification",
+                            "criteria_name": "Supplier Qualification",
+                            "max_score": 20.0,
+                            "weight": 1.0,
+                            "requirement_text": "Supplier must have ISO certification",
+                        },
+                        {
+                            "criteria_id": "technical",
+                            "criteria_name": "Technical Capability",
+                            "max_score": 30.0,
+                            "weight": 1.5,
+                            "requirement_text": "Technical solution must support high availability",
+                        },
+                    ],
+                },
+            }
+        )
 
         eval_resp = client.post(
             "/api/v1/evaluations",
@@ -276,9 +290,7 @@ class TestEvaluationWithLlmProvider:
         assert "evaluation_id" in eval_data
 
         eval_id = eval_data["evaluation_id"]
-        report = store.get_evaluation_report_for_tenant(
-            evaluation_id=eval_id, tenant_id="tenant_eval_e2e"
-        )
+        report = store.get_evaluation_report_for_tenant(evaluation_id=eval_id, tenant_id="tenant_eval_e2e")
         assert report is not None
         assert "criteria_results" in report
         assert len(report["criteria_results"]) == 2
@@ -294,32 +306,38 @@ class TestFullPipelineE2E:
     """End-to-end: upload PDF → parse → Chroma index → Chroma retrieve → evaluate."""
 
     def _upload_and_parse(self, client, *, tenant_id: str, project_id: str, supplier_id: str):
-        pdf_bytes = _make_pdf_with_content([
-            "# Supplier Qualification\n\n"
-            "The supplier holds ISO 9001:2015 certification, certificate number CN-2025-12345. "
-            "The quality management system has been independently audited by SGS International. "
-            "Company has 10 years of experience in government IT procurement projects.",
-            "# Technical Proposal\n\n"
-            "The solution provides 99.99% uptime SLA with automatic failover. "
-            "Microservices architecture with Kubernetes orchestration. "
-            "All data encrypted at rest and in transit using AES-256 and TLS 1.3. "
-            "Full disaster recovery with RPO < 1 hour and RTO < 4 hours.",
-            "# Pricing\n\n"
-            "Total project cost: RMB 2,580,000 (tax inclusive). "
-            "Payment schedule: 30% advance, 40% on delivery, 30% after acceptance. "
-            "Price validity: 120 calendar days. Annual maintenance: RMB 180,000.",
-        ])
+        pdf_bytes = _make_pdf_with_content(
+            [
+                "# Supplier Qualification\n\n"
+                "The supplier holds ISO 9001:2015 certification, certificate number CN-2025-12345. "
+                "The quality management system has been independently audited by SGS International. "
+                "Company has 10 years of experience in government IT procurement projects.",
+                "# Technical Proposal\n\n"
+                "The solution provides 99.99% uptime SLA with automatic failover. "
+                "Microservices architecture with Kubernetes orchestration. "
+                "All data encrypted at rest and in transit using AES-256 and TLS 1.3. "
+                "Full disaster recovery with RPO < 1 hour and RTO < 4 hours.",
+                "# Pricing\n\n"
+                "Total project cost: RMB 2,580,000 (tax inclusive). "
+                "Payment schedule: 30% advance, 40% on delivery, 30% after acceptance. "
+                "Price validity: 120 calendar days. Annual maintenance: RMB 180,000.",
+            ]
+        )
 
-        store.create_project(payload={
-            "project_code": f"pc_{project_id}",
-            "name": "Full Pipeline Test Project",
-            "tenant_id": tenant_id,
-        })
-        store.create_supplier(payload={
-            "supplier_code": f"sc_{supplier_id}",
-            "name": "Full Pipeline Supplier",
-            "tenant_id": tenant_id,
-        })
+        store.create_project(
+            payload={
+                "project_code": f"pc_{project_id}",
+                "name": "Full Pipeline Test Project",
+                "tenant_id": tenant_id,
+            }
+        )
+        store.create_supplier(
+            payload={
+                "supplier_code": f"sc_{supplier_id}",
+                "name": "Full Pipeline Supplier",
+                "tenant_id": tenant_id,
+            }
+        )
 
         upload_resp = client.post(
             "/api/v1/documents/upload",
@@ -350,9 +368,7 @@ class TestFullPipelineE2E:
             client, tenant_id=tenant_id, project_id=project_id, supplier_id=supplier_id
         )
 
-        chunks = store.list_document_chunks_for_tenant(
-            document_id=document_id, tenant_id=tenant_id
-        )
+        chunks = store.list_document_chunks_for_tenant(document_id=document_id, tenant_id=tenant_id)
         assert len(chunks) >= 1, "Parse should produce at least 1 chunk"
         full_text = " ".join(c.get("text", "") for c in chunks)
         assert "ISO 9001" in full_text or "99.99%" in full_text, "Chunks should contain real PDF content"
@@ -361,36 +377,38 @@ class TestFullPipelineE2E:
             source = store.get_citation_source(chunk_id=chunk["chunk_id"], tenant_id=tenant_id)
             assert source is not None, f"Citation source missing for {chunk['chunk_id']}"
 
-        store.create_rule_pack(payload={
-            "rule_pack_version": "v1.0.0",
-            "name": "Full Pipeline Rules",
-            "tenant_id": tenant_id,
-            "rules": {
-                "criteria": [
-                    {
-                        "criteria_id": "qualification",
-                        "criteria_name": "Supplier Qualification",
-                        "max_score": 20.0,
-                        "weight": 1.0,
-                        "requirement_text": "Supplier must have valid ISO 9001 certification",
-                    },
-                    {
-                        "criteria_id": "technical",
-                        "criteria_name": "Technical Solution",
-                        "max_score": 30.0,
-                        "weight": 1.5,
-                        "requirement_text": "Solution must provide high availability with SLA >= 99.9%",
-                    },
-                    {
-                        "criteria_id": "pricing",
-                        "criteria_name": "Pricing",
-                        "max_score": 20.0,
-                        "weight": 1.0,
-                        "requirement_text": "Total price must be clearly stated with payment terms",
-                    },
-                ],
-            },
-        })
+        store.create_rule_pack(
+            payload={
+                "rule_pack_version": "v1.0.0",
+                "name": "Full Pipeline Rules",
+                "tenant_id": tenant_id,
+                "rules": {
+                    "criteria": [
+                        {
+                            "criteria_id": "qualification",
+                            "criteria_name": "Supplier Qualification",
+                            "max_score": 20.0,
+                            "weight": 1.0,
+                            "requirement_text": "Supplier must have valid ISO 9001 certification",
+                        },
+                        {
+                            "criteria_id": "technical",
+                            "criteria_name": "Technical Solution",
+                            "max_score": 30.0,
+                            "weight": 1.5,
+                            "requirement_text": "Solution must provide high availability with SLA >= 99.9%",
+                        },
+                        {
+                            "criteria_id": "pricing",
+                            "criteria_name": "Pricing",
+                            "max_score": 20.0,
+                            "weight": 1.0,
+                            "requirement_text": "Total price must be clearly stated with payment terms",
+                        },
+                    ],
+                },
+            }
+        )
 
         eval_resp = client.post(
             "/api/v1/evaluations",
@@ -416,9 +434,7 @@ class TestFullPipelineE2E:
         eval_data = eval_resp.json()["data"]
         evaluation_id = eval_data["evaluation_id"]
 
-        report = store.get_evaluation_report_for_tenant(
-            evaluation_id=evaluation_id, tenant_id=tenant_id
-        )
+        report = store.get_evaluation_report_for_tenant(evaluation_id=evaluation_id, tenant_id=tenant_id)
         assert report is not None
         assert report.get("total_score", 0) > 0, "Report should have non-zero score"
         assert len(report.get("criteria_results", [])) == 3
@@ -435,9 +451,7 @@ class TestFullPipelineE2E:
         project_id = "proj_chroma_ret"
         supplier_id = "sup_chroma_ret"
 
-        self._upload_and_parse(
-            client, tenant_id=tenant_id, project_id=project_id, supplier_id=supplier_id
-        )
+        self._upload_and_parse(client, tenant_id=tenant_id, project_id=project_id, supplier_id=supplier_id)
 
         result = store.retrieval_query(
             tenant_id=tenant_id,
@@ -462,9 +476,7 @@ class TestFullPipelineE2E:
         project_id = "proj_preview"
         supplier_id = "sup_preview"
 
-        self._upload_and_parse(
-            client, tenant_id=tenant_id, project_id=project_id, supplier_id=supplier_id
-        )
+        self._upload_and_parse(client, tenant_id=tenant_id, project_id=project_id, supplier_id=supplier_id)
 
         result = store.retrieval_preview(
             tenant_id=tenant_id,

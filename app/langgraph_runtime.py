@@ -30,6 +30,7 @@ except Exception:  # pragma: no cover - langgraph not installed
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _utcnow_iso() -> str:
     return datetime.now(tz=UTC).isoformat()
 
@@ -58,6 +59,7 @@ class WorkflowIdentity:
 # ---------------------------------------------------------------------------
 # Checkpoint saver (unchanged)
 # ---------------------------------------------------------------------------
+
 
 class StoreCheckpointSaver(BaseCheckpointSaver):  # type: ignore[misc]
     def __init__(self, *, store: Any) -> None:
@@ -208,6 +210,7 @@ class StoreCheckpointSaver(BaseCheckpointSaver):  # type: ignore[misc]
 # Graph builder (SSOT §3 – real nodes + conditional edges)
 # ---------------------------------------------------------------------------
 
+
 def build_evaluation_graph(*, store: Any, identity: WorkflowIdentity):
     """Build a LangGraph StateGraph with **real** evaluation node functions.
 
@@ -233,6 +236,7 @@ def build_evaluation_graph(*, store: Any, identity: WorkflowIdentity):
 
     def _wrap(node_fn, name: str):
         """Wrap a node function: bind store, record checkpoint."""
+
         def _inner(state: dict[str, Any]) -> dict[str, Any]:
             store._append_node_checkpoint(
                 thread_id=identity.thread_id,
@@ -243,6 +247,7 @@ def build_evaluation_graph(*, store: Any, identity: WorkflowIdentity):
             )
             updates = node_fn(state, store=store)
             return updates
+
         _inner.__name__ = name
         return _inner
 
@@ -303,6 +308,7 @@ def build_evaluation_graph(*, store: Any, identity: WorkflowIdentity):
 # ---------------------------------------------------------------------------
 # Run / Resume (SSOT §6, §7)
 # ---------------------------------------------------------------------------
+
 
 def run_evaluation_graph(*, store: Any, job: dict[str, Any], tenant_id: str) -> dict[str, Any]:
     from langgraph.errors import GraphInterrupt  # type: ignore

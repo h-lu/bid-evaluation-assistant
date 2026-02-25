@@ -439,9 +439,11 @@ def _import_psycopg() -> Any:
 def __getattr__(name: str) -> Any:
     if name == "SqliteBackedStore":
         from app.store_backends import SqliteBackedStore
+
         return SqliteBackedStore
     if name == "PostgresBackedStore":
         from app.store_backends import PostgresBackedStore
+
         return PostgresBackedStore
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 

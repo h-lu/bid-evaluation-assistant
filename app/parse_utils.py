@@ -16,13 +16,42 @@ def _raise_bbox_error(message: str) -> None:
 
 
 def select_content_source(files: Iterable[str]) -> str | None:
+    """Select content source file based on SSOT §2.3 5-level priority.
+
+    Priority order:
+    1) *_content_list.json
+    2) *context_list.json
+    3) full.md
+    4) *.md
+    5) *_middle.json
+    """
     names = list(files)
+
+    # Level 1: *_content_list.json
     for name in names:
-        if name.endswith("content_list.json"):
+        if name.endswith("_content_list.json"):
             return name
+
+    # Level 2: *context_list.json (legacy naming)
     for name in names:
         if name.endswith("context_list.json"):
             return name
+
+    # Level 3: full.md
+    for name in names:
+        if name == "full.md" or name.endswith("/full.md"):
+            return name
+
+    # Level 4: *.md (any markdown)
+    for name in names:
+        if name.endswith(".md"):
+            return name
+
+    # Level 5: *_middle.json (debug only)
+    for name in names:
+        if name.endswith("_middle.json"):
+            return name
+
     return None
 
 

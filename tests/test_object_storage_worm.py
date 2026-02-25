@@ -116,3 +116,84 @@ def test_retention_blocks_object_storage_cleanup(client, monkeypatch):
     )
     assert blocked.status_code == 409
     assert blocked.json()["error"]["code"] == "RETENTION_ACTIVE"
+
+
+def test_cleanup_audit_log_includes_trace_id(client):
+    """Audit log for storage cleanup must include trace_id (SSOT §2.2)."""
+    content = b"%PDF-1.4 trace_test"
+    document_id = _upload_document(client, tenant_id="tenant_trace", content=content)
+
+    trace_id = "trace_cleanup_test_001"
+    cleanup = client.post(
+        "/api/v1/internal/storage/cleanup",
+        headers={
+            "x-internal-debug": "true",
+            "x-trace-id": trace_id,
+            "x-tenant-id": "tenant_trace",
+        },
+        json={
+            "object_type": "document",
+            "object_id": document_id,
+            "reason": "test_cleanup",
+        },
+    )
+    assert cleanup.status_code == 200
+
+    # Verify audit log contains trace_id
+    audit_logs = [
+        log
+        for log in store.audit_logs
+        if log.get("tenant_id") == "tenant_trace" and log.get("action") == "storage_cleanup_executed"
+    ]
+    assert any(log.get("trace_id") == trace_id for log in audit_logs)
+
+
+def test_worm_mode_idempotent_put():
+    """WORM mode should return same URI without overwriting (SSOT §2.2)."""
+    from app.object_storage import LocalObjectStorage, ObjectStorageConfig
+
+    config = ObjectStorageConfig(
+        backend="local",
+        bucket="test",
+        root="/tmp/bea-test-worm-idem",
+        prefix="",
+        worm_mode=True,
+        endpoint="",
+        region="",
+        access_key="",
+        secret_key="",
+        force_path_style=True,
+        retention_days=0,
+        retention_mode="GOVERNANCE",
+    )
+    storage = LocalObjectStorage(config=config)
+    storage.reset()
+
+    content1 = b"original content v1"
+    content2 = b"modified content v2"
+
+    # First put
+    uri1 = storage.put_object(
+        tenant_id="tenant_1",
+        object_type="document",
+        object_id="doc_1",
+        filename="test.pdf",
+        content_bytes=content1,
+    )
+
+    # Second put with same key - should NOT overwrite
+    uri2 = storage.put_object(
+        tenant_id="tenant_1",
+        object_type="document",
+        object_id="doc_1",
+        filename="test.pdf",
+        content_bytes=content2,
+    )
+
+    # Same URI returned
+    assert uri1 == uri2
+
+    # Original content preserved
+    stored = storage.get_object(storage_uri=uri1)
+    assert stored == content1
+    assert stored != content2

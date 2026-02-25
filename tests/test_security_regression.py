@@ -239,8 +239,16 @@ class TestHighRiskApproval:
 
         now = datetime.now(UTC)
         token = pyjwt.encode(
-            {"sub": "u_test", "tenant_id": "tenant_default", "exp": int((now + timedelta(minutes=30)).timestamp()), "iat": int(now.timestamp()), "iss": "test-issuer", "aud": "test-audience"},
-            _jwt_secret, algorithm="HS256",
+            {
+                "sub": "u_test",
+                "tenant_id": "tenant_default",
+                "exp": int((now + timedelta(minutes=30)).timestamp()),
+                "iat": int(now.timestamp()),
+                "iss": "test-issuer",
+                "aud": "test-audience",
+            },
+            _jwt_secret,
+            algorithm="HS256",
         )
 
         blocked = base.post(
@@ -268,8 +276,16 @@ class TestHighRiskApproval:
 
         now = datetime.now(UTC)
         token = pyjwt.encode(
-            {"sub": "u_test", "tenant_id": "tenant_default", "exp": int((now + timedelta(minutes=30)).timestamp()), "iat": int(now.timestamp()), "iss": "test-issuer", "aud": "test-audience"},
-            _jwt_secret, algorithm="HS256",
+            {
+                "sub": "u_test",
+                "tenant_id": "tenant_default",
+                "exp": int((now + timedelta(minutes=30)).timestamp()),
+                "iat": int(now.timestamp()),
+                "iss": "test-issuer",
+                "aud": "test-audience",
+            },
+            _jwt_secret,
+            algorithm="HS256",
         )
 
         blocked = base.post(

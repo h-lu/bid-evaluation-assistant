@@ -10,9 +10,17 @@ from app.mock_llm import (
 )
 
 
-def test_mock_llm_is_enabled_by_default():
-    """Mock LLM should be enabled by default."""
-    assert MOCK_LLM_ENABLED is True
+def test_mock_llm_is_enabled_by_default(monkeypatch):
+    """Mock LLM should be enabled by default when MOCK_LLM_ENABLED is not set."""
+    # Remove any existing setting to test default behavior
+    monkeypatch.delenv("MOCK_LLM_ENABLED", raising=False)
+    # Re-import to get fresh value
+    import importlib
+
+    import app.mock_llm as mock_llm_module
+
+    importlib.reload(mock_llm_module)
+    assert mock_llm_module.MOCK_LLM_ENABLED is True
 
 
 def test_mock_retrieve_evidence_returns_results():

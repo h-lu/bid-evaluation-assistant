@@ -41,13 +41,19 @@ class QueryRequest(BaseModel):
     filters: QueryFilters
 
 
-class SimpleEmbeddingFunction:
+from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
+
+
+class SimpleEmbeddingFunction(EmbeddingFunction):
     def __init__(self, dim: int = 128) -> None:
         self._dim = max(8, dim)
 
-    def __call__(self, texts: list[str]) -> list[list[float]]:
+    def name(self) -> str:
+        return f"simple_{self._dim}"
+
+    def __call__(self, input: Documents) -> Embeddings:
         vectors: list[list[float]] = []
-        for text in texts:
+        for text in input:
             digest = hashlib.sha256(text.encode("utf-8")).digest()
             raw = list(digest)
             needed = self._dim
@@ -56,7 +62,7 @@ class SimpleEmbeddingFunction:
         return vectors
 
 
-class OpenAICompatEmbeddingFunction:
+class OpenAICompatEmbeddingFunction(EmbeddingFunction):
     """Embedding function for any OpenAI-compatible API (OpenAI, Ollama, vLLM, etc.)."""
 
     def __init__(
@@ -70,7 +76,10 @@ class OpenAICompatEmbeddingFunction:
         self._api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
         self._base_url = base_url or os.environ.get("OPENAI_BASE_URL", "") or os.environ.get("EMBEDDING_BASE_URL", "")
 
-    def __call__(self, texts: list[str]) -> list[list[float]]:
+    def name(self) -> str:
+        return f"openai_compat_{self._model}"
+
+    def __call__(self, input: Documents) -> Embeddings:
         try:
             import openai
         except ImportError:
@@ -89,7 +98,7 @@ class OpenAICompatEmbeddingFunction:
             kwargs["api_key"] = "unused"
 
         client = openai.OpenAI(**kwargs)
-        response = client.embeddings.create(model=self._model, input=texts)
+        response = client.embeddings.create(model=self._model, input=input)
         return [item.embedding for item in response.data]
 
 
@@ -303,13 +312,15 @@ def query_collection(
 ) -> dict[str, Any]:
     """Query a Chroma collection directly. Returns {items: [...]}."""
     collection = _collection(index_name)
-    where: dict[str, Any] = {
-        "tenant_id": tenant_id,
-        "project_id": project_id,
-        "supplier_id": supplier_id,
-    }
+    # Chroma requires using $and for multiple field conditions
+    where_conditions: list[dict[str, Any]] = [
+        {"tenant_id": tenant_id},
+        {"project_id": project_id},
+        {"supplier_id": supplier_id},
+    ]
     if doc_scope:
-        where["doc_type"] = {"$in": doc_scope}
+        where_conditions.append({"doc_type": {"$in": doc_scope}})
+    where: dict[str, Any] = {"$and": where_conditions}
     try:
         count = collection.count()
     except Exception:

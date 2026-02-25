@@ -259,10 +259,9 @@ class TestE2EHitlFlow:
             evaluation_id=ev["evaluation_id"],
             tenant_id=TENANT,
         )
-        assert any(
-            log["action"] == "resume_submitted" and log["reviewer_id"] == "u_e2e_auditor"
-            for log in logs
-        ), f"expected resume_submitted audit log, got: {logs}"
+        assert any(log["action"] == "resume_submitted" and log["reviewer_id"] == "u_e2e_auditor" for log in logs), (
+            f"expected resume_submitted audit log, got: {logs}"
+        )
 
     def test_resume_with_invalid_token_rejected(self, client):
         _upload_and_parse(client)
@@ -340,9 +339,7 @@ class TestE2ECitationJump:
                 f"/api/v1/citations/{cid}/source",
                 headers=_headers(),
             )
-            assert cit_resp.status_code == 200, (
-                f"citation {cid} not found: {cit_resp.text}"
-            )
+            assert cit_resp.status_code == 200, f"citation {cid} not found: {cit_resp.text}"
             cit_data = cit_resp.json()["data"]
             assert "document_id" in cit_data
             assert "page" in cit_data
@@ -445,8 +442,7 @@ class TestE2EDlqFlow:
         )
 
         audit_logs = [
-            x for x in store.audit_logs
-            if x.get("action") == "dlq_requeue_submitted" and x.get("dlq_id") == dlq_id
+            x for x in store.audit_logs if x.get("action") == "dlq_requeue_submitted" and x.get("dlq_id") == dlq_id
         ]
         assert audit_logs, "expected dlq_requeue_submitted audit log"
 
@@ -641,6 +637,4 @@ class TestE2ESSOTAlignment:
             cls = getattr(module, class_name, None)
             assert cls is not None
             methods = [m for m in dir(cls) if m.startswith("test_")]
-            assert len(methods) >= 2, (
-                f"{class_name} ({description}) should have >= 2 tests, got {len(methods)}"
-            )
+            assert len(methods) >= 2, f"{class_name} ({description}) should have >= 2 tests, got {len(methods)}"

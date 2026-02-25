@@ -4,12 +4,15 @@ import json
 import os
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 from urllib import request
 from urllib.error import URLError
 
 from app.errors import ApiError
 from app.parse_utils import normalize_bbox
+
+if TYPE_CHECKING:
+    from app.mineru_official_api import MineruOfficialApiAdapter
 
 
 @dataclass(frozen=True)
@@ -239,6 +242,12 @@ class ParserAdapterRegistry:
         default_text: str,
     ) -> dict[str, object]:
         candidates = [route.selected_parser, *route.fallback_chain]
+
+        # SSOT §3 约束: fallback 链最多 2 跳
+        # selected_parser + 最多 2 个 fallback = 最多 3 次尝试
+        max_attempts = min(3, len(candidates))
+        candidates = candidates[:max_attempts]
+
         last_error: ApiError | None = None
         for parser_name in candidates:
             adapter = self._adapters.get(parser_name)
@@ -253,10 +262,11 @@ class ParserAdapterRegistry:
             except ApiError as exc:
                 last_error = exc
                 continue
+
         raise ApiError(
             code="PARSER_FALLBACK_EXHAUSTED",
             message=(
-                f"no parser adapter available after failures: {last_error.code}"
+                f"no parser adapter available after {len(candidates)} attempts: {last_error.code}"
                 if last_error is not None
                 else "no parser adapter available"
             ),
@@ -338,28 +348,79 @@ def build_default_parser_registry(
 
     use_local = source.get("BEA_PARSER_LOCAL_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off"}
 
-    adapters: dict[str, ParserAdapter] = {
-        "mineru": HttpParserAdapter(
+    # Check if MinerU Official API should be used
+    mineru_api_key = source.get("MINERU_API_KEY", "")
+    use_mineru_official = bool(mineru_api_key.strip())
+
+    adapters: dict[str, ParserAdapter] = {}
+
+    # Use MineruOfficialApiAdapter if API key is configured
+    if use_mineru_official and "mineru" not in disabled:
+        from app.mineru_official_api import MineruApiConfig, MineruOfficialApiAdapter
+
+        config = MineruApiConfig(
+            api_key=mineru_api_key,
+            timeout_s=mineru_timeout,
+            max_poll_time_s=float(source.get("MINERU_MAX_POLL_TIME_S", "180") or "180"),
+            is_ocr=source.get("MINERU_IS_OCR", "true").strip().lower() not in {"0", "false", "no", "off"},
+            enable_formula=source.get("MINERU_ENABLE_FORMULA", "false").strip().lower() in {"1", "true", "yes", "on"},
+        )
+        # Note: MineruOfficialApiAdapter needs file_url, not compatible with ParserAdapter protocol
+        # For now, we still use HttpParserAdapter for the registry, but expose the official API client
+        # The official API adapter should be used directly when file URL is available
+        adapters["mineru_official"] = MineruOfficialApiAdapter(config=config, name="mineru_official", version="v1")
+
+    # Standard HTTP adapters (for self-hosted or when no API key)
+    if "mineru" not in disabled:
+        adapters["mineru"] = HttpParserAdapter(
             name="mineru",
             section="mineru_parsed",
             endpoint=source.get("MINERU_ENDPOINT", ""),
             timeout_s=mineru_timeout,
-        ),
-        "docling": HttpParserAdapter(
+        )
+    if "docling" not in disabled:
+        adapters["docling"] = HttpParserAdapter(
             name="docling",
             section="docling_parsed",
             endpoint=source.get("DOCLING_ENDPOINT", ""),
             timeout_s=docling_timeout,
-        ),
-        "ocr": HttpParserAdapter(
+        )
+    if "ocr" not in disabled:
+        adapters["ocr"] = HttpParserAdapter(
             name="ocr",
             section="ocr_fallback",
             endpoint=source.get("OCR_ENDPOINT", ""),
             timeout_s=ocr_timeout,
-        ),
-    }
-    if use_local:
+        )
+    if use_local and "local" not in disabled:
         adapters["local"] = LocalParserAdapter(name="local", version="v1")
     if disabled:
         adapters = {name: adapter for name, adapter in adapters.items() if name not in disabled}
     return ParserAdapterRegistry(adapters)
+
+
+def get_mineru_official_adapter(
+    *,
+    env: Mapping[str, str] | None = None,
+) -> MineruOfficialApiAdapter | None:
+    """Get MinerU Official API adapter if configured.
+
+    This adapter requires file_url and should be used directly,
+    not through the ParserAdapterRegistry.
+    """
+    source = os.environ if env is None else env
+    mineru_api_key = source.get("MINERU_API_KEY", "")
+
+    if not mineru_api_key.strip():
+        return None
+
+    from app.mineru_official_api import MineruApiConfig, MineruOfficialApiAdapter
+
+    config = MineruApiConfig(
+        api_key=mineru_api_key,
+        timeout_s=float(source.get("MINERU_TIMEOUT_S", "30") or "30"),
+        max_poll_time_s=float(source.get("MINERU_MAX_POLL_TIME_S", "180") or "180"),
+        is_ocr=source.get("MINERU_IS_OCR", "true").strip().lower() not in {"0", "false", "no", "off"},
+        enable_formula=source.get("MINERU_ENABLE_FORMULA", "false").strip().lower() in {"1", "true", "yes", "on"},
+    )
+    return MineruOfficialApiAdapter(config=config, name="mineru_official", version="v1")

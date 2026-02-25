@@ -10,6 +10,7 @@ from app.constraint_extractor import extract_constraints
 # Entity constraints
 # ---------------------------------------------------------------------------
 
+
 class TestEntityExtraction:
     def test_company_name(self):
         r = extract_constraints("中国建设工程公司是否具有一级资质")
@@ -35,6 +36,7 @@ class TestEntityExtraction:
 # ---------------------------------------------------------------------------
 # Numeric constraints
 # ---------------------------------------------------------------------------
+
 
 class TestNumericExtraction:
     def test_amount_wan_yuan(self):
@@ -101,6 +103,7 @@ class TestNumericExtraction:
 # Time constraints
 # ---------------------------------------------------------------------------
 
+
 class TestTimeExtraction:
     def test_iso_date(self):
         r = extract_constraints("截止日期为2026-03-15")
@@ -156,6 +159,7 @@ class TestTimeExtraction:
 # Must-include / must-exclude terms
 # ---------------------------------------------------------------------------
 
+
 class TestMustIncludeExtraction:
     def test_single_term(self):
         r = extract_constraints("必须包含ISO9001认证")
@@ -205,6 +209,7 @@ class TestMustExcludeExtraction:
 # ---------------------------------------------------------------------------
 # Integration
 # ---------------------------------------------------------------------------
+
 
 class TestExtractConstraintsIntegration:
     def test_returns_all_five_keys(self):

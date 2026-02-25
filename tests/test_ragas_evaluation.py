@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from app.ragas_evaluator import (
     EvalMetrics,
     EvalSample,
@@ -109,6 +111,7 @@ class TestRagasBackendStructure:
     """Verify ragas integration structure without real API calls."""
 
     def test_ragas_imports_are_available(self):
+        pytest.importorskip("ragas")
         from ragas import EvaluationDataset, evaluate
         from ragas.metrics.collections import (
             AnswerRelevancy,
@@ -119,11 +122,18 @@ class TestRagasBackendStructure:
 
         assert callable(evaluate)
         assert EvaluationDataset is not None
-        assert all(cls is not None for cls in [
-            Faithfulness, ContextPrecision, ContextRecall, AnswerRelevancy,
-        ])
+        assert all(
+            cls is not None
+            for cls in [
+                Faithfulness,
+                ContextPrecision,
+                ContextRecall,
+                AnswerRelevancy,
+            ]
+        )
 
     def test_deepeval_hallucination_import(self):
+        pytest.importorskip("deepeval")
         from deepeval.metrics import HallucinationMetric
         from deepeval.test_case import LLMTestCase
 
@@ -131,15 +141,18 @@ class TestRagasBackendStructure:
         assert LLMTestCase is not None
 
     def test_ragas_dataset_construction(self):
+        pytest.importorskip("ragas")
         from ragas import EvaluationDataset
 
         sample = _high_quality_sample()
-        data = [{
-            "user_input": sample.query,
-            "retrieved_contexts": list(sample.retrieved_contexts),
-            "response": sample.generated_answer,
-            "reference": sample.ground_truth_answer,
-        }]
+        data = [
+            {
+                "user_input": sample.query,
+                "retrieved_contexts": list(sample.retrieved_contexts),
+                "response": sample.generated_answer,
+                "reference": sample.ground_truth_answer,
+            }
+        ]
         dataset = EvaluationDataset.from_list(data)
         assert len(dataset) == 1
 
@@ -320,6 +333,7 @@ class TestSSOTAlignment:
         assert "resolvable_rate" in gate_payload["metrics"]["citation"]
 
     def test_evaluator_supports_both_backends(self):
+        pytest.importorskip("ragas")
         samples = [_high_quality_sample()]
         lw = evaluate_dataset(samples, backend="lightweight")
         assert lw.backend == "lightweight"

@@ -39,6 +39,7 @@ ENV/
 Thumbs.db
 
 # Project specific
+.serena/
 data/uploads/
 data/parsed/
 *.pdf

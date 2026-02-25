@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import uuid
 from typing import Any
@@ -11,6 +12,139 @@ from app.parser_adapters import ParseRoute, select_parse_route
 
 
 class StoreParseMixin:
+    """Parse document files with support for MinerU Official API.
+
+    SSOT Alignment:
+    - §3 解析器路由: mineru -> docling -> ocr
+    - §4 parse manifest 契约
+    - §8 持久化顺序: raw_file → parse manifest → chunks
+    """
+
+    def _try_mineru_official_api(
+        self,
+        *,
+        document: dict[str, Any],
+        document_id: str,
+        tenant_id: str,
+        job_id: str,
+        trace_id: str | None,
+    ) -> list[dict[str, Any]] | None:
+        """Try parsing with MinerU Official API if configured.
+
+        Supports three scenarios (in priority order):
+        1. Document has source_url (public URL to file) → use URL-based API
+        2. Document has storage_uri with accessible file bytes → use file upload API
+        3. Document has storage_uri with S3 backend → use presigned URL
+
+        Requires:
+        - MINERU_API_KEY environment variable
+
+        Returns:
+        - List of chunks if successful
+        - None if MinerU Official API not available or no accessible file
+        """
+        # Check if MinerU Official API is configured
+        api_key = os.environ.get("MINERU_API_KEY", "")
+        if not api_key.strip():
+            return None
+
+        filename = str(document.get("filename") or "document.pdf")
+
+        # Try to use MinerU Official API
+        try:
+            from app.mineru_parse_service import build_mineru_parse_service
+
+            service = build_mineru_parse_service(
+                object_storage=self.object_storage,
+                parse_manifests_repo=self.parse_manifests_repository,
+                documents_repo=self.documents_repository,
+            )
+
+            if service is None:
+                return None
+
+            # Get existing manifest for job info
+            manifest = self.parse_manifests_repository.get(tenant_id=tenant_id, job_id=job_id)
+            selected_parser = manifest.get("selected_parser", "mineru_official") if manifest else "mineru_official"
+            parser_version = manifest.get("parser_version", "v1") if manifest else "v1"
+            fallback_chain = manifest.get("fallback_chain", []) if manifest else []
+
+            # Option 1: Use source_url if available (URL-based API)
+            source_url = document.get("source_url")
+            if source_url and isinstance(source_url, str) and source_url.strip():
+                result = service.parse_and_persist(
+                    file_url=source_url.strip(),
+                    document_id=document_id,
+                    tenant_id=tenant_id,
+                    job_id=job_id,
+                    selected_parser=selected_parser,
+                    parser_version=parser_version,
+                    fallback_chain=fallback_chain,
+                    trace_id=trace_id,
+                )
+                chunks = self.documents_repository.get_chunks(
+                    tenant_id=tenant_id,
+                    document_id=document_id,
+                )
+                return [self._ensure_chunk_shape(document_id=document_id, chunk=c) for c in chunks]
+
+            # Option 2: Use file upload API with storage_uri
+            storage_uri = document.get("storage_uri")
+            if storage_uri and isinstance(storage_uri, str) and storage_uri.strip():
+                # Try to get file bytes for direct upload
+                try:
+                    file_bytes = self.object_storage.get_object(storage_uri=storage_uri)
+                    if file_bytes and len(file_bytes) > 0:
+                        # Use file upload API (simpler than presigned URL)
+                        result = service.parse_and_persist_from_bytes(
+                            file_bytes=file_bytes,
+                            filename=filename,
+                            document_id=document_id,
+                            tenant_id=tenant_id,
+                            job_id=job_id,
+                            selected_parser=selected_parser,
+                            parser_version=parser_version,
+                            fallback_chain=fallback_chain,
+                            trace_id=trace_id,
+                        )
+                        chunks = self.documents_repository.get_chunks(
+                            tenant_id=tenant_id,
+                            document_id=document_id,
+                        )
+                        return [self._ensure_chunk_shape(document_id=document_id, chunk=c) for c in chunks]
+                except Exception:
+                    # File bytes not accessible, try presigned URL
+                    pass
+
+                # Option 3: Try presigned URL (S3 backend only)
+                presigned = self.object_storage.get_presigned_url(
+                    storage_uri=storage_uri,
+                    expires_in=3600,  # 1 hour
+                )
+                if presigned:
+                    result = service.parse_and_persist(
+                        file_url=presigned,
+                        document_id=document_id,
+                        tenant_id=tenant_id,
+                        job_id=job_id,
+                        selected_parser=selected_parser,
+                        parser_version=parser_version,
+                        fallback_chain=fallback_chain,
+                        trace_id=trace_id,
+                    )
+                    chunks = self.documents_repository.get_chunks(
+                        tenant_id=tenant_id,
+                        document_id=document_id,
+                    )
+                    return [self._ensure_chunk_shape(document_id=document_id, chunk=c) for c in chunks]
+
+            # No accessible file found
+            return None
+
+        except Exception:
+            # MinerU Official API failed, return None to fall back to local parsing
+            return None
+
     @staticmethod
     def _select_parser(*, filename: str, doc_type: str | None) -> ParseRoute:
         return select_parse_route(filename=filename, doc_type=doc_type)
@@ -167,9 +301,32 @@ class StoreParseMixin:
         tenant_id: str,
         manifest: dict[str, Any] | None,
     ) -> list[dict[str, Any]]:
-        """Attempt real file parsing; fall back to stub adapter on failure."""
-        storage_uri = document.get("storage_uri")
+        """Parse document file with SSOT §3 routing priority.
+
+        Priority:
+        1. MinerU Official API (if MINERU_API_KEY + (source_url or presigned URL))
+        2. Local parser (PyMuPDF/python-docx)
+        3. Stub adapter (fallback)
+        """
         filename = str(document.get("filename") or "upload.bin")
+        job_id = manifest.get("job_id") if manifest else None
+        trace_id = manifest.get("trace_id") if manifest else None
+
+        # Priority 1: Try MinerU Official API (SSOT §3.1)
+        if job_id:
+            mineru_chunks = self._try_mineru_official_api(
+                document=document,
+                document_id=document_id,
+                tenant_id=tenant_id,
+                job_id=job_id,
+                trace_id=trace_id,
+            )
+            if mineru_chunks:
+                self.parser_retrieval_metrics["parse_mineru_official_used_total"] += 1
+                return mineru_chunks
+
+        # Priority 2: Try local parser (PyMuPDF/python-docx)
+        storage_uri = document.get("storage_uri")
         file_bytes: bytes | None = None
 
         if storage_uri:
@@ -192,6 +349,7 @@ class StoreParseMixin:
                 except Exception:
                     pass
 
+        # Priority 3: Stub adapter (fallback)
         selected_parser = manifest["selected_parser"] if manifest else "mineru"
         parser_version = manifest.get("parser_version", "v0") if manifest else "v0"
         fallback_chain = list(manifest.get("fallback_chain", [])) if manifest else []

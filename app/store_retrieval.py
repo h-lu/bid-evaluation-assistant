@@ -37,7 +37,9 @@ class StoreRetrievalMixin:
         prefix = self._lightrag_index_prefix()
         self._validate_index_segment(tenant_id, "tenant_id")
         self._validate_index_segment(project_id, "project_id")
-        return f"{prefix}:{tenant_id}:{project_id}"
+        # Use underscore instead of colon to satisfy Chroma collection naming rules
+        # Chroma requires names to match [a-zA-Z0-9._-]+
+        return f"{prefix}_{tenant_id}_{project_id}"
 
     @staticmethod
     def _post_json(
@@ -214,11 +216,12 @@ class StoreRetrievalMixin:
         if dropped_cross_tenant > 0:
             logger.warning(
                 "retrieval_post_filter_drop tenant_id=%s project_id=%s dropped=%d",
-                tenant_id, project_id, dropped_cross_tenant,
+                tenant_id,
+                project_id,
+                dropped_cross_tenant,
             )
             self.parser_retrieval_metrics["retrieval_cross_tenant_drops_total"] = (
-                self.parser_retrieval_metrics.get("retrieval_cross_tenant_drops_total", 0)
-                + dropped_cross_tenant
+                self.parser_retrieval_metrics.get("retrieval_cross_tenant_drops_total", 0) + dropped_cross_tenant
             )
         return out
 
@@ -227,6 +230,7 @@ class StoreRetrievalMixin:
         if os.environ.get("BEA_FORCE_RERANK_ERROR", "").strip().lower() in {"1", "true", "yes", "on"}:
             raise RuntimeError("forced rerank error")
         from app.reranker import rerank_items
+
         return rerank_items(query=query, items=items)
 
     def register_citation_source(self, *, chunk_id: str, source: dict[str, Any]) -> None:

@@ -98,17 +98,13 @@ class CostBudgetTracker:
     def is_over_budget(self) -> bool:
         if self.max_tokens_budget <= 0:
             return False
-        return self._cumulative_total_tokens > int(
-            self.max_tokens_budget * self.hard_threshold_ratio
-        )
+        return self._cumulative_total_tokens > int(self.max_tokens_budget * self.hard_threshold_ratio)
 
     @property
     def should_degrade(self) -> bool:
         if self.max_tokens_budget <= 0:
             return False
-        return self._cumulative_total_tokens >= int(
-            self.max_tokens_budget * self.warn_threshold_ratio
-        )
+        return self._cumulative_total_tokens >= int(self.max_tokens_budget * self.warn_threshold_ratio)
 
     def check_budget(self) -> str:
         """Returns 'ok', 'warn', 'degrade', or 'blocked'."""
@@ -176,9 +172,7 @@ def _create_client(config: ProviderConfig):
     try:
         import openai
     except ImportError:
-        raise RuntimeError(
-            "openai package is required. Install with: pip install 'bid-evaluation-assistant[openai]'"
-        )
+        raise RuntimeError("openai package is required. Install with: pip install 'bid-evaluation-assistant[openai]'")
 
     kwargs: dict[str, Any] = {}
     if config.api_key:
@@ -253,7 +247,9 @@ def _call_with_degradation(
 
         logger.warning(
             "Primary model %s failed (%s), degrading to %s",
-            config.model, type(primary_exc).__name__, config.fallback_model,
+            config.model,
+            type(primary_exc).__name__,
+            config.fallback_model,
         )
         content, usage = _call_chat(
             client=client,
@@ -346,7 +342,10 @@ def llm_score_criteria(
 
     try:
         content, usage = _call_with_degradation(
-            config=config, messages=messages, json_mode=True, max_tokens=4096,
+            config=config,
+            messages=messages,
+            json_mode=True,
+            max_tokens=4096,
         )
         result = json.loads(content)
         score = float(result.get("score", max_score * 0.5))
@@ -440,7 +439,9 @@ def llm_generate_explanation(
 
     try:
         content, _ = _call_with_degradation(
-            config=config, messages=messages, max_tokens=2048,
+            config=config,
+            messages=messages,
+            max_tokens=2048,
         )
         return content or f"评分项 {criteria_id}: {score}/{max_score}"
     except Exception:

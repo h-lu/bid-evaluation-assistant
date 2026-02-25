@@ -185,9 +185,18 @@ class TestParseFileBytes:
             document_id="doc_schema_test",
         )
         required_keys = {
-            "chunk_id", "document_id", "pages", "positions", "section",
-            "heading_path", "chunk_type", "parser", "parser_version",
-            "content_source", "text", "chunk_hash",
+            "chunk_id",
+            "document_id",
+            "pages",
+            "positions",
+            "section",
+            "heading_path",
+            "chunk_type",
+            "parser",
+            "parser_version",
+            "content_source",
+            "text",
+            "chunk_hash",
         }
         for chunk in result:
             assert required_keys.issubset(chunk.keys()), f"Missing keys: {required_keys - chunk.keys()}"

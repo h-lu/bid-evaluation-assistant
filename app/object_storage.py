@@ -35,6 +35,7 @@ class ObjectStorageConfig:
     force_path_style: bool
     retention_days: int
     retention_mode: str
+    public_endpoint: str = ""  # For presigned URLs accessible from internet
 
 
 class ObjectStorageBackend:
@@ -75,6 +76,24 @@ class ObjectStorageBackend:
 
     def is_retention_active(self, *, storage_uri: str, now: datetime | None = None) -> bool:
         raise NotImplementedError
+
+    def get_presigned_url(
+        self,
+        *,
+        storage_uri: str,
+        expires_in: int = 3600,
+    ) -> str | None:
+        """Generate a presigned URL for the object.
+
+        Args:
+            storage_uri: The URI of the object in storage
+            expires_in: URL expiration time in seconds (default 1 hour)
+
+        Returns:
+            A presigned URL that can be used to download the object,
+            or None if the backend doesn't support presigned URLs.
+        """
+        return None
 
 
 class LocalObjectStorage(ObjectStorageBackend):
@@ -284,6 +303,8 @@ class S3ObjectStorage(ObjectStorageBackend):
         self._worm_mode = bool(config.worm_mode)
         self._retention_days = max(int(config.retention_days), 0)
         self._retention_mode = (config.retention_mode or "GOVERNANCE").upper()
+        self._endpoint = config.endpoint.strip()
+        self._public_endpoint = config.public_endpoint.strip() or config.endpoint.strip()
         session = boto3.session.Session(
             aws_access_key_id=config.access_key or None,
             aws_secret_access_key=config.secret_key or None,
@@ -418,6 +439,31 @@ class S3ObjectStorage(ObjectStorageBackend):
             retain_until = retain_until.replace(tzinfo=UTC)
         return current < retain_until
 
+    def get_presigned_url(
+        self,
+        *,
+        storage_uri: str,
+        expires_in: int = 3600,
+    ) -> str | None:
+        """Generate a presigned URL for S3 object download.
+
+        If public_endpoint is configured, replaces the internal endpoint
+        with the public endpoint for internet accessibility.
+        """
+        parsed = _parse_storage_uri(storage_uri)
+        try:
+            url = self._client.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": parsed["bucket"], "Key": parsed["key"]},
+                ExpiresIn=expires_in,
+            )
+            # Replace internal endpoint with public endpoint if different
+            if self._endpoint and self._public_endpoint and self._endpoint != self._public_endpoint:
+                url = url.replace(self._endpoint, self._public_endpoint)
+            return str(url)
+        except Exception:  # pragma: no cover
+            return None
+
     def _build_key(self, *, tenant_id: str, object_type: str, object_id: str, filename: str) -> str:
         safe_filename = _clean_segment(filename)
         safe_type = _clean_segment(object_type)
@@ -476,6 +522,7 @@ def create_object_storage_from_env(environ: dict[str, str] | None = None) -> Obj
         not in {"0", "false", "no", "off"},
         retention_days=max(retention_days, 0),
         retention_mode=env.get("OBJECT_STORAGE_RETENTION_MODE", "GOVERNANCE").strip() or "GOVERNANCE",
+        public_endpoint=env.get("OBJECT_STORAGE_PUBLIC_ENDPOINT", "").strip(),
     )
     if config.backend == "s3":
         return S3ObjectStorage(config=config)
