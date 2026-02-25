@@ -313,7 +313,8 @@ class InMemoryStore(
         )
 
     def _persist_parse_manifest(self, *, manifest: dict[str, Any]) -> dict[str, Any]:
-        return self.parse_manifests_repository.upsert(manifest=manifest)
+        tenant_id = str(manifest.get("tenant_id") or "tenant_default")
+        return self.parse_manifests_repository.upsert(tenant_id=tenant_id, manifest=manifest)
 
     def _persist_evaluation_report(self, *, report: dict[str, Any]) -> dict[str, Any]:
         archived = self._archive_report_to_object_storage(report=report)

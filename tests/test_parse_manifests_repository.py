@@ -28,7 +28,8 @@ def _manifest() -> dict:
 def test_inmemory_parse_manifest_repository_scopes_by_tenant():
     data: dict[str, dict] = {}
     repo = InMemoryParseManifestsRepository(data)
-    repo.upsert(manifest=_manifest())
+    m = _manifest()
+    repo.upsert(tenant_id=m["tenant_id"], manifest=m)
     assert repo.get(tenant_id="tenant_a", job_id="job_parse_repo_1") is not None
     assert repo.get(tenant_id="tenant_b", job_id="job_parse_repo_1") is None
 

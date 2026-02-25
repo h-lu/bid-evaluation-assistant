@@ -152,6 +152,41 @@ class PostgresDocumentsRepository:
 
         return self._tx_runner.run_in_tx(tenant_id=tenant_id, fn=_op)
 
+    def find_by_file_sha256(
+        self,
+        *,
+        tenant_id: str,
+        file_sha256: str,
+    ) -> dict[str, Any] | None:
+        """Find document by file SHA256 hash for deduplication."""
+        sql = f"""
+            SELECT document_id, tenant_id, project_id, supplier_id, doc_type, filename, file_sha256, file_size, status, storage_uri
+            FROM {self._documents_table}
+            WHERE tenant_id = %s AND file_sha256 = %s
+            LIMIT 1
+        """
+
+        def _op(conn: Any) -> dict[str, Any] | None:
+            with conn.cursor() as cur:
+                cur.execute(sql, (tenant_id, file_sha256))
+                row = cur.fetchone()
+            if row is None:
+                return None
+            return {
+                "document_id": row[0],
+                "tenant_id": row[1],
+                "project_id": row[2],
+                "supplier_id": row[3],
+                "doc_type": row[4],
+                "filename": row[5],
+                "file_sha256": row[6],
+                "file_size": int(row[7] or 0),
+                "status": row[8],
+                "storage_uri": row[9],
+            }
+
+        return self._tx_runner.run_in_tx(tenant_id=tenant_id, fn=_op)
+
     def replace_chunks(
         self,
         *,

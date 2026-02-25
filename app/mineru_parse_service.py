@@ -61,7 +61,7 @@ class ParseManifestRepository(Protocol):
 class DocumentRepository(Protocol):
     """Protocol for document repository."""
 
-    def upsert_document(self, *, document: dict[str, Any]) -> dict[str, Any]: ...
+    def upsert(self, *, tenant_id: str, document: dict[str, Any]) -> dict[str, Any]: ...
 
     def get(self, *, tenant_id: str, document_id: str) -> dict[str, Any] | None: ...
 
@@ -225,7 +225,7 @@ class MineruParseService:
             if document:
                 document["status"] = "parsed"
                 document["parse_result_uri"] = zip_storage_uri
-                self._documents_repo.upsert_document(document=document)
+                self._documents_repo.upsert(tenant_id=tenant_id, document=document)
 
             parse_time = time.time() - start_time
 
@@ -310,6 +310,7 @@ class MineruParseService:
         if manifest is None:
             manifest = {
                 "job_id": job_id,
+                "run_id": f"run_{int(time.time() * 1000)}",
                 "document_id": document_id,
                 "tenant_id": tenant_id,
                 "selected_parser": selected_parser,
@@ -403,7 +404,7 @@ class MineruParseService:
             if document:
                 document["status"] = "parsed"
                 document["parse_result_uri"] = zip_storage_uri
-                self._documents_repo.upsert_document(document=document)
+                self._documents_repo.upsert(tenant_id=tenant_id, document=document)
 
             parse_time = time.time() - start_time
 

@@ -17,8 +17,9 @@ class InMemoryParseManifestsRepository:
     def __init__(self, manifests: dict[str, dict[str, Any]]) -> None:
         self._manifests = manifests
 
-    def upsert(self, *, manifest: dict[str, Any]) -> dict[str, Any]:
+    def upsert(self, *, tenant_id: str, manifest: dict[str, Any]) -> dict[str, Any]:
         item = dict(manifest)
+        item["tenant_id"] = tenant_id
         self._manifests[str(item["job_id"])] = item
         return item
 
