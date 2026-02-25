@@ -41,7 +41,7 @@ def real_s3_storage():
     Requires MinIO container running:
     docker-compose -f docker-compose.production.yml up -d minio
     """
-    from app.object_storage import S3ObjectStorage, ObjectStorageConfig
+    from app.object_storage import ObjectStorageConfig, S3ObjectStorage
 
     config = ObjectStorageConfig(
         backend="s3",
@@ -330,7 +330,7 @@ class TestRealMineruWithMinioAndPostgres:
         assert len(zip_bytes) > 0
         assert zip_bytes[:4] == b"PK\x03\x04"  # ZIP magic bytes
 
-        print(f"\n=== URL-based Parse Result ===")
+        print("\n=== URL-based Parse Result ===")
         print(f"Status: {result.status}")
         print(f"Chunks: {result.chunks_count}")
         print(f"Parse time: {result.parse_time_s:.2f}s")
@@ -369,7 +369,7 @@ class TestRealMineruWithMinioAndPostgres:
         for field in required_fields:
             assert field in first_chunk, f"Missing required field: {field}"
 
-        print(f"\n=== PostgreSQL Chunks ===")
+        print("\n=== PostgreSQL Chunks ===")
         print(f"Total chunks: {len(chunks)}")
         print(f"First chunk ID: {first_chunk.get('chunk_id')}")
         print(f"First chunk text preview: {first_chunk.get('text', '')[:100]}...")
@@ -425,7 +425,7 @@ class TestRealMineruWithMinioAndPostgres:
             content_type="application/pdf",
         )
 
-        print(f"\n=== File Upload Test ===")
+        print("\n=== File Upload Test ===")
         print(f"Saved PDF to: {storage_uri}")
         print(f"PDF size: {len(sample_pdf_bytes)} bytes")
 
@@ -444,7 +444,7 @@ class TestRealMineruWithMinioAndPostgres:
         assert result.chunks_count >= 0  # May be 0 for simple PDF
         assert result.zip_storage_uri is not None
 
-        print(f"\n=== File Upload Parse Result ===")
+        print("\n=== File Upload Parse Result ===")
         print(f"Status: {result.status}")
         print(f"Chunks: {result.chunks_count}")
         print(f"Parse time: {result.parse_time_s:.2f}s")
@@ -497,7 +497,7 @@ class TestRealMineruWithMinioAndPostgres:
             md_files = [f for f in files if f == "full.md" or f.endswith("/full.md")]
             assert len(md_files) >= 1, "Missing full.md"
 
-            print(f"\n=== Zip Structure ===")
+            print("\n=== Zip Structure ===")
             print(f"Total files: {len(files)}")
             print(f"Content list files: {content_list_files}")
             print(f"Markdown files: {md_files}")
@@ -527,7 +527,7 @@ class TestRealMineruWithMinioAndPostgres:
             job_id=job_id,
         )
 
-        print(f"\n=== Image Storage Test ===")
+        print("\n=== Image Storage Test ===")
         print(f"Images count: {result.images_count}")
         print(f"Images URIs: {result.images_storage_uris}")
 
@@ -547,8 +547,9 @@ class TestRealMineruWithMinioAndPostgres:
         real_manifests_repo,
     ):
         """Test that errors are properly recorded in manifest."""
-        from app.errors import ApiError
         import time
+
+        from app.errors import ApiError
 
         doc_id = f"doc_error_{int(time.time())}"
         job_id = f"job_error_{int(time.time())}"
@@ -567,7 +568,7 @@ class TestRealMineruWithMinioAndPostgres:
         assert manifest["status"] == "failed"
         assert manifest["error_code"] is not None
 
-        print(f"\n=== Error Handling ===")
+        print("\n=== Error Handling ===")
         print(f"Status: {manifest['status']}")
         print(f"Error code: {manifest['error_code']}")
 
@@ -595,7 +596,7 @@ class TestMinIOConnectivity:
         content = real_s3_storage.get_object(storage_uri=test_uri)
         assert content == b"MinIO connectivity test"
 
-        print(f"\n=== MinIO Connectivity ===")
+        print("\n=== MinIO Connectivity ===")
         print(f"Test URI: {test_uri}")
         print(f"Content: {content}")
 
@@ -620,7 +621,7 @@ class TestMinIOConnectivity:
         assert presigned_url is not None
         assert "http://localhost:9000" in presigned_url
 
-        print(f"\n=== Presigned URL ===")
+        print("\n=== Presigned URL ===")
         print(f"URI: {test_uri}")
         print(f"URL: {presigned_url[:100]}...")
 
@@ -664,7 +665,7 @@ class TestPostgreSQLConnectivity:
         assert retrieved is not None
         assert retrieved["status"] == "testing"
 
-        print(f"\n=== Parse Manifests Table ===")
+        print("\n=== Parse Manifests Table ===")
         print(f"Job ID: {job_id}")
         print(f"Status: {retrieved['status']}")
 
@@ -702,6 +703,6 @@ class TestPostgreSQLConnectivity:
         assert len(retrieved) == 1
         assert retrieved[0]["text"] == "Test chunk content"
 
-        print(f"\n=== Document Chunks Table ===")
+        print("\n=== Document Chunks Table ===")
         print(f"Document ID: {doc_id}")
         print(f"Chunks: {len(retrieved)}")

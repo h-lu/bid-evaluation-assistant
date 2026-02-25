@@ -41,7 +41,7 @@ class QueryRequest(BaseModel):
     filters: QueryFilters
 
 
-from chromadb.api.types import Documents, Embeddings, EmbeddingFunction
+from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
 
 
 class SimpleEmbeddingFunction(EmbeddingFunction):

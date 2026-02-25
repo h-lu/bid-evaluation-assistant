@@ -1,5 +1,6 @@
 """Tests for SSOT §3 fallback 2-hop limit."""
 import pytest
+
 from app.errors import ApiError
 from app.parser_adapters import (
     ParserAdapterRegistry,

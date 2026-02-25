@@ -1,7 +1,8 @@
 """Tests for S3ObjectStorage with mocked boto3."""
 import sys
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 
 @pytest.fixture
@@ -19,10 +20,11 @@ def test_s3_put_object_with_worm_mode(mock_boto3):
     """S3 WORM mode should not overwrite existing objects."""
     # Force reimport to pick up mocked boto3
     import importlib
+
     import app.object_storage as object_storage_module
     importlib.reload(object_storage_module)
 
-    from app.object_storage import S3ObjectStorage, ObjectStorageConfig
+    from app.object_storage import ObjectStorageConfig, S3ObjectStorage
 
     mock_boto3_module, mock_client = mock_boto3
 
@@ -62,10 +64,11 @@ def test_s3_worm_mode_skips_existing_object(mock_boto3):
     """S3 WORM mode should skip upload if object already exists."""
     # Force reimport to pick up mocked boto3
     import importlib
+
     import app.object_storage as object_storage_module
     importlib.reload(object_storage_module)
 
-    from app.object_storage import S3ObjectStorage, ObjectStorageConfig
+    from app.object_storage import ObjectStorageConfig, S3ObjectStorage
 
     mock_boto3_module, mock_client = mock_boto3
 
@@ -104,10 +107,11 @@ def test_s3_worm_mode_skips_existing_object(mock_boto3):
 def test_s3_get_presigned_url(mock_boto3):
     """S3ObjectStorage should generate presigned URLs."""
     import importlib
+
     import app.object_storage as object_storage_module
     importlib.reload(object_storage_module)
 
-    from app.object_storage import S3ObjectStorage, ObjectStorageConfig
+    from app.object_storage import ObjectStorageConfig, S3ObjectStorage
 
     mock_boto3_module, mock_client = mock_boto3
 

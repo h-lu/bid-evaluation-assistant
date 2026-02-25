@@ -123,8 +123,9 @@ class TestLlmScoreCriteria:
     def test_fallback_to_mock_when_mock_enabled(self, monkeypatch):
         # Ensure mock is enabled for this test
         monkeypatch.setenv("MOCK_LLM_ENABLED", "true")
-        from app import mock_llm
         import importlib
+
+        from app import mock_llm
         importlib.reload(mock_llm)
 
         result = llm_score_criteria(
@@ -145,8 +146,9 @@ class TestLlmScoreCriteria:
     def test_no_evidence_returns_result(self, monkeypatch):
         # Ensure mock is enabled for this test
         monkeypatch.setenv("MOCK_LLM_ENABLED", "true")
-        from app import mock_llm
         import importlib
+
+        from app import mock_llm
         importlib.reload(mock_llm)
 
         result = llm_score_criteria(
@@ -161,8 +163,9 @@ class TestLlmScoreCriteria:
     def test_multiple_evidence_chunks(self, monkeypatch):
         # Ensure mock is enabled for this test
         monkeypatch.setenv("MOCK_LLM_ENABLED", "true")
-        from app import mock_llm
         import importlib
+
+        from app import mock_llm
         importlib.reload(mock_llm)
 
         evidence = [

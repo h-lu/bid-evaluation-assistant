@@ -22,7 +22,6 @@ from urllib.error import HTTPError, URLError
 from app.errors import ApiError
 from app.parse_utils import normalize_bbox
 
-
 MINERU_API_BASE = "https://mineru.net/api/v4"
 
 
@@ -50,7 +49,7 @@ class MineruContentItem:
     image_caption: list[str] | None = None  # Optional: image captions
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "MineruContentItem":
+    def from_dict(cls, data: dict[str, Any]) -> MineruContentItem:
         """Create from MinerU API response item."""
         # SSOT §5.1: required fields
         text = str(data.get("text") or "")

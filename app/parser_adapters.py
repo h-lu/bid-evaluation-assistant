@@ -4,12 +4,15 @@ import json
 import os
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 from urllib import request
 from urllib.error import URLError
 
 from app.errors import ApiError
 from app.parse_utils import normalize_bbox
+
+if TYPE_CHECKING:
+    from app.mineru_official_api import MineruOfficialApiAdapter
 
 
 @dataclass(frozen=True)
@@ -399,7 +402,7 @@ def build_default_parser_registry(
 def get_mineru_official_adapter(
     *,
     env: Mapping[str, str] | None = None,
-) -> "MineruOfficialApiAdapter | None":
+) -> MineruOfficialApiAdapter | None:
     """Get MinerU Official API adapter if configured.
 
     This adapter requires file_url and should be used directly,

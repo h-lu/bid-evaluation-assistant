@@ -2,17 +2,18 @@
 from __future__ import annotations
 
 import json
-import pytest
-from unittest.mock import MagicMock, patch
 from datetime import datetime
+from unittest.mock import MagicMock, patch
 
+import pytest
+
+from app.errors import ApiError
+from app.mineru_official_api import MineruApiConfig, MineruContentItem
 from app.mineru_parse_service import (
     MineruParseResult,
     MineruParseService,
     build_mineru_parse_service,
 )
-from app.mineru_official_api import MineruApiConfig, MineruContentItem
-from app.errors import ApiError
 
 
 class MockObjectStorage:
@@ -173,14 +174,16 @@ class TestMineruParseService:
         # Mock download to return our test zip
         test_zip = _make_test_zip()
 
-        with patch.object(service, "_client", mock_client):
-            with patch.object(service, "_download_zip", return_value=test_zip):
-                result = service.parse_and_persist(
-                    file_url="https://example.com/test.pdf",
-                    document_id="doc_123",
-                    tenant_id="tenant_abc",
-                    job_id="job_xyz",
-                )
+        with (
+            patch.object(service, "_client", mock_client),
+            patch.object(service, "_download_zip", return_value=test_zip),
+        ):
+            result = service.parse_and_persist(
+                file_url="https://example.com/test.pdf",
+                document_id="doc_123",
+                tenant_id="tenant_abc",
+                job_id="job_xyz",
+            )
 
         # Verify result
         assert result.document_id == "doc_123"
@@ -210,14 +213,16 @@ class TestMineruParseService:
         mock_client.poll_until_complete.return_value = "https://cdn.example.com/result.zip"
         test_zip = _make_test_zip()
 
-        with patch.object(service, "_client", mock_client):
-            with patch.object(service, "_download_zip", return_value=test_zip):
-                service.parse_and_persist(
-                    file_url="https://example.com/test.pdf",
-                    document_id="doc_123",
-                    tenant_id="tenant_abc",
-                    job_id="job_xyz",
-                )
+        with (
+            patch.object(service, "_client", mock_client),
+            patch.object(service, "_download_zip", return_value=test_zip),
+        ):
+            service.parse_and_persist(
+                file_url="https://example.com/test.pdf",
+                document_id="doc_123",
+                tenant_id="tenant_abc",
+                job_id="job_xyz",
+            )
 
         chunks = documents_repo.chunks.get("tenant_abc:doc_123", [])
         assert len(chunks) == 2
@@ -246,14 +251,13 @@ class TestMineruParseService:
             http_status=503,
         )
 
-        with patch.object(service, "_client", mock_client):
-            with pytest.raises(ApiError):
-                service.parse_and_persist(
-                    file_url="https://example.com/test.pdf",
-                    document_id="doc_123",
-                    tenant_id="tenant_abc",
-                    job_id="job_xyz",
-                )
+        with patch.object(service, "_client", mock_client), pytest.raises(ApiError):
+            service.parse_and_persist(
+                file_url="https://example.com/test.pdf",
+                document_id="doc_123",
+                tenant_id="tenant_abc",
+                job_id="job_xyz",
+            )
 
         # Verify manifest shows failure
         manifest = manifests_repo.get(tenant_id="tenant_abc", job_id="job_xyz")

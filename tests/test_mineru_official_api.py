@@ -11,16 +11,16 @@ API Format:
 """
 from __future__ import annotations
 
+import io
+import json
 import os
 import time
-import pytest
-import urllib.request
 import urllib.error
-import json
+import urllib.request
 import zipfile
-import io
 from typing import Any
 
+import pytest
 
 # Skip all tests if API key not configured
 pytestmark = pytest.mark.skipif(

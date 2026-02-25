@@ -7,16 +7,17 @@ from __future__ import annotations
 
 import json
 import os
-import pytest
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+from app.errors import ApiError
 from app.mineru_official_api import (
     MineruApiConfig,
     MineruContentItem,
-    MineruOfficialApiClient,
     MineruOfficialApiAdapter,
+    MineruOfficialApiClient,
 )
-from app.errors import ApiError
 
 
 class TestMineruContentItem:
