@@ -46,6 +46,8 @@ class MineruContentItem:
     page_idx: int
     bbox: list[float]  # [x0, y0, x1, y1] normalized
     text_level: int | None = None  # Optional: heading level
+    img_path: str | None = None  # Optional: path to image file in zip
+    image_caption: list[str] | None = None  # Optional: image captions
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "MineruContentItem":
@@ -65,12 +67,20 @@ class MineruContentItem:
         if text_level is not None:
             text_level = int(text_level)
 
+        # Image-related fields
+        img_path = data.get("img_path")
+        image_caption = data.get("image_caption")
+        if image_caption is not None and not isinstance(image_caption, list):
+            image_caption = [str(image_caption)]
+
         return cls(
             text=text,
             type=item_type,
             page_idx=page_idx,
             bbox=bbox,
             text_level=text_level,
+            img_path=img_path,
+            image_caption=image_caption,
         )
 
     def to_chunk_dict(

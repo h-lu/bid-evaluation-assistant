@@ -442,19 +442,29 @@ class MineruParseService:
         - parser
         - parser_version
         - text
+        - img_path (for image chunks)
+        - image_caption (for image chunks)
         """
         chunks: list[dict[str, Any]] = []
 
         for idx, item in enumerate(content_list):
-            if not item.text.strip():
+            # Skip items without text unless they are images with img_path
+            if not item.text.strip() and item.type != "image" and not item.img_path:
                 continue
+
+            # For image items, use caption as text if available
+            text = item.text
+            if not text.strip() and item.image_caption:
+                text = " ".join(item.image_caption)
+            if not text.strip() and item.img_path:
+                text = f"[Image: {os.path.basename(item.img_path)}]"
 
             # Generate chunk_id from hash
             chunk_hash = self._compute_chunk_hash(
                 document_id=document_id,
                 page_idx=item.page_idx,
                 bbox=item.bbox,
-                text=item.text,
+                text=text,
             )
 
             # Build heading_path from text_level
@@ -471,7 +481,7 @@ class MineruParseService:
                         "page": item.page_idx + 1,
                         "bbox": item.bbox,
                         "start": 0,
-                        "end": len(item.text),
+                        "end": len(text),
                     }
                 ],
                 "section": self._infer_section(item, full_md),
@@ -480,8 +490,15 @@ class MineruParseService:
                 "parser": parser,
                 "parser_version": parser_version,
                 "content_source": "mineru_official_api",
-                "text": item.text,
+                "text": text,
             }
+
+            # Add image-related fields if present
+            if item.img_path:
+                chunk["img_path"] = item.img_path
+            if item.image_caption:
+                chunk["image_caption"] = item.image_caption
+
             chunks.append(chunk)
 
         return chunks
@@ -531,13 +548,18 @@ class MineruParseService:
 
     def _item_to_dict(self, item: MineruContentItem) -> dict[str, Any]:
         """Convert MineruContentItem to dict."""
-        return {
+        result = {
             "text": item.text,
             "type": item.type,
             "page_idx": item.page_idx,
             "bbox": item.bbox,
             "text_level": item.text_level,
         }
+        if item.img_path:
+            result["img_path"] = item.img_path
+        if item.image_caption:
+            result["image_caption"] = item.image_caption
+        return result
 
 
 def build_mineru_parse_service(
