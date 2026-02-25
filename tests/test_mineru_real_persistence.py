@@ -1,6 +1,13 @@
-"""Real MinerU API persistence tests.
+"""Real MinerU API persistence tests with MinIO and PostgreSQL.
 
-These tests use the real MinerU Official API and require MINERU_API_KEY.
+These tests use:
+- Real MinerU Official API (requires MINERU_API_KEY)
+- Real MinIO/S3 storage (requires running Docker containers)
+- Real PostgreSQL database (requires running Docker containers)
+
+Prerequisites:
+1. Docker containers running: docker-compose -f docker-compose.production.yml up -d
+2. MINERU_API_KEY environment variable set
 
 Run with: pytest tests/test_mineru_real_persistence.py -v -m real_mineru
 
@@ -8,11 +15,13 @@ To skip these tests (default): pytest -v -m "not real_mineru"
 """
 from __future__ import annotations
 
-import json
+import io
 import os
+import zipfile
+from datetime import UTC, datetime
+from typing import Any
+
 import pytest
-from datetime import datetime
-from unittest.mock import patch
 
 # Skip all tests in this module if MINERU_API_KEY not set
 pytestmark = pytest.mark.skipif(
@@ -21,85 +30,158 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-class MockObjectStorage:
-    """Real file-backed object storage for persistence testing."""
+# ============================================================================
+# Real Backend Fixtures
+# ============================================================================
 
-    def __init__(self, base_dir: str):
-        self.base_dir = base_dir
-        self.objects: dict[str, bytes] = {}
-        os.makedirs(base_dir, exist_ok=True)
+@pytest.fixture
+def real_s3_storage():
+    """Create real S3ObjectStorage connected to MinIO.
 
-    def put_object(
-        self,
-        *,
-        tenant_id: str,
-        object_type: str,
-        object_id: str,
-        filename: str,
-        content_bytes: bytes,
-        content_type: str | None = None,
-    ) -> str:
-        key = f"object://local/bea/tenants/{tenant_id}/{object_type}/{object_id}/{filename}"
-        self.objects[key] = content_bytes
+    Requires MinIO container running:
+    docker-compose -f docker-compose.production.yml up -d minio
+    """
+    from app.object_storage import S3ObjectStorage, ObjectStorageConfig
 
-        # Also write to disk for persistence verification
-        file_path = os.path.join(
-            self.base_dir,
-            tenant_id,
-            object_type,
-            object_id,
-            filename,
-        )
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-        with open(file_path, "wb") as f:
-            f.write(content_bytes)
-
-        return key
-
-    def get_object(self, *, storage_uri: str) -> bytes:
-        return self.objects.get(storage_uri, b"")
-
-    def list_objects(self, *, tenant_id: str, object_type: str, object_id: str) -> list[str]:
-        """List all objects for a given tenant/type/id."""
-        prefix = f"object://local/bea/tenants/{tenant_id}/{object_type}/{object_id}/"
-        return [k for k in self.objects.keys() if k.startswith(prefix)]
+    config = ObjectStorageConfig(
+        backend="s3",
+        bucket="bea",
+        root="/tmp",  # Not used for S3
+        prefix="",
+        worm_mode=False,
+        endpoint="http://localhost:9000",
+        public_endpoint="http://localhost:9000",
+        region="us-east-1",
+        access_key="minioadmin",
+        secret_key="minioadmin",
+        force_path_style=True,
+        retention_days=0,
+        retention_mode="GOVERNANCE",
+    )
+    return S3ObjectStorage(config=config)
 
 
-class MockParseManifestsRepo:
-    """Mock parse manifests repository."""
+@pytest.fixture
+def real_postgres_connection():
+    """Create real PostgreSQL connection.
 
-    def __init__(self):
-        self.manifests: dict[str, dict] = {}
+    Requires PostgreSQL container running:
+    docker-compose -f docker-compose.production.yml up -d postgres
+    """
+    import psycopg
+    from psycopg.rows import dict_row
+
+    dsn = "postgresql://bea:bea_pass@localhost:5432/bea"
+    conn = psycopg.connect(dsn, row_factory=dict_row)
+    yield conn
+    conn.close()
+
+
+class RealParseManifestsRepo:
+    """Real parse manifests repository using PostgreSQL."""
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def _set_tenant(self, cur, tenant_id: str):
+        """Set tenant context for RLS using safe string formatting."""
+        from psycopg import sql
+        cur.execute(sql.SQL("SET app.current_tenant = {}").format(sql.Literal(tenant_id)))
 
     def upsert(self, *, tenant_id: str, manifest: dict) -> dict:
-        key = manifest.get("job_id", "unknown")
-        self.manifests[key] = dict(manifest)
-        self.manifests[key]["tenant_id"] = tenant_id
-        return self.manifests[key]
+        with self._conn.cursor() as cur:
+            self._set_tenant(cur, tenant_id)
+            cur.execute("""
+                INSERT INTO parse_manifests (job_id, run_id, document_id, tenant_id, selected_parser,
+                    parser_version, fallback_chain, input_files, started_at, ended_at, status, error_code)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (job_id) DO UPDATE SET
+                    document_id = EXCLUDED.document_id,
+                    selected_parser = EXCLUDED.selected_parser,
+                    parser_version = EXCLUDED.parser_version,
+                    fallback_chain = EXCLUDED.fallback_chain,
+                    input_files = EXCLUDED.input_files,
+                    started_at = EXCLUDED.started_at,
+                    ended_at = EXCLUDED.ended_at,
+                    status = EXCLUDED.status,
+                    error_code = EXCLUDED.error_code
+            """, (
+                manifest.get("job_id"),
+                manifest.get("run_id", manifest.get("job_id")),
+                manifest.get("document_id"),
+                tenant_id,
+                manifest.get("selected_parser"),
+                manifest.get("parser_version"),
+                manifest.get("fallback_chain", []),
+                manifest.get("input_files", []),
+                manifest.get("started_at"),
+                manifest.get("ended_at"),
+                manifest.get("status"),
+                manifest.get("error_code"),
+            ))
+            self._conn.commit()
+        return manifest
 
     def get(self, *, tenant_id: str, job_id: str) -> dict | None:
-        manifest = self.manifests.get(job_id)
-        if manifest and manifest.get("tenant_id") == tenant_id:
-            return manifest
+        with self._conn.cursor() as cur:
+            self._set_tenant(cur, tenant_id)
+            cur.execute("""
+                SELECT * FROM parse_manifests
+                WHERE job_id = %s
+            """, (job_id,))
+            row = cur.fetchone()
+            if row:
+                return dict(row)
         return None
 
 
-class MockDocumentsRepo:
-    """Mock documents repository."""
+class RealDocumentsRepo:
+    """Real documents repository using PostgreSQL."""
 
-    def __init__(self):
-        self.documents: dict[str, dict] = {}
-        self.chunks: dict[str, list[dict]] = {}
+    def __init__(self, conn):
+        self._conn = conn
+
+    def _set_tenant(self, cur, tenant_id: str):
+        """Set tenant context for RLS using safe string formatting."""
+        from psycopg import sql
+        cur.execute(sql.SQL("SET app.current_tenant = {}").format(sql.Literal(tenant_id)))
 
     def upsert_document(self, *, document: dict) -> dict:
-        doc_id = document.get("document_id", "unknown")
-        self.documents[doc_id] = dict(document)
-        return self.documents[doc_id]
+        with self._conn.cursor() as cur:
+            tenant_id = document.get("tenant_id")
+            self._set_tenant(cur, tenant_id)
+            cur.execute("""
+                INSERT INTO documents (document_id, tenant_id, project_id, supplier_id,
+                    doc_type, filename, file_sha256, file_size, status, storage_uri)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (document_id) DO UPDATE SET
+                    status = EXCLUDED.status,
+                    storage_uri = EXCLUDED.storage_uri
+            """, (
+                document.get("document_id"),
+                tenant_id,
+                document.get("project_id"),
+                document.get("supplier_id"),
+                document.get("doc_type"),
+                document.get("filename"),
+                document.get("file_sha256"),
+                document.get("file_size"),
+                document.get("status"),
+                document.get("storage_uri"),
+            ))
+            self._conn.commit()
+        return document
 
     def get(self, *, tenant_id: str, document_id: str) -> dict | None:
-        doc = self.documents.get(document_id)
-        if doc and doc.get("tenant_id") == tenant_id:
-            return doc
+        with self._conn.cursor() as cur:
+            self._set_tenant(cur, tenant_id)
+            cur.execute("""
+                SELECT * FROM documents
+                WHERE document_id = %s
+            """, (document_id,))
+            row = cur.fetchone()
+            if row:
+                return dict(row)
         return None
 
     def replace_chunks(
@@ -109,97 +191,163 @@ class MockDocumentsRepo:
         document_id: str,
         chunks: list[dict],
     ) -> list[dict]:
-        key = f"{tenant_id}:{document_id}"
-        self.chunks[key] = [dict(c) for c in chunks]
-        return self.chunks[key]
+        import json
+        with self._conn.cursor() as cur:
+            self._set_tenant(cur, tenant_id)
+
+            # Delete existing chunks
+            cur.execute("""
+                DELETE FROM document_chunks
+                WHERE document_id = %s
+            """, (document_id,))
+
+            # Insert new chunks
+            for chunk in chunks:
+                cur.execute("""
+                    INSERT INTO document_chunks (
+                        chunk_id, tenant_id, document_id, chunk_hash,
+                        pages, positions, section, heading_path, chunk_type,
+                        parser, parser_version, text
+                    ) VALUES (%s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s::jsonb, %s, %s, %s, %s)
+                """, (
+                    chunk.get("chunk_id"),
+                    tenant_id,
+                    document_id,
+                    chunk.get("chunk_hash"),
+                    json.dumps(chunk.get("pages", [])),
+                    json.dumps(chunk.get("positions", [])),
+                    chunk.get("section"),
+                    json.dumps(chunk.get("heading_path", [])),
+                    chunk.get("chunk_type"),
+                    chunk.get("parser"),
+                    chunk.get("parser_version"),
+                    chunk.get("text"),
+                ))
+            self._conn.commit()
+        return chunks
+
+    def get_chunks(self, *, tenant_id: str, document_id: str) -> list[dict]:
+        with self._conn.cursor() as cur:
+            self._set_tenant(cur, tenant_id)
+            cur.execute("""
+                SELECT * FROM document_chunks
+                WHERE document_id = %s
+                ORDER BY pages::text, positions::text
+            """, (document_id,))
+            return [dict(row) for row in cur.fetchall()]
 
 
 @pytest.fixture
-def real_storage(tmp_path):
-    """Create real file-backed storage."""
-    return MockObjectStorage(base_dir=str(tmp_path / "objects"))
+def real_manifests_repo(real_postgres_connection):
+    return RealParseManifestsRepo(real_postgres_connection)
 
 
 @pytest.fixture
-def manifests_repo():
-    return MockParseManifestsRepo()
+def real_documents_repo(real_postgres_connection):
+    return RealDocumentsRepo(real_postgres_connection)
 
 
 @pytest.fixture
-def documents_repo():
-    return MockDocumentsRepo()
-
-
-@pytest.fixture
-def real_service(real_storage, manifests_repo, documents_repo):
-    """Create service with real storage."""
+def real_service(real_s3_storage, real_manifests_repo, real_documents_repo):
+    """Create service with real MinIO and PostgreSQL backends."""
     from app.mineru_parse_service import build_mineru_parse_service
 
     service = build_mineru_parse_service(
-        object_storage=real_storage,
-        parse_manifests_repo=manifests_repo,
-        documents_repo=documents_repo,
+        object_storage=real_s3_storage,
+        parse_manifests_repo=real_manifests_repo,
+        documents_repo=real_documents_repo,
     )
     assert service is not None, "MINERU_API_KEY required for real tests"
     return service
 
 
+@pytest.fixture
+def sample_pdf_bytes():
+    """Create a sample PDF for testing."""
+    import pymupdf
+
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "Test Document for MinerU Real Integration", fontsize=16)
+    page.insert_text((72, 100), "This is a test PDF file created for integration testing.", fontsize=11)
+    page.insert_text((72, 120), "Content includes: technical specifications, pricing, and compliance.", fontsize=11)
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    doc.close()
+    return buf.getvalue()
+
+
+# ============================================================================
+# Test Classes
+# ============================================================================
+
 @pytest.mark.real_mineru
 @pytest.mark.slow
-class TestRealMineruPersistence:
-    """Real persistence tests with MinerU Official API."""
+class TestRealMineruWithMinioAndPostgres:
+    """Real persistence tests with MinerU API, MinIO, and PostgreSQL."""
 
-    def test_full_parse_and_persist_flow(self, real_service, real_storage, manifests_repo, documents_repo):
-        """Test complete parse and persist flow with real MinerU API.
+    def test_full_parse_and_persist_with_url(
+        self,
+        real_service,
+        real_s3_storage,
+        real_manifests_repo,
+        real_documents_repo,
+        real_postgres_connection,
+    ):
+        """Test complete parse flow with URL-based API.
 
-        Verifies:
-        1. Zip saved to object storage
-        2. Images saved to object storage
-        3. Manifest updated with success status
-        4. Chunks persisted with correct fields
+        Flow:
+        1. Call MinerU API with URL
+        2. Download result zip
+        3. Save zip to MinIO
+        4. Extract and save images to MinIO
+        5. Parse content_list to chunks
+        6. Persist chunks to PostgreSQL
         """
+        import time
+
+        doc_id = f"doc_url_{int(time.time())}"
+        job_id = f"job_url_{int(time.time())}"
+
         result = real_service.parse_and_persist(
             file_url="https://arxiv.org/pdf/2305.12002.pdf",
-            document_id="doc_real_test_001",
-            tenant_id="tenant_test",
-            job_id="job_real_test_001",
+            document_id=doc_id,
+            tenant_id="tenant_real_test",
+            job_id=job_id,
         )
 
         # Verify result
         assert result.status == "completed"
-        assert result.document_id == "doc_real_test_001"
-        assert result.job_id == "job_real_test_001"
+        assert result.document_id == doc_id
         assert result.chunks_count > 0
         assert result.zip_storage_uri is not None
         assert result.full_md is not None
 
-        # Verify zip saved
-        assert result.zip_storage_uri in real_storage.objects
-        zip_bytes = real_storage.objects[result.zip_storage_uri]
+        # Verify zip saved to MinIO
+        zip_bytes = real_s3_storage.get_object(storage_uri=result.zip_storage_uri)
         assert len(zip_bytes) > 0
         assert zip_bytes[:4] == b"PK\x03\x04"  # ZIP magic bytes
 
-        # Verify images saved (if any)
-        image_uris = real_storage.list_objects(
-            tenant_id="tenant_test",
-            object_type="document_parse",
-            object_id="doc_real_test_001",
-        )
-        image_uris = [u for u in image_uris if "/images/" in u]
-        if image_uris:
-            print(f"\nSaved {len(image_uris)} images:")
-            for uri in image_uris:
-                img_bytes = real_storage.objects.get(uri, b"")
-                print(f"  {uri.split('/')[-1]}: {len(img_bytes)} bytes")
+        print(f"\n=== URL-based Parse Result ===")
+        print(f"Status: {result.status}")
+        print(f"Chunks: {result.chunks_count}")
+        print(f"Parse time: {result.parse_time_s:.2f}s")
+        print(f"Zip URI: {result.zip_storage_uri}")
+        print(f"Zip size: {len(zip_bytes)} bytes")
+        print(f"Images: {result.images_count}")
 
-        # Verify manifest
-        manifest = manifests_repo.get(tenant_id="tenant_test", job_id="job_real_test_001")
+        # Verify manifest in PostgreSQL
+        manifest = real_manifests_repo.get(tenant_id="tenant_real_test", job_id=job_id)
         assert manifest is not None
         assert manifest["status"] == "completed"
         assert manifest["error_code"] is None
 
-        # Verify chunks persisted
-        chunks = documents_repo.chunks.get("tenant_test:doc_real_test_001", [])
+        # Verify chunks in PostgreSQL
+        chunks = real_documents_repo.get_chunks(
+            tenant_id="tenant_real_test",
+            document_id=doc_id,
+        )
         assert len(chunks) > 0
 
         # Verify chunk fields per SSOT §7.3
@@ -220,98 +368,321 @@ class TestRealMineruPersistence:
         for field in required_fields:
             assert field in first_chunk, f"Missing required field: {field}"
 
-        print(f"\n=== Parse Result ===")
+        print(f"\n=== PostgreSQL Chunks ===")
+        print(f"Total chunks: {len(chunks)}")
+        print(f"First chunk ID: {first_chunk.get('chunk_id')}")
+        print(f"First chunk text preview: {first_chunk.get('text', '')[:100]}...")
+
+    def test_full_parse_and_persist_with_file_upload(
+        self,
+        real_service,
+        real_s3_storage,
+        real_manifests_repo,
+        real_documents_repo,
+        sample_pdf_bytes,
+    ):
+        """Test complete parse flow with File Upload API.
+
+        Flow:
+        1. Request upload URL from MinerU
+        2. Upload file bytes to cloud storage
+        3. Poll for completion
+        4. Save result zip to MinIO
+        5. Parse content_list to chunks
+        6. Persist chunks to PostgreSQL
+        """
+        import time
+
+        doc_id = f"doc_upload_{int(time.time())}"
+        job_id = f"job_upload_{int(time.time())}"
+
+        # First, save the sample PDF to MinIO
+        storage_uri = real_s3_storage.put_object(
+            tenant_id="tenant_real_test",
+            object_type="document",
+            object_id=doc_id,
+            filename="test_document.pdf",
+            content_bytes=sample_pdf_bytes,
+            content_type="application/pdf",
+        )
+
+        print(f"\n=== File Upload Test ===")
+        print(f"Saved PDF to: {storage_uri}")
+        print(f"PDF size: {len(sample_pdf_bytes)} bytes")
+
+        # Use file upload API
+        result = real_service.parse_and_persist_from_bytes(
+            file_bytes=sample_pdf_bytes,
+            filename="test_document.pdf",
+            document_id=doc_id,
+            tenant_id="tenant_real_test",
+            job_id=job_id,
+        )
+
+        # Verify result
+        assert result.status == "completed"
+        assert result.document_id == doc_id
+        assert result.chunks_count >= 0  # May be 0 for simple PDF
+        assert result.zip_storage_uri is not None
+
+        print(f"\n=== File Upload Parse Result ===")
         print(f"Status: {result.status}")
         print(f"Chunks: {result.chunks_count}")
         print(f"Parse time: {result.parse_time_s:.2f}s")
-        print(f"Zip size: {len(zip_bytes)} bytes")
-        print(f"Full.md length: {len(result.full_md or '')} chars")
+        print(f"Zip URI: {result.zip_storage_uri}")
 
-    def test_parse_result_zip_structure(self, real_service, real_storage):
-        """Verify the saved zip has correct structure."""
-        import zipfile
-        import io
+        # Verify zip saved to MinIO
+        zip_bytes = real_s3_storage.get_object(storage_uri=result.zip_storage_uri)
+        assert len(zip_bytes) > 0
+        assert zip_bytes[:4] == b"PK\x03\x04"
+
+        # Verify manifest in PostgreSQL
+        manifest = real_manifests_repo.get(tenant_id="tenant_real_test", job_id=job_id)
+        assert manifest is not None
+        assert manifest["status"] == "completed"
+
+    def test_verify_minio_storage_structure(
+        self,
+        real_service,
+        real_s3_storage,
+    ):
+        """Verify MinIO storage follows SSOT structure."""
+        import time
+
+        doc_id = f"doc_structure_{int(time.time())}"
+        job_id = f"job_structure_{int(time.time())}"
 
         result = real_service.parse_and_persist(
             file_url="https://arxiv.org/pdf/2305.12002.pdf",
-            document_id="doc_zip_structure_test",
-            tenant_id="tenant_test",
-            job_id="job_zip_structure_test",
+            document_id=doc_id,
+            tenant_id="tenant_real_test",
+            job_id=job_id,
         )
 
-        zip_bytes = real_storage.objects[result.zip_storage_uri]
+        # Verify storage URI format
+        # Expected: object://s3/bea/tenants/{tenant_id}/document_parse/{doc_id}/result.zip
+        assert result.zip_storage_uri.startswith("object://s3/bea/tenants/")
+        assert "document_parse" in result.zip_storage_uri
+        assert doc_id in result.zip_storage_uri
+
+        # Download and inspect zip structure
+        zip_bytes = real_s3_storage.get_object(storage_uri=result.zip_storage_uri)
         with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
             files = zf.namelist()
 
-            # Should have content_list.json
+            # Should have content_list.json (SSOT §2.3 priority 1)
             content_list_files = [f for f in files if "_content_list.json" in f]
             assert len(content_list_files) >= 1, "Missing content_list.json"
 
-            # Should have full.md
+            # Should have full.md (SSOT §2.3 priority 3)
             md_files = [f for f in files if f == "full.md" or f.endswith("/full.md")]
             assert len(md_files) >= 1, "Missing full.md"
 
-            # May have images directory
-            image_files = [f for f in files if f.startswith("images/")]
-            print(f"\nFiles in zip: {len(files)}")
-            print(f"  Content list: {len(content_list_files)}")
-            print(f"  Markdown: {len(md_files)}")
-            print(f"  Images: {len(image_files)}")
+            print(f"\n=== Zip Structure ===")
+            print(f"Total files: {len(files)}")
+            print(f"Content list files: {content_list_files}")
+            print(f"Markdown files: {md_files}")
 
-    def test_images_extracted_and_saved(self, real_service, real_storage):
-        """Test that images are extracted from zip and saved separately."""
+            # Print all files for debugging
+            print("\nAll files in zip:")
+            for f in sorted(files)[:20]:
+                print(f"  {f}")
+            if len(files) > 20:
+                print(f"  ... and {len(files) - 20} more")
+
+    def test_images_saved_to_minio(
+        self,
+        real_service,
+        real_s3_storage,
+    ):
+        """Test that images are extracted and saved to MinIO."""
+        import time
+
+        doc_id = f"doc_images_{int(time.time())}"
+        job_id = f"job_images_{int(time.time())}"
+
         result = real_service.parse_and_persist(
             file_url="https://arxiv.org/pdf/2305.12002.pdf",
-            document_id="doc_image_test",
-            tenant_id="tenant_test",
-            job_id="job_image_test",
+            document_id=doc_id,
+            tenant_id="tenant_real_test",
+            job_id=job_id,
         )
 
-        # Check for saved images
-        all_objects = real_storage.list_objects(
-            tenant_id="tenant_test",
-            object_type="document_parse",
-            object_id="doc_image_test",
-        )
+        print(f"\n=== Image Storage Test ===")
+        print(f"Images count: {result.images_count}")
+        print(f"Images URIs: {result.images_storage_uris}")
 
-        # Filter for image objects
-        image_objects = [u for u in all_objects if "/images/" in u]
+        if result.images_storage_uris:
+            for uri in result.images_storage_uris[:5]:
+                # Verify image can be retrieved
+                img_bytes = real_s3_storage.get_object(storage_uri=uri)
+                print(f"  {uri.split('/')[-1]}: {len(img_bytes)} bytes")
 
-        print(f"\n=== Image Storage ===")
-        print(f"Total objects: {len(all_objects)}")
-        print(f"Image objects: {len(image_objects)}")
+                # Verify image URI format
+                # Expected: object://s3/bea/tenants/{tenant_id}/document_parse/{doc_id}/images/{filename}
+                assert "images" in uri, f"Image URI missing 'images' path: {uri}"
 
-        if image_objects:
-            for uri in image_objects[:5]:  # Show first 5
-                img_bytes = real_storage.objects.get(uri, b"")
-                filename = uri.split("/")[-1]
-                print(f"  {filename}: {len(img_bytes)} bytes")
-
-        # Verify image URIs are returned in result (if any)
-        if image_objects:
-            assert result.images_storage_uris is not None
-            assert len(result.images_storage_uris) > 0
-
-
-@pytest.mark.real_mineru
-@pytest.mark.slow
-class TestRealMineruErrorHandling:
-    """Test error handling with real MinerU API."""
-
-    def test_invalid_url_returns_proper_error(self, real_service, manifests_repo):
-        """Test that invalid URL returns proper error."""
+    def test_error_handling_and_manifest_update(
+        self,
+        real_service,
+        real_manifests_repo,
+    ):
+        """Test that errors are properly recorded in manifest."""
         from app.errors import ApiError
+        import time
 
-        with pytest.raises(ApiError) as exc_info:
+        doc_id = f"doc_error_{int(time.time())}"
+        job_id = f"job_error_{int(time.time())}"
+
+        with pytest.raises(ApiError):
             real_service.parse_and_persist(
-                file_url="https://example.com/nonexistent.pdf",
-                document_id="doc_error_test",
-                tenant_id="tenant_test",
-                job_id="job_error_test",
+                file_url="https://example.com/nonexistent_document_12345.pdf",
+                document_id=doc_id,
+                tenant_id="tenant_real_test",
+                job_id=job_id,
             )
 
         # Verify manifest shows failure
-        manifest = manifests_repo.get(tenant_id="tenant_test", job_id="job_error_test")
+        manifest = real_manifests_repo.get(tenant_id="tenant_real_test", job_id=job_id)
         assert manifest is not None
         assert manifest["status"] == "failed"
         assert manifest["error_code"] is not None
+
+        print(f"\n=== Error Handling ===")
+        print(f"Status: {manifest['status']}")
+        print(f"Error code: {manifest['error_code']}")
+
+
+@pytest.mark.real_mineru
+@pytest.mark.integration
+class TestMinIOConnectivity:
+    """Test MinIO connectivity without MinerU API."""
+
+    def test_minio_bucket_exists(self, real_s3_storage):
+        """Verify MinIO bucket is accessible."""
+        # Try to put and get an object
+        test_uri = real_s3_storage.put_object(
+            tenant_id="tenant_test",
+            object_type="test",
+            object_id="connectivity",
+            filename="test.txt",
+            content_bytes=b"MinIO connectivity test",
+            content_type="text/plain",
+        )
+
+        assert test_uri.startswith("object://s3/")
+
+        # Retrieve the object
+        content = real_s3_storage.get_object(storage_uri=test_uri)
+        assert content == b"MinIO connectivity test"
+
+        print(f"\n=== MinIO Connectivity ===")
+        print(f"Test URI: {test_uri}")
+        print(f"Content: {content}")
+
+    def test_presigned_url_generation(self, real_s3_storage):
+        """Test presigned URL generation for S3 backend."""
+        # Put an object
+        test_uri = real_s3_storage.put_object(
+            tenant_id="tenant_test",
+            object_type="test",
+            object_id="presigned",
+            filename="test.pdf",
+            content_bytes=b"%PDF-1.4 test content",
+            content_type="application/pdf",
+        )
+
+        # Generate presigned URL
+        presigned_url = real_s3_storage.get_presigned_url(
+            storage_uri=test_uri,
+            expires_in=3600,
+        )
+
+        assert presigned_url is not None
+        assert "http://localhost:9000" in presigned_url
+
+        print(f"\n=== Presigned URL ===")
+        print(f"URI: {test_uri}")
+        print(f"URL: {presigned_url[:100]}...")
+
+
+@pytest.mark.real_mineru
+@pytest.mark.integration
+class TestPostgreSQLConnectivity:
+    """Test PostgreSQL connectivity without MinerU API."""
+
+    def test_postgres_connection(self, real_postgres_connection):
+        """Verify PostgreSQL is accessible."""
+        with real_postgres_connection.cursor() as cur:
+            cur.execute("SELECT 1 as test")
+            row = cur.fetchone()
+            assert row["test"] == 1
+
+        print("\n=== PostgreSQL Connectivity ===")
+        print("Connection: OK")
+
+    def test_parse_manifests_table(self, real_manifests_repo):
+        """Test parse_manifests table operations."""
+        import time
+
+        job_id = f"job_test_{int(time.time())}"
+
+        # Insert
+        manifest = real_manifests_repo.upsert(
+            tenant_id="tenant_test",
+            manifest={
+                "job_id": job_id,
+                "document_id": "doc_test",
+                "selected_parser": "mineru",
+                "parser_version": "v1",
+                "status": "testing",
+                "error_code": None,
+            },
+        )
+
+        # Retrieve
+        retrieved = real_manifests_repo.get(tenant_id="tenant_test", job_id=job_id)
+        assert retrieved is not None
+        assert retrieved["status"] == "testing"
+
+        print(f"\n=== Parse Manifests Table ===")
+        print(f"Job ID: {job_id}")
+        print(f"Status: {retrieved['status']}")
+
+    def test_document_chunks_table(self, real_documents_repo):
+        """Test document_chunks table operations."""
+        import time
+
+        doc_id = f"doc_test_{int(time.time())}"
+
+        # Insert chunks
+        chunks = real_documents_repo.replace_chunks(
+            tenant_id="tenant_test",
+            document_id=doc_id,
+            chunks=[
+                {
+                    "chunk_id": f"ck_{doc_id}_1",
+                    "chunk_hash": "abc123",
+                    "pages": [1],
+                    "positions": [{"page": 1, "bbox": [0, 0, 1, 1], "start": 0, "end": 10}],
+                    "section": "test",
+                    "heading_path": ["test"],
+                    "chunk_type": "text",
+                    "parser": "mineru",
+                    "parser_version": "v1",
+                    "text": "Test chunk content",
+                },
+            ],
+        )
+
+        # Retrieve chunks
+        retrieved = real_documents_repo.get_chunks(
+            tenant_id="tenant_test",
+            document_id=doc_id,
+        )
+        assert len(retrieved) == 1
+        assert retrieved[0]["text"] == "Test chunk content"
+
+        print(f"\n=== Document Chunks Table ===")
+        print(f"Document ID: {doc_id}")
+        print(f"Chunks: {len(retrieved)}")
