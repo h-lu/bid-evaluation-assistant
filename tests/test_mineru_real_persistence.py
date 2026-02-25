@@ -399,14 +399,15 @@ class TestRealMineruWithMinioAndPostgres:
 
         from app.mineru_parse_service import build_mineru_parse_service
 
-        # Create service with longer timeout for file upload (MinerU cloud is slower)
+        # Create service with debug timeout
         service = build_mineru_parse_service(
             object_storage=real_s3_storage,
             parse_manifests_repo=real_manifests_repo,
             documents_repo=real_documents_repo,
             env={
                 **os.environ,
-                "MINERU_MAX_POLL_TIME_S": "600",  # 10 minutes for file upload
+                "MINERU_MAX_POLL_TIME_S": "120",  # 2 minutes for debugging
+                "MINERU_POLL_INTERVAL_S": "3",    # Poll every 3 seconds
             },
         )
         assert service is not None, "MINERU_API_KEY required for real tests"

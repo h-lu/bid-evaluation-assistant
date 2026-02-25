@@ -497,8 +497,25 @@ class MineruOfficialApiClient:
 
         while time.time() - start_time < self._config.max_poll_time_s:
             data = self.get_batch_status(batch_id=batch_id)
-            state = data.get("state", "unknown")
             poll_count += 1
+
+            # The batch status response structure is:
+            # {
+            #   "batch_id": "xxx",
+            #   "extract_result": [
+            #     {"state": "done", "full_zip_url": "...", ...}
+            #   ]
+            # }
+            extract_results = data.get("extract_result", [])
+
+            if not extract_results:
+                # No results yet, still processing
+                time.sleep(self._config.poll_interval_s)
+                continue
+
+            # Check the first result's state
+            first_result = extract_results[0]
+            state = first_result.get("state", "unknown")
 
             # Log progress every 10 polls
             if poll_count % 10 == 1:
@@ -506,9 +523,8 @@ class MineruOfficialApiClient:
                 print(f"Poll #{poll_count}: state={state}, elapsed={elapsed:.0f}s")
 
             if state == "done":
-                results = data.get("results", [])
                 zip_urls = []
-                for r in results:
+                for r in extract_results:
                     zip_url = r.get("full_zip_url")
                     if zip_url:
                         zip_urls.append(str(zip_url))
@@ -523,7 +539,7 @@ class MineruOfficialApiClient:
                 return zip_urls
 
             if state == "failed":
-                err_msg = data.get("err_msg", "Unknown error")
+                err_msg = first_result.get("err_msg", "Unknown error")
                 raise ApiError(
                     code="DOC_PARSE_UPSTREAM_ERROR",
                     message=f"MinerU batch failed: {err_msg}",
