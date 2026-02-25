@@ -2,55 +2,125 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** 补充解析器集成缺失功能，对齐 SSOT §3 (fallback 2跳限制) 和 §2.2 (trace_id)
+**Goal:** 补充解析器集成缺失功能，对齐 SSOT §3 (fallback 2跳限制) 和 §2.3 (文件发现 5级优先级)
 
-**Architecture:** 复用现有 `parser_adapters.py` 架构，添加 2跳限制和 trace_id 支持。创建独立解析器服务。
+**Architecture:** 复用现有 `parser_adapters.py` 和 `parse_utils.py`，仅修改缺失部分
 
-**Tech Stack:** Python 3.11, FastAPI, httpx, pytest
+**Tech Stack:** Python 3.11, pytest
 
 **Design Doc:** `docs/plans/2026-02-24-mineru-docling-integration-design.md`
 
 ---
 
-## Phase 1: 修改现有代码 (高优先级)
+## 现有代码分析
+
+### 已实现 ✅
+
+| 功能 | 文件位置 | SSOT |
+|------|----------|------|
+| bbox 归一化 (xyxy/xywh) | `app/parse_utils.py:29-57` | §5.2 ✅ |
+| 编码回退 (utf-8 → gb18030) | `app/parse_utils.py:65-78` | §5.3 ✅ |
+| 文件发现 (2级) | `app/parse_utils.py:18-26` | ⚠️ §2.3 部分 |
+| ParserAdapterRegistry | `app/parser_adapters.py:230-266` | §3 ⚠️ |
+| HttpParserAdapter | `app/parser_adapters.py:70-227` | ✅ |
+| LocalParserAdapter | `app/parser_adapters.py:289-325` | ✅ |
+| select_parse_route | `app/parser_adapters.py:269-278` | ✅ |
+| 本地 PDF 解析 (PyMuPDF) | `app/document_parser.py:137-212` | ✅ |
+| 本地 DOCX 解析 | `app/document_parser.py:215-266` | ✅ |
+| 分块逻辑 | `app/document_parser.py:68-134` | ✅ |
+
+### 需修改 ⚠️
+
+| 功能 | 文件位置 | 问题 | SSOT 要求 |
+|------|----------|------|-----------|
+| **Fallback 无限制** | `parser_adapters.py:241-255` | 遍历所有 fallback | §3 最多 2 跳 |
+| **文件发现只有 2 级** | `parse_utils.py:18-26` | 缺少 full.md, *.md, *_middle.json | §2.3 5 级优先级 |
+
+---
+
+## Phase 1: 修改现有代码 (必须)
 
 ### Task 1.1: 添加 Fallback 2跳限制
 
 **Files:**
-- Modify: `app/parser_adapters.py`
+- Modify: `app/parser_adapters.py:234-266`
+- Create: `tests/test_parser_fallback_limit.py`
 
 **Step 1: 编写失败测试**
 
+Create `tests/test_parser_fallback_limit.py`:
+
 ```python
-# tests/test_parser_fallback_limit.py
+"""Tests for SSOT §3 fallback 2-hop limit."""
+import pytest
+from app.errors import ApiError
+from app.parser_adapters import (
+    ParserAdapterRegistry,
+    ParseRoute,
+    StubParserAdapter,
+)
 
-def test_fallback_chain_respects_2_hop_limit():
-    """SSOT §3: fallback 链最多 2 跳"""
-    from app.parser_adapters import ParserAdapterRegistry, ParseRoute, StubParserAdapter
 
-    # 创建 4 个解析器，只有最后一个能成功
+class AlwaysFailAdapter(StubParserAdapter):
+    """Adapter that always fails."""
+    def parse(self, **kwargs):
+        raise ApiError(
+            code="PARSE_FAILED",
+            message="intentional failure",
+            error_class="transient",
+            retryable=True,
+            http_status=503,
+        )
+
+
+def test_fallback_chain_limited_to_2_hops():
+    """SSOT §3: fallback 链最多 2 跳 (selected + 2 fallbacks = 3 次尝试)."""
+    # 4 个候选，只有最后一个能成功
     adapters = {
-        "parser_a": FailingParserAdapter(name="parser_a"),
-        "parser_b": FailingParserAdapter(name="parser_b"),
-        "parser_c": FailingParserAdapter(name="parser_c"),
-        "parser_d": SuccessParserAdapter(name="parser_d"),  # 这个能成功
+        "a": AlwaysFailAdapter(name="a", section="a"),
+        "b": AlwaysFailAdapter(name="b", section="b"),
+        "c": AlwaysFailAdapter(name="c", section="c"),
+        "d": StubParserAdapter(name="d", section="d"),  # 这个能成功
     }
     registry = ParserAdapterRegistry(adapters)
 
     route = ParseRoute(
-        selected_parser="parser_a",
-        fallback_chain=["parser_b", "parser_c", "parser_d"],  # 4 个候选
+        selected_parser="a",
+        fallback_chain=["b", "c", "d"],  # 4 个候选
         parser_version="v1",
     )
 
-    # SSOT 约束: 只尝试前 3 个 (selected + 2 fallbacks)
-    # parser_d 不应该被尝试
+    # SSOT 约束: 只尝试前 3 个 (a, b, c)，d 不应被尝试
     with pytest.raises(ApiError, match="PARSER_FALLBACK_EXHAUSTED"):
         registry.parse_with_route(
             route=route,
             document_id="doc_1",
             default_text="test",
         )
+
+
+def test_fallback_succeeds_within_2_hops():
+    """When success is within 2 hops, should return result."""
+    adapters = {
+        "a": AlwaysFailAdapter(name="a", section="a"),
+        "b": StubParserAdapter(name="b", section="b"),  # 第 2 个成功
+        "c": StubParserAdapter(name="c", section="c"),
+    }
+    registry = ParserAdapterRegistry(adapters)
+
+    route = ParseRoute(
+        selected_parser="a",
+        fallback_chain=["b", "c"],
+        parser_version="v1",
+    )
+
+    result = registry.parse_with_route(
+        route=route,
+        document_id="doc_1",
+        default_text="test",
+    )
+
+    assert result["parser"] == "b"
 ```
 
 **Step 2: 运行测试验证失败**
@@ -58,9 +128,9 @@ def test_fallback_chain_respects_2_hop_limit():
 Run: `pytest tests/test_parser_fallback_limit.py -v`
 Expected: FAIL - 当前没有 2 跳限制
 
-**Step 3: 修改 parse_with_route 添加限制**
+**Step 3: 修改 parse_with_route**
 
-修改 `app/parser_adapters.py:234-265`:
+Modify `app/parser_adapters.py:234-266`:
 
 ```python
 def parse_with_route(
@@ -108,7 +178,7 @@ def parse_with_route(
 **Step 4: 运行测试验证通过**
 
 Run: `pytest tests/test_parser_fallback_limit.py -v`
-Expected: PASS
+Expected: PASS (2 tests)
 
 **Step 5: Commit**
 
@@ -117,532 +187,223 @@ git add app/parser_adapters.py tests/test_parser_fallback_limit.py
 git commit -m "feat(parsers): add fallback 2-hop limit per SSOT §3
 
 SSOT §3 约束: fallback 链最多 2 跳
+- max_attempts = min(3, len(candidates))
+- candidates[:max_attempts]
 
 Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 1.2: 添加 trace_id 到解析流程
+### Task 1.2: 补充文件发现 5 级优先级
 
 **Files:**
-- Modify: `app/parser_adapters.py`
-- Test: `tests/test_parser_trace_id.py`
+- Modify: `app/parse_utils.py:18-26`
+- Modify: `tests/test_parse_utils.py`
 
-**Step 1: 编写测试**
+**Step 1: 编写失败测试**
+
+Add to `tests/test_parse_utils.py`:
 
 ```python
-# tests/test_parser_trace_id.py
+def test_select_content_source_5_level_priority():
+    """SSOT §2.3: 文件发现 5 级优先级."""
+    # 级别 1: *_content_list.json 优先
+    files = ["a_context_list.json", "z_content_list.json", "full.md", "other.md", "x_middle.json"]
+    assert select_content_source(files) == "z_content_list.json"
 
-def test_parse_with_route_accepts_trace_id():
-    """SSOT §2.2: trace_id 贯穿所有操作"""
-    from app.parser_adapters import ParserAdapterRegistry, ParseRoute, StubParserAdapter
+    # 级别 2: *context_list.json (无 content_list 时)
+    files = ["a_context_list.json", "full.md", "other.md", "x_middle.json"]
+    assert select_content_source(files) == "a_context_list.json"
 
-    adapters = {"stub": StubParserAdapter(name="stub", section="test")}
-    registry = ParserAdapterRegistry(adapters)
+    # 级别 3: full.md (无 content_list/context_list 时)
+    files = ["full.md", "other.md", "x_middle.json"]
+    assert select_content_source(files) == "full.md"
 
-    route = ParseRoute(
-        selected_parser="stub",
-        fallback_chain=[],
-        parser_version="v1",
-    )
+    # 级别 4: *.md (无 full.md 时)
+    files = ["other.md", "x_middle.json"]
+    assert select_content_source(files) == "other.md"
 
-    # trace_id 应该被接受（即使 stub adapter 不使用它）
-    result = registry.parse_with_route(
-        route=route,
-        document_id="doc_1",
-        default_text="test",
-        trace_id="trace_123",  # 新增参数
-    )
+    # 级别 5: *_middle.json (无 md 时)
+    files = ["x_middle.json", "y_middle.json"]
+    assert select_content_source(files) == "x_middle.json"
 
-    assert result is not None
+    # 无匹配
+    files = ["unknown.txt", "data.bin"]
+    assert select_content_source(files) is None
 ```
 
 **Step 2: 运行测试验证失败**
 
-Run: `pytest tests/test_parser_trace_id.py -v`
-Expected: FAIL - parse_with_route 不接受 trace_id
+Run: `pytest tests/test_parse_utils.py::test_select_content_source_5_level_priority -v`
+Expected: FAIL - 当前只有 2 级
 
-**Step 3: 修改 ParserAdapter Protocol**
+**Step 3: 修改 select_content_source**
 
-```python
-# app/parser_adapters.py
-
-class ParserAdapter(Protocol):
-    name: str
-    version: str
-
-    def parse(
-        self,
-        *,
-        document_id: str,
-        default_text: str,
-        parser_version: str,
-        trace_id: str | None = None,  # 新增
-    ) -> dict[str, object]: ...
-```
-
-**Step 4: 修改 parse_with_route**
+Modify `app/parse_utils.py:18-26`:
 
 ```python
-def parse_with_route(
-    self,
-    *,
-    route: ParseRoute,
-    document_id: str,
-    default_text: str,
-    trace_id: str | None = None,  # 新增
-) -> dict[str, object]:
-    ...
-    for parser_name in candidates:
-        adapter = self._adapters.get(parser_name)
-        if adapter is None:
-            continue
-        try:
-            return adapter.parse(
-                document_id=document_id,
-                default_text=default_text,
-                parser_version=route.parser_version,
-                trace_id=trace_id,  # 传递
-            )
-        except ApiError as exc:
-            last_error = exc
-            continue
-```
+def select_content_source(files: Iterable[str]) -> str | None:
+    """Select content source file based on SSOT §2.3 5-level priority.
 
-**Step 5: 更新所有 Adapter 实现**
+    Priority order:
+    1) *_content_list.json
+    2) *context_list.json
+    3) full.md
+    4) *.md
+    5) *_middle.json
+    """
+    names = list(files)
 
-更新 `StubParserAdapter`, `HttpParserAdapter`, `LocalParserAdapter`:
+    # Level 1: *_content_list.json
+    for name in names:
+        if name.endswith("_content_list.json"):
+            return name
 
-```python
-def parse(
-    self,
-    *,
-    document_id: str,
-    default_text: str,
-    parser_version: str,
-    trace_id: str | None = None,  # 新增
-) -> dict[str, object]:
-    # trace_id 可用于日志记录或传递给外部服务
-    ...
-```
+    # Level 2: *context_list.json (legacy naming)
+    for name in names:
+        if name.endswith("context_list.json"):
+            return name
 
-**Step 6: 运行测试验证通过**
+    # Level 3: full.md
+    for name in names:
+        if name == "full.md" or name.endswith("/full.md"):
+            return name
 
-Run: `pytest tests/test_parser_trace_id.py -v`
-Expected: PASS
+    # Level 4: *.md (any markdown)
+    for name in names:
+        if name.endswith(".md"):
+            return name
 
-**Step 7: Commit**
+    # Level 5: *_middle.json (debug only)
+    for name in names:
+        if name.endswith("_middle.json"):
+            return name
 
-```bash
-git add app/parser_adapters.py tests/test_parser_trace_id.py
-git commit -m "feat(parsers): add trace_id to parse flow per SSOT §2.2
-
-Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
-```
-
----
-
-## Phase 2: 创建 OCR Fallback 服务
-
-### Task 2.1: 创建 OCR 服务目录
-
-**Files:**
-- Create: `services/ocr/`
-
-**Step 1: 创建目录**
-
-```bash
-mkdir -p services/ocr
-```
-
-**Step 2: 验证**
-
-Run: `ls -la services/ocr`
-Expected: 目录存在
-
----
-
-### Task 2.2: 创建 OCR 服务
-
-**Files:**
-- Create: `services/ocr/ocr_service.py`
-
-**Step 1: 编写测试**
-
-```python
-# services/ocr/test_ocr_service.py
-
-def test_health_endpoint():
-    from ocr_service import app
-    from fastapi.testclient import TestClient
-    client = TestClient(app)
-    resp = client.get("/health")
-    assert resp.status_code == 200
-    assert resp.json()["status"] == "ok"
-
-def test_parse_endpoint_returns_content():
-    from ocr_service import app
-    from fastapi.testclient import TestClient
-    client = TestClient(app)
-    files = {"file": ("test.txt", b"Hello World", "text/plain")}
-    resp = client.post("/v1/parse", files=files)
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "content_list" in data
-    assert "full_md" in data
-```
-
-**Step 2: 运行测试验证失败**
-
-Run: `cd services/ocr && python -m pytest test_ocr_service.py -v`
-Expected: FAIL
-
-**Step 3: 实现 OCR 服务**
-
-```python
-# services/ocr/ocr_service.py
-"""OCR Fallback Service using PaddleOCR."""
-from __future__ import annotations
-
-import tempfile
-from typing import Any
-
-import uvicorn
-from fastapi import FastAPI, File, UploadFile
-from pydantic import BaseModel
-
-app = FastAPI(title="OCR Parser Service", version="1.0.0")
-
-
-class ContentItem(BaseModel):
-    text: str
-    type: str = "text"
-    page_idx: int = 0
-    bbox: list[float] = [0.0, 0.0, 1.0, 1.0]
-
-
-class ParseResponse(BaseModel):
-    content_list: list[ContentItem]
-    full_md: str
-    metadata: dict[str, Any]
-
-
-@app.get("/health")
-async def health():
-    return {"status": "ok", "version": "ocr-1.0.0"}
-
-
-@app.post("/v1/parse", response_model=ParseResponse)
-async def parse_document(file: UploadFile = File(...)):
-    content = await file.read()
-    filename = file.filename or "unknown"
-
-    text_content = await _extract_text_with_ocr(content, filename)
-
-    content_list = [
-        ContentItem(text=text_content, type="text", page_idx=0)
-    ]
-
-    return ParseResponse(
-        content_list=content_list,
-        full_md=text_content,
-        metadata={"filename": filename, "parser": "ocr"},
-    )
-
-
-async def _extract_text_with_ocr(content: bytes, filename: str) -> str:
-    try:
-        from paddleocr import PaddleOCR
-        ocr = PaddleOCR(use_angle_cls=True, lang="ch", show_log=False)
-
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-            tmp.write(content)
-            tmp_path = tmp.name
-
-        result = ocr.ocr(tmp_path, cls=True)
-
-        text_parts = []
-        if result and result[0]:
-            for line in result[0]:
-                if line and len(line) >= 2:
-                    text_parts.append(line[1][0])
-
-        return "\n".join(text_parts) if text_parts else f"[OCR] {filename}"
-    except ImportError:
-        return f"[OCR fallback] {filename}: {len(content)} bytes"
-    except Exception as e:
-        return f"[OCR error] {str(e)}"
-
-
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    return None
 ```
 
 **Step 4: 运行测试验证通过**
 
-Run: `cd services/ocr && python -m pytest test_ocr_service.py -v`
-Expected: PASS
+Run: `pytest tests/test_parse_utils.py -v`
+Expected: PASS (all tests)
 
 **Step 5: Commit**
 
 ```bash
-git add services/ocr/
-git commit -m "feat(ocr): add OCR fallback service
+git add app/parse_utils.py tests/test_parse_utils.py
+git commit -m "feat(parse): add 5-level file discovery priority per SSOT §2.3
+
+SSOT §2.3 文件发现顺序:
+1) *_content_list.json
+2) *context_list.json
+3) full.md
+4) *.md
+5) *_middle.json
 
 Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 2.3: 创建 OCR Dockerfile
+## Phase 2: 运行完整测试套件
 
-**Files:**
-- Create: `services/ocr/Dockerfile`
-- Create: `services/ocr/requirements.txt`
-
-**Step 1: 创建 requirements.txt**
-
-```txt
-fastapi>=0.109.0
-uvicorn>=0.27.0
-pydantic>=2.0.0
-paddleocr>=2.7.0
-paddlepaddle>=2.5.0
-python-multipart>=0.0.6
-```
-
-**Step 2: 创建 Dockerfile**
-
-```dockerfile
-FROM python:3.11-slim
-
-WORKDIR /app
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgomp1 libglib2.0-0 libsm6 libxext6 libxrender1 libgl1-mesa-glx \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY ocr_service.py .
-
-EXPOSE 8000
-
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
-
-CMD ["uvicorn", "ocr_service:app", "--host", "0.0.0.0", "--port", "8000"]
-```
-
-**Step 3: Commit**
-
-```bash
-git add services/ocr/Dockerfile services/ocr/requirements.txt
-git commit -m "feat(ocr): add Dockerfile for OCR service
-
-Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
-```
-
----
-
-## Phase 3: 更新 Docker Compose
-
-### Task 3.1: 更新 docker-compose.production.yml
-
-**Files:**
-- Modify: `docker-compose.production.yml`
-
-**Step 1: 添加 OCR 服务定义**
-
-在 `docker-compose.production.yml` 添加:
-
-```yaml
-  # OCR Fallback Service
-  ocr:
-    build:
-      context: ./services/ocr
-      dockerfile: Dockerfile
-    ports:
-      - "8102:8000"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    profiles:
-      - parsers
-      - full
-    networks:
-      - bea-network
-```
-
-**Step 2: 验证 YAML 语法**
-
-Run: `python -c "import yaml; yaml.safe_load(open('docker-compose.production.yml'))"`
-Expected: 无错误
-
-**Step 3: Commit**
-
-```bash
-git add docker-compose.production.yml
-git commit -m "feat(docker): add OCR service to docker-compose
-
-Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
-```
-
----
-
-## Phase 4: 集成测试
-
-### Task 4.1: 创建 Fallback 链集成测试
-
-**Files:**
-- Create: `tests/test_parser_fallback_chain.py`
-
-**Step 1: 编写测试**
-
-```python
-# tests/test_parser_fallback_chain.py
-"""Integration tests for parser fallback chain."""
-import pytest
-from unittest.mock import patch, MagicMock
-
-from app.parser_adapters import (
-    ParserAdapterRegistry,
-    ParseRoute,
-    StubParserAdapter,
-)
-from app.errors import ApiError
-
-
-class FailingAdapter(StubParserAdapter):
-    def parse(self, **kwargs):
-        raise ApiError(
-            code="PARSE_FAILED",
-            message="intentional failure",
-            error_class="transient",
-            retryable=True,
-            http_status=503,
-        )
-
-
-def test_fallback_on_primary_failure():
-    """Should fallback to secondary when primary fails."""
-    registry = ParserAdapterRegistry({
-        "primary": FailingAdapter(name="primary", section="p"),
-        "secondary": StubParserAdapter(name="secondary", section="s"),
-    })
-
-    route = ParseRoute(
-        selected_parser="primary",
-        fallback_chain=["secondary"],
-        parser_version="v1",
-    )
-
-    result = registry.parse_with_route(
-        route=route,
-        document_id="doc_1",
-        default_text="test",
-    )
-
-    assert result["parser"] == "secondary"
-
-
-def test_fallback_2_hop_limit():
-    """SSOT §3: fallback chain limited to 2 hops."""
-    registry = ParserAdapterRegistry({
-        "a": FailingAdapter(name="a", section="a"),
-        "b": FailingAdapter(name="b", section="b"),
-        "c": FailingAdapter(name="c", section="c"),
-        "d": StubParserAdapter(name="d", section="d"),  # This would succeed
-    })
-
-    route = ParseRoute(
-        selected_parser="a",
-        fallback_chain=["b", "c", "d"],  # 4 candidates
-        parser_version="v1",
-    )
-
-    # Should fail after 3 attempts (a + b + c), d should not be tried
-    with pytest.raises(ApiError, match="PARSER_FALLBACK_EXHAUSTED"):
-        registry.parse_with_route(
-            route=route,
-            document_id="doc_1",
-            default_text="test",
-        )
-
-
-def test_trace_id_propagation():
-    """SSOT §2.2: trace_id should be accepted."""
-    registry = ParserAdapterRegistry({
-        "stub": StubParserAdapter(name="stub", section="test"),
-    })
-
-    route = ParseRoute(
-        selected_parser="stub",
-        fallback_chain=[],
-        parser_version="v1",
-    )
-
-    result = registry.parse_with_route(
-        route=route,
-        document_id="doc_1",
-        default_text="test",
-        trace_id="trace_abc",
-    )
-
-    assert result is not None
-```
-
-**Step 2: 运行测试**
-
-Run: `pytest tests/test_parser_fallback_chain.py -v`
-Expected: ALL PASS
-
-**Step 3: Commit**
-
-```bash
-git add tests/test_parser_fallback_chain.py
-git commit -m "test(parsers): add fallback chain integration tests
-
-Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
-```
-
----
-
-## Phase 5: 运行完整测试套件
-
-### Task 5.1: 运行所有解析器测试
+### Task 2.1: 运行所有解析相关测试
 
 **Step 1: 运行测试**
 
-Run: `pytest tests/test_parser*.py -v`
+Run: `pytest tests/test_parser*.py tests/test_parse*.py tests/test_document*.py -v --tb=short`
 Expected: ALL PASS
 
 **Step 2: 验证无回归**
 
-Run: `pytest tests/ -v --tb=short`
+Run: `pytest tests/ -v --tb=short -x`
 Expected: 无新失败
+
+---
+
+## Phase 3: 更新设计文档
+
+### Task 3.1: 标记设计文档为已实现
+
+**Files:**
+- Modify: `docs/plans/2026-02-24-mineru-docling-integration-design.md`
+
+**Step 1: 更新状态**
+
+Change header from:
+```markdown
+> 状态：Draft
+```
+
+To:
+```markdown
+> 状态：Implemented
+> 实现完成：2026-02-24
+> 验收测试：全部通过
+```
+
+**Step 2: 添加实现状态章节**
+
+Add at end of file:
+```markdown
+## 9. 实现状态
+
+| 功能 | 文件 | SSOT | 状态 |
+|------|------|------|------|
+| Fallback 2跳限制 | parser_adapters.py:237-240 | §3 | ✅ |
+| 文件发现 5级优先级 | parse_utils.py:18-44 | §2.3 | ✅ |
+| bbox 归一化 | parse_utils.py:46-74 | §5.2 | ✅ (已有) |
+| 编码回退 | parse_utils.py:81-94 | §5.3 | ✅ (已有) |
+| 本地 PDF 解析 | document_parser.py:137-212 | - | ✅ (已有) |
+| 本地 DOCX 解析 | document_parser.py:215-266 | - | ✅ (已有) |
+```
+
+**Step 3: Commit**
+
+```bash
+git add docs/plans/2026-02-24-mineru-docling-integration-design.md
+git commit -m "docs: mark MinerU/Docling design as implemented
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
+```
 
 ---
 
 ## Verification Checklist
 
 - [ ] Fallback 2跳限制已实现 (SSOT §3)
-- [ ] trace_id 可传递到解析流程 (SSOT §2.2)
-- [ ] OCR 服务可独立运行
-- [ ] Docker Compose 包含 OCR 服务
-- [ ] 所有测试通过
+- [ ] 文件发现 5级优先级已实现 (SSOT §2.3)
+- [ ] 所有现有测试继续通过
+- [ ] 新测试覆盖新功能
+- [ ] 设计文档已更新
 
 ---
 
 ## SSOT Alignment Summary
 
-| SSOT 约束 | 实现 |
-|-----------|------|
-| §3 fallback 最多 2 跳 | Task 1.1 |
-| §2.2 trace_id 贯穿 | Task 1.2 |
-| §3 解析器路由 | 现有实现 |
-| §10 错误码 | 现有实现 |
+| SSOT 约束 | 实现任务 | 状态 |
+|-----------|----------|------|
+| §3 fallback 最多 2 跳 | Task 1.1 | 待实施 |
+| §2.3 文件发现 5 级优先级 | Task 1.2 | 待实施 |
+| §5.2 bbox 归一化 | 现有实现 | ✅ |
+| §5.3 编码回退 | 现有实现 | ✅ |
+| §10 错误码 | 现有实现 | ✅ |
+
+---
+
+## 不在本次实施范围内
+
+以下功能现有代码已满足需求，无需修改：
+
+1. **本地 PDF/DOCX 解析** - `document_parser.py` 已完整实现
+2. **HttpParserAdapter** - 已支持 mineru/docling/ocr HTTP 调用
+3. **路由选择逻辑** - `select_parse_route` 已实现
+4. **独立解析器服务** - 当前 HttpParserAdapter 已可对接外部服务，无需新建
+
+如需部署独立 MinerU/Docling/OCR 服务，只需配置环境变量：
+```bash
+MINERU_ENDPOINT=http://mineru:8100
+DOCLING_ENDPOINT=http://docling:8101
+OCR_ENDPOINT=http://ocr:8102
+```
