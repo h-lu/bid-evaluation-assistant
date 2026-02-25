@@ -89,12 +89,13 @@ class RealParseManifestsRepo:
         cur.execute(sql.SQL("SET app.current_tenant = {}").format(sql.Literal(tenant_id)))
 
     def upsert(self, *, tenant_id: str, manifest: dict) -> dict:
+        import json
         with self._conn.cursor() as cur:
             self._set_tenant(cur, tenant_id)
             cur.execute("""
                 INSERT INTO parse_manifests (job_id, run_id, document_id, tenant_id, selected_parser,
                     parser_version, fallback_chain, input_files, started_at, ended_at, status, error_code)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s, %s)
                 ON CONFLICT (job_id) DO UPDATE SET
                     document_id = EXCLUDED.document_id,
                     selected_parser = EXCLUDED.selected_parser,
@@ -112,8 +113,8 @@ class RealParseManifestsRepo:
                 tenant_id,
                 manifest.get("selected_parser"),
                 manifest.get("parser_version"),
-                manifest.get("fallback_chain", []),
-                manifest.get("input_files", []),
+                json.dumps(manifest.get("fallback_chain", [])),
+                json.dumps(manifest.get("input_files", [])),
                 manifest.get("started_at"),
                 manifest.get("ended_at"),
                 manifest.get("status"),
@@ -373,9 +374,9 @@ class TestRealMineruWithMinioAndPostgres:
         print(f"First chunk ID: {first_chunk.get('chunk_id')}")
         print(f"First chunk text preview: {first_chunk.get('text', '')[:100]}...")
 
+    @pytest.mark.slow
     def test_full_parse_and_persist_with_file_upload(
         self,
-        real_service,
         real_s3_storage,
         real_manifests_repo,
         real_documents_repo,
@@ -390,8 +391,25 @@ class TestRealMineruWithMinioAndPostgres:
         4. Save result zip to MinIO
         5. Parse content_list to chunks
         6. Persist chunks to PostgreSQL
+
+        Note: This test is marked as 'slow' because MinerU cloud processing
+        can take several minutes. Run with: pytest -m 'not slow' to skip.
         """
         import time
+
+        from app.mineru_parse_service import build_mineru_parse_service
+
+        # Create service with longer timeout for file upload (MinerU cloud is slower)
+        service = build_mineru_parse_service(
+            object_storage=real_s3_storage,
+            parse_manifests_repo=real_manifests_repo,
+            documents_repo=real_documents_repo,
+            env={
+                **os.environ,
+                "MINERU_MAX_POLL_TIME_S": "600",  # 10 minutes for file upload
+            },
+        )
+        assert service is not None, "MINERU_API_KEY required for real tests"
 
         doc_id = f"doc_upload_{int(time.time())}"
         job_id = f"job_upload_{int(time.time())}"
@@ -411,7 +429,7 @@ class TestRealMineruWithMinioAndPostgres:
         print(f"PDF size: {len(sample_pdf_bytes)} bytes")
 
         # Use file upload API
-        result = real_service.parse_and_persist_from_bytes(
+        result = service.parse_and_persist_from_bytes(
             file_bytes=sample_pdf_bytes,
             filename="test_document.pdf",
             document_id=doc_id,

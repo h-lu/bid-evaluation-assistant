@@ -395,7 +395,9 @@ class MineruOfficialApiClient:
         Args:
             file_bytes: Raw file content
             upload_url: Pre-signed upload URL from request_upload_urls()
-            content_type: MIME type of the file
+            content_type: MIME type of the file (default: application/pdf)
+                Note: The pre-signed URL from MinerU/OSS does NOT include Content-Type
+                in the signature calculation, so we should NOT send Content-Type header.
 
         Returns:
             True if upload successful
@@ -403,39 +405,43 @@ class MineruOfficialApiClient:
         Raises:
             ApiError: If upload fails
         """
-        req = request.Request(
-            upload_url,
-            data=file_bytes,
-            method="PUT",
-            headers={
-                "Content-Type": content_type,
-            },
-        )
+        # Use requests library for reliable HTTP handling.
+        # IMPORTANT: MinerU's pre-signed URLs from Aliyun OSS do NOT include
+        # Content-Type in the signature calculation. Sending Content-Type header
+        # would cause SignatureDoesNotMatch error.
+        import requests
+
+        # Do NOT include Content-Type header - OSS signature doesn't include it
+        headers = {}
 
         try:
-            with request.urlopen(req, timeout=120) as resp:
-                if resp.status not in (200, 204):
-                    raise ApiError(
-                        code="DOC_PARSE_UPSTREAM_ERROR",
-                        message=f"MinerU file upload failed with status {resp.status}",
-                        error_class="transient",
-                        retryable=True,
-                        http_status=503,
-                    )
-                return True
-        except HTTPError as e:
-            raw = e.read().decode("utf-8", errors="replace")
+            response = requests.put(
+                upload_url,
+                data=file_bytes,
+                headers=headers,
+                timeout=120,
+            )
+            if response.status_code not in (200, 204):
+                raise ApiError(
+                    code="DOC_PARSE_UPSTREAM_ERROR",
+                    message=f"MinerU file upload failed with status {response.status_code}: {response.text[:200]}",
+                    error_class="transient",
+                    retryable=True,
+                    http_status=503,
+                )
+            return True
+        except requests.exceptions.Timeout as e:
             raise ApiError(
-                code="DOC_PARSE_UPSTREAM_ERROR",
-                message=f"MinerU file upload HTTP {e.code}: {raw[:200]}",
+                code="DOC_PARSE_TIMEOUT",
+                message=f"MinerU file upload timed out: {e}",
                 error_class="transient",
                 retryable=True,
                 http_status=503,
             ) from e
-        except (URLError, OSError) as e:
+        except requests.exceptions.RequestException as e:
             raise ApiError(
                 code="DOC_PARSE_UPSTREAM_UNAVAILABLE",
-                message=f"MinerU file upload unavailable: {e}",
+                message=f"MinerU file upload failed: {e}",
                 error_class="transient",
                 retryable=True,
                 http_status=503,

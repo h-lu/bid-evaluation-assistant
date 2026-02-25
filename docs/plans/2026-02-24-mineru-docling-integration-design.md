@@ -409,9 +409,12 @@ MinerU 云端 API 的文件上传流程：
 2. `PUT <upload_url>` - 上传文件到云存储
 3. `GET /api/v4/extract-results/batch/{batch_id}` - 轮询结果
 
+**重要**: MinerU 使用阿里云 OSS 预签名 URL。上传时**不要**包含 `Content-Type` 头，
+因为 OSS 签名计算不包含此头。发送 `Content-Type` 会导致 `SignatureDoesNotMatch` 错误。
+
 **新增方法**:
 - `MineruOfficialApiClient.request_upload_urls()` - 请求上传 URL
-- `MineruOfficialApiClient.upload_file_to_url()` - 上传文件
+- `MineruOfficialApiClient.upload_file_to_url()` - 上传文件（不含 Content-Type 头）
 - `MineruOfficialApiClient.get_batch_status()` - 查询批次状态
 - `MineruOfficialApiClient.poll_batch_until_complete()` - 轮询直到完成
 - `MineruParseService.parse_and_persist_from_bytes()` - 从字节解析并持久化
