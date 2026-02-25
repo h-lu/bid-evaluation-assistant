@@ -31,22 +31,45 @@ class StoreParseMixin:
     ) -> list[dict[str, Any]] | None:
         """Try parsing with MinerU Official API if configured.
 
+        Supports two scenarios:
+        1. Document has source_url (public URL to file) → use directly
+        2. Document has storage_uri → generate presigned URL (S3 only)
+
         Requires:
         1. MINERU_API_KEY environment variable
-        2. Document has source_url (public URL to file)
+        2. Document has source_url OR storage_uri (with S3 backend)
 
         Returns:
         - List of chunks if successful
-        - None if MinerU Official API not available or no source_url
+        - None if MinerU Official API not available or no accessible URL
         """
         # Check if MinerU Official API is configured
         api_key = os.environ.get("MINERU_API_KEY", "")
         if not api_key.strip():
             return None
 
-        # Check if document has a public URL
+        # Determine the file URL
+        file_url: str | None = None
+
+        # Option 1: Use source_url if available
         source_url = document.get("source_url")
-        if not source_url or not isinstance(source_url, str) or not source_url.strip():
+        if source_url and isinstance(source_url, str) and source_url.strip():
+            file_url = source_url.strip()
+
+        # Option 2: Generate presigned URL from storage_uri
+        if not file_url:
+            storage_uri = document.get("storage_uri")
+            if storage_uri and isinstance(storage_uri, str) and storage_uri.strip():
+                # Try to generate presigned URL (S3 backend supports this)
+                presigned = self.object_storage.get_presigned_url(
+                    storage_uri=storage_uri,
+                    expires_in=3600,  # 1 hour
+                )
+                if presigned:
+                    file_url = presigned
+
+        # No accessible URL found
+        if not file_url:
             return None
 
         # Try to use MinerU Official API
@@ -66,7 +89,7 @@ class StoreParseMixin:
             manifest = self.parse_manifests_repository.get(tenant_id=tenant_id, job_id=job_id)
 
             result = service.parse_and_persist(
-                file_url=source_url,
+                file_url=file_url,
                 document_id=document_id,
                 tenant_id=tenant_id,
                 job_id=job_id,
@@ -246,7 +269,7 @@ class StoreParseMixin:
         """Parse document file with SSOT §3 routing priority.
 
         Priority:
-        1. MinerU Official API (if MINERU_API_KEY + source_url)
+        1. MinerU Official API (if MINERU_API_KEY + (source_url or presigned URL))
         2. Local parser (PyMuPDF/python-docx)
         3. Stub adapter (fallback)
         """

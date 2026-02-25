@@ -356,6 +356,8 @@ export MINERU_ENABLE_FORMULA=false
 
 ### 11.2 上传文档
 
+**方式一：提供 source_url（推荐）**
+
 ```python
 POST /api/v1/documents/upload
 {
@@ -365,6 +367,18 @@ POST /api/v1/documents/upload
 }
 ```
 
+**方式二：直接上传文件（需要 S3 对象存储）**
+
+```python
+POST /api/v1/documents/upload
+Content-Type: multipart/form-data
+
+file: document.pdf
+tenant_id: tenant_abc
+```
+
+> **注意**: 直接上传文件需要使用 S3 对象存储后端（支持预签名 URL）。本地存储不支持此功能。
+
 ### 11.3 触发解析
 
 ```python
@@ -372,7 +386,21 @@ POST /api/v1/documents/{document_id}/parse
 ```
 
 解析器会自动：
-1. 检测 `source_url` 和 `MINERU_API_KEY`
-2. 使用 MinerU Official API 解析
-3. 保存结果到对象存储
-4. 持久化 chunks 到数据库
+1. 优先检测 `source_url`，如果存在则直接使用
+2. 如果没有 `source_url` 但有 `storage_uri`，尝试生成预签名 URL（仅 S3）
+3. 使用 MinerU Official API 解析
+4. 保存结果到对象存储
+5. 持久化 chunks 到数据库
+
+### 11.4 文件上传 URL 支持（新增）
+
+**云端 API 限制**: MinerU 云端 API 只接受 URL，不支持直接文件上传。
+
+**解决方案**:
+- 添加 `get_presigned_url()` 方法到 `ObjectStorageBackend`
+- S3 后端使用 boto3 的 `generate_presigned_url()` 生成临时访问 URL
+- 本地存储返回 `None`（不支持）
+
+**使用场景**:
+1. 用户直接上传 PDF → 存储到 S3 → 生成预签名 URL → 传给 MinerU API
+2. 用户提供 URL → 直接传给 MinerU API

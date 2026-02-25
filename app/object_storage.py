@@ -76,6 +76,24 @@ class ObjectStorageBackend:
     def is_retention_active(self, *, storage_uri: str, now: datetime | None = None) -> bool:
         raise NotImplementedError
 
+    def get_presigned_url(
+        self,
+        *,
+        storage_uri: str,
+        expires_in: int = 3600,
+    ) -> str | None:
+        """Generate a presigned URL for the object.
+
+        Args:
+            storage_uri: The URI of the object in storage
+            expires_in: URL expiration time in seconds (default 1 hour)
+
+        Returns:
+            A presigned URL that can be used to download the object,
+            or None if the backend doesn't support presigned URLs.
+        """
+        return None
+
 
 class LocalObjectStorage(ObjectStorageBackend):
     backend_name = "local"
@@ -417,6 +435,24 @@ class S3ObjectStorage(ObjectStorageBackend):
         if retain_until.tzinfo is None:
             retain_until = retain_until.replace(tzinfo=UTC)
         return current < retain_until
+
+    def get_presigned_url(
+        self,
+        *,
+        storage_uri: str,
+        expires_in: int = 3600,
+    ) -> str | None:
+        """Generate a presigned URL for S3 object download."""
+        parsed = _parse_storage_uri(storage_uri)
+        try:
+            url = self._client.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": parsed["bucket"], "Key": parsed["key"]},
+                ExpiresIn=expires_in,
+            )
+            return str(url)
+        except Exception:  # pragma: no cover
+            return None
 
     def _build_key(self, *, tenant_id: str, object_type: str, object_id: str, filename: str) -> str:
         safe_filename = _clean_segment(filename)

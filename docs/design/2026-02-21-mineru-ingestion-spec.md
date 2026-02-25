@@ -49,6 +49,20 @@ doc_type_detect
 2. fallback 链最多 2 跳，避免无限回退。
 3. 每次路由决策都写入 parse manifest。
 
+### 3.1 文件 URL 获取策略
+
+MinerU 云端 API 只接受 URL，不支持直接文件上传。系统支持两种方式获取 URL：
+
+| 场景 | 优先级 | 方式 |
+|------|--------|------|
+| 文档有 `source_url` | 1 | 直接使用 |
+| 文档有 `storage_uri` (S3) | 2 | 生成预签名 URL |
+| 文档有 `storage_uri` (本地) | - | 不支持，回退到本地解析 |
+
+**预签名 URL 参数**:
+- 有效期: 3600 秒 (1 小时)
+- 仅 S3 后端支持
+
 ## 4. parse manifest 契约
 
 每次解析必须生成 `document_parse_runs.manifest`，最小字段：
