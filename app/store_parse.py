@@ -31,46 +31,24 @@ class StoreParseMixin:
     ) -> list[dict[str, Any]] | None:
         """Try parsing with MinerU Official API if configured.
 
-        Supports two scenarios:
-        1. Document has source_url (public URL to file) → use directly
-        2. Document has storage_uri → generate presigned URL (S3 only)
+        Supports three scenarios (in priority order):
+        1. Document has source_url (public URL to file) → use URL-based API
+        2. Document has storage_uri with accessible file bytes → use file upload API
+        3. Document has storage_uri with S3 backend → use presigned URL
 
         Requires:
-        1. MINERU_API_KEY environment variable
-        2. Document has source_url OR storage_uri (with S3 backend)
+        - MINERU_API_KEY environment variable
 
         Returns:
         - List of chunks if successful
-        - None if MinerU Official API not available or no accessible URL
+        - None if MinerU Official API not available or no accessible file
         """
         # Check if MinerU Official API is configured
         api_key = os.environ.get("MINERU_API_KEY", "")
         if not api_key.strip():
             return None
 
-        # Determine the file URL
-        file_url: str | None = None
-
-        # Option 1: Use source_url if available
-        source_url = document.get("source_url")
-        if source_url and isinstance(source_url, str) and source_url.strip():
-            file_url = source_url.strip()
-
-        # Option 2: Generate presigned URL from storage_uri
-        if not file_url:
-            storage_uri = document.get("storage_uri")
-            if storage_uri and isinstance(storage_uri, str) and storage_uri.strip():
-                # Try to generate presigned URL (S3 backend supports this)
-                presigned = self.object_storage.get_presigned_url(
-                    storage_uri=storage_uri,
-                    expires_in=3600,  # 1 hour
-                )
-                if presigned:
-                    file_url = presigned
-
-        # No accessible URL found
-        if not file_url:
-            return None
+        filename = str(document.get("filename") or "document.pdf")
 
         # Try to use MinerU Official API
         try:
@@ -87,25 +65,81 @@ class StoreParseMixin:
 
             # Get existing manifest for job info
             manifest = self.parse_manifests_repository.get(tenant_id=tenant_id, job_id=job_id)
+            selected_parser = manifest.get("selected_parser", "mineru_official") if manifest else "mineru_official"
+            parser_version = manifest.get("parser_version", "v1") if manifest else "v1"
+            fallback_chain = manifest.get("fallback_chain", []) if manifest else []
 
-            result = service.parse_and_persist(
-                file_url=file_url,
-                document_id=document_id,
-                tenant_id=tenant_id,
-                job_id=job_id,
-                selected_parser=manifest.get("selected_parser", "mineru_official") if manifest else "mineru_official",
-                parser_version=manifest.get("parser_version", "v1") if manifest else "v1",
-                fallback_chain=manifest.get("fallback_chain", []) if manifest else [],
-                trace_id=trace_id,
-            )
+            # Option 1: Use source_url if available (URL-based API)
+            source_url = document.get("source_url")
+            if source_url and isinstance(source_url, str) and source_url.strip():
+                result = service.parse_and_persist(
+                    file_url=source_url.strip(),
+                    document_id=document_id,
+                    tenant_id=tenant_id,
+                    job_id=job_id,
+                    selected_parser=selected_parser,
+                    parser_version=parser_version,
+                    fallback_chain=fallback_chain,
+                    trace_id=trace_id,
+                )
+                chunks = self.documents_repository.get_chunks(
+                    tenant_id=tenant_id,
+                    document_id=document_id,
+                )
+                return [self._ensure_chunk_shape(document_id=document_id, chunk=c) for c in chunks]
 
-            # Get persisted chunks
-            chunks = self.documents_repository.get_chunks(
-                tenant_id=tenant_id,
-                document_id=document_id,
-            )
+            # Option 2: Use file upload API with storage_uri
+            storage_uri = document.get("storage_uri")
+            if storage_uri and isinstance(storage_uri, str) and storage_uri.strip():
+                # Try to get file bytes for direct upload
+                try:
+                    file_bytes = self.object_storage.get_object(storage_uri=storage_uri)
+                    if file_bytes and len(file_bytes) > 0:
+                        # Use file upload API (simpler than presigned URL)
+                        result = service.parse_and_persist_from_bytes(
+                            file_bytes=file_bytes,
+                            filename=filename,
+                            document_id=document_id,
+                            tenant_id=tenant_id,
+                            job_id=job_id,
+                            selected_parser=selected_parser,
+                            parser_version=parser_version,
+                            fallback_chain=fallback_chain,
+                            trace_id=trace_id,
+                        )
+                        chunks = self.documents_repository.get_chunks(
+                            tenant_id=tenant_id,
+                            document_id=document_id,
+                        )
+                        return [self._ensure_chunk_shape(document_id=document_id, chunk=c) for c in chunks]
+                except Exception:
+                    # File bytes not accessible, try presigned URL
+                    pass
 
-            return [self._ensure_chunk_shape(document_id=document_id, chunk=c) for c in chunks]
+                # Option 3: Try presigned URL (S3 backend only)
+                presigned = self.object_storage.get_presigned_url(
+                    storage_uri=storage_uri,
+                    expires_in=3600,  # 1 hour
+                )
+                if presigned:
+                    result = service.parse_and_persist(
+                        file_url=presigned,
+                        document_id=document_id,
+                        tenant_id=tenant_id,
+                        job_id=job_id,
+                        selected_parser=selected_parser,
+                        parser_version=parser_version,
+                        fallback_chain=fallback_chain,
+                        trace_id=trace_id,
+                    )
+                    chunks = self.documents_repository.get_chunks(
+                        tenant_id=tenant_id,
+                        document_id=document_id,
+                    )
+                    return [self._ensure_chunk_shape(document_id=document_id, chunk=c) for c in chunks]
+
+            # No accessible file found
+            return None
 
         except Exception:
             # MinerU Official API failed, return None to fall back to local parsing

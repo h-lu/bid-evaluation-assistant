@@ -323,16 +323,232 @@ class MineruOfficialApiClient:
 
         return content
 
+    # ========== File Upload API (Batch Mode) ==========
+
+    def request_upload_urls(
+        self,
+        *,
+        files: list[dict[str, str]],
+        model_version: str = "vlm",
+    ) -> tuple[str, list[str]]:
+        """Request upload URLs for file batch upload.
+
+        API: POST /api/v4/file-urls/batch
+
+        Args:
+            files: List of {"name": "filename.pdf", "data_id": "unique_id"}
+            model_version: Parser model version (default: "vlm")
+
+        Returns:
+            Tuple of (batch_id, list of upload URLs)
+
+        Raises:
+            ApiError: If the request fails
+        """
+        data = {
+            "files": files,
+            "model_version": model_version,
+        }
+
+        result = self._make_request(
+            endpoint="/file-urls/batch",
+            method="POST",
+            data=data,
+            timeout=60.0,
+        )
+
+        if result.get("code") != 0:
+            msg = result.get("msg", "Unknown error")
+            raise ApiError(
+                code="DOC_PARSE_UPSTREAM_ERROR",
+                message=f"MinerU file upload URL request failed: {msg}",
+                error_class="transient",
+                retryable=True,
+                http_status=503,
+            )
+
+        batch_id = result.get("data", {}).get("batch_id")
+        file_urls = result.get("data", {}).get("file_urls", [])
+
+        if not batch_id or not file_urls:
+            raise ApiError(
+                code="DOC_PARSE_SCHEMA_INVALID",
+                message="MinerU response missing batch_id or file_urls",
+                error_class="transient",
+                retryable=True,
+                http_status=503,
+            )
+
+        return str(batch_id), file_urls
+
+    def upload_file_to_url(
+        self,
+        *,
+        file_bytes: bytes,
+        upload_url: str,
+        content_type: str = "application/pdf",
+    ) -> bool:
+        """Upload file to the pre-signed upload URL.
+
+        API: PUT <upload_url> (direct PUT to cloud storage)
+
+        Args:
+            file_bytes: Raw file content
+            upload_url: Pre-signed upload URL from request_upload_urls()
+            content_type: MIME type of the file
+
+        Returns:
+            True if upload successful
+
+        Raises:
+            ApiError: If upload fails
+        """
+        req = request.Request(
+            upload_url,
+            data=file_bytes,
+            method="PUT",
+            headers={
+                "Content-Type": content_type,
+            },
+        )
+
+        try:
+            with request.urlopen(req, timeout=120) as resp:
+                if resp.status not in (200, 204):
+                    raise ApiError(
+                        code="DOC_PARSE_UPSTREAM_ERROR",
+                        message=f"MinerU file upload failed with status {resp.status}",
+                        error_class="transient",
+                        retryable=True,
+                        http_status=503,
+                    )
+                return True
+        except HTTPError as e:
+            raw = e.read().decode("utf-8", errors="replace")
+            raise ApiError(
+                code="DOC_PARSE_UPSTREAM_ERROR",
+                message=f"MinerU file upload HTTP {e.code}: {raw[:200]}",
+                error_class="transient",
+                retryable=True,
+                http_status=503,
+            ) from e
+        except (URLError, OSError) as e:
+            raise ApiError(
+                code="DOC_PARSE_UPSTREAM_UNAVAILABLE",
+                message=f"MinerU file upload unavailable: {e}",
+                error_class="transient",
+                retryable=True,
+                http_status=503,
+            ) from e
+
+    def get_batch_status(self, *, batch_id: str) -> dict[str, Any]:
+        """Get batch processing status and results.
+
+        API: GET /api/v4/extract-results/batch/{batch_id}
+
+        Args:
+            batch_id: Batch ID from request_upload_urls()
+
+        Returns:
+            Batch status data including:
+            - state: "processing" | "done" | "failed"
+            - results: List of task results with zip_url
+        """
+        result = self._make_request(
+            endpoint=f"/extract-results/batch/{batch_id}",
+            method="GET",
+        )
+
+        if result.get("code") != 0:
+            raise ApiError(
+                code="DOC_PARSE_UPSTREAM_ERROR",
+                message=f"MinerU batch status query failed: {result.get('msg')}",
+                error_class="transient",
+                retryable=True,
+                http_status=503,
+            )
+
+        return result.get("data", {})
+
+    def poll_batch_until_complete(
+        self,
+        *,
+        batch_id: str,
+    ) -> list[str]:
+        """Poll batch until all tasks complete. Returns list of zip_urls.
+
+        Args:
+            batch_id: Batch ID from request_upload_urls()
+
+        Returns:
+            List of zip URLs for each completed task
+
+        Raises:
+            ApiError: If batch fails or times out
+        """
+        start_time = time.time()
+
+        while time.time() - start_time < self._config.max_poll_time_s:
+            data = self.get_batch_status(batch_id=batch_id)
+            state = data.get("state", "unknown")
+
+            if state == "done":
+                results = data.get("results", [])
+                zip_urls = []
+                for r in results:
+                    zip_url = r.get("full_zip_url")
+                    if zip_url:
+                        zip_urls.append(str(zip_url))
+                if not zip_urls:
+                    raise ApiError(
+                        code="DOC_PARSE_OUTPUT_NOT_FOUND",
+                        message="MinerU batch completed but no zip_urls returned",
+                        error_class="transient",
+                        retryable=True,
+                        http_status=503,
+                    )
+                return zip_urls
+
+            if state == "failed":
+                err_msg = data.get("err_msg", "Unknown error")
+                raise ApiError(
+                    code="DOC_PARSE_UPSTREAM_ERROR",
+                    message=f"MinerU batch failed: {err_msg}",
+                    error_class="transient",
+                    retryable=True,
+                    http_status=503,
+                )
+
+            time.sleep(self._config.poll_interval_s)
+
+        raise ApiError(
+            code="DOC_PARSE_TIMEOUT",
+            message=f"MinerU batch timed out after {self._config.max_poll_time_s}s",
+            error_class="transient",
+            retryable=True,
+            http_status=503,
+        )
+
 
 class MineruOfficialApiAdapter:
     """Parser adapter for MinerU Official API.
 
     Usage:
         adapter = MineruOfficialApiAdapter(config=config)
+
+        # Option 1: Parse from URL (simpler)
         result = adapter.parse_from_url(
             file_url="https://example.com/doc.pdf",
             document_id="doc_1",
         )
+
+        # Option 2: Parse from bytes (file upload)
+        with open("document.pdf", "rb") as f:
+            result = adapter.parse_from_bytes(
+                file_bytes=f.read(),
+                filename="document.pdf",
+                document_id="doc_1",
+            )
     """
 
     def __init__(self, *, config: MineruApiConfig, name: str = "mineru", version: str = "v1") -> None:
@@ -340,6 +556,100 @@ class MineruOfficialApiAdapter:
         self.version = version
         self._client = MineruOfficialApiClient(config)
         self._config = config
+
+    def parse_from_bytes(
+        self,
+        *,
+        file_bytes: bytes,
+        filename: str,
+        document_id: str,
+        parser_version: str | None = None,
+    ) -> dict[str, object]:
+        """Parse PDF from raw bytes using MinerU file upload API.
+
+        This method uses MinerU's /file-urls/batch API for direct file upload.
+
+        Workflow:
+        1. Request upload URLs from MinerU
+        2. Upload file to the pre-signed URL
+        3. Poll for batch completion
+        4. Download and parse result
+
+        Args:
+            file_bytes: Raw PDF file content
+            filename: Original filename (used for tracking)
+            document_id: Unique document identifier
+            parser_version: Optional parser version string
+
+        Returns:
+            Parsed chunk dictionary
+        """
+        # Step 1: Request upload URL
+        data_id = document_id or "doc"
+        batch_id, upload_urls = self._client.request_upload_urls(
+            files=[{"name": filename, "data_id": data_id}],
+        )
+
+        if not upload_urls:
+            raise ApiError(
+                code="DOC_PARSE_UPSTREAM_ERROR",
+                message="MinerU did not return upload URL",
+                error_class="transient",
+                retryable=True,
+                http_status=503,
+            )
+
+        # Step 2: Upload file
+        self._client.upload_file_to_url(
+            file_bytes=file_bytes,
+            upload_url=upload_urls[0],
+        )
+
+        # Step 3: Poll until complete
+        zip_urls = self._client.poll_batch_until_complete(batch_id=batch_id)
+
+        # Step 4: Download and extract
+        content = self._client.download_and_extract_zip(zip_url=zip_urls[0])
+
+        # Step 5: Parse content_list.json (SSOT §2.3 priority 1)
+        content_list = self._extract_content_list(content)
+        full_md = self._extract_full_md(content)
+
+        # Step 6: Build chunk from content_list
+        if content_list:
+            for item in content_list:
+                if item.text.strip():
+                    heading_path = self._build_heading_path(item, full_md)
+                    return item.to_chunk_dict(
+                        document_id=document_id,
+                        parser=self.name,
+                        parser_version=parser_version or self.version,
+                        section="mineru_official_parsed",
+                        heading_path=heading_path,
+                    )
+
+        # Fallback: use full.md if no content_list
+        if full_md:
+            return {
+                "document_id": document_id,
+                "pages": [1],
+                "positions": [{"page": 1, "bbox": [0.0, 0.0, 1.0, 1.0], "start": 0, "end": len(full_md)}],
+                "section": "mineru_official_parsed",
+                "heading_path": ["content"],
+                "chunk_type": "text",
+                "parser": self.name,
+                "parser_version": parser_version or self.version,
+                "content_source": "mineru_full_md",
+                "text": full_md[:5000],
+            }
+
+        raise ApiError(
+            code="DOC_PARSE_OUTPUT_NOT_FOUND",
+            message="MinerU result contains no parseable content",
+            error_class="transient",
+            retryable=True,
+            http_status=503,
+        )
 
     def parse_from_url(
         self,

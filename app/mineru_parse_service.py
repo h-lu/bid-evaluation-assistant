@@ -262,6 +262,184 @@ class MineruParseService:
                 http_status=503,
             ) from e
 
+    def parse_and_persist_from_bytes(
+        self,
+        *,
+        file_bytes: bytes,
+        filename: str,
+        document_id: str,
+        tenant_id: str,
+        job_id: str,
+        selected_parser: str = "mineru_official",
+        parser_version: str = "v1",
+        fallback_chain: list[str] | None = None,
+        trace_id: str | None = None,
+    ) -> MineruParseResult:
+        """Parse document from raw bytes using MinerU file upload API.
+
+        This method uses MinerU's /file-urls/batch API for direct file upload,
+        which is simpler than the URL-based approach.
+
+        Workflow:
+        1. Request upload URL from MinerU
+        2. Upload file bytes to the pre-signed URL
+        3. Poll for batch completion
+        4. Download and parse result
+        5. Persist chunks to database
+
+        Args:
+            file_bytes: Raw PDF file content
+            filename: Original filename
+            document_id: Unique document identifier
+            tenant_id: Tenant identifier
+            job_id: Parse job identifier
+            selected_parser: Parser name (default: "mineru_official")
+            parser_version: Parser version string
+            fallback_chain: List of fallback parsers
+            trace_id: Trace ID for logging
+
+        Returns:
+            MineruParseResult with parse status and chunk count
+        """
+        start_time = time.time()
+
+        # Get existing manifest
+        manifest = self._parse_manifests_repo.get(tenant_id=tenant_id, job_id=job_id)
+        if manifest is None:
+            manifest = {
+                "job_id": job_id,
+                "document_id": document_id,
+                "tenant_id": tenant_id,
+                "selected_parser": selected_parser,
+                "parser_version": parser_version,
+                "fallback_chain": fallback_chain or [],
+                "input_files": [{"name": filename, "size": len(file_bytes)}],
+                "started_at": datetime.now(tz=UTC).isoformat(),
+                "status": "parsing",
+                "error_code": None,
+            }
+
+        # Update manifest: start parsing
+        manifest["status"] = "parsing"
+        manifest["started_at"] = datetime.now(tz=UTC).isoformat()
+        self._parse_manifests_repo.upsert(tenant_id=tenant_id, manifest=manifest)
+
+        try:
+            # Step 1: Request upload URL
+            data_id = document_id or "doc"
+            batch_id, upload_urls = self._client.request_upload_urls(
+                files=[{"name": filename, "data_id": data_id}],
+            )
+
+            if not upload_urls:
+                raise ApiError(
+                    code="DOC_PARSE_UPSTREAM_ERROR",
+                    message="MinerU did not return upload URL",
+                    error_class="transient",
+                    retryable=True,
+                    http_status=503,
+                )
+
+            # Step 2: Upload file
+            self._client.upload_file_to_url(
+                file_bytes=file_bytes,
+                upload_url=upload_urls[0],
+            )
+
+            # Step 3: Poll until complete
+            zip_urls = self._client.poll_batch_until_complete(batch_id=batch_id)
+
+            # Step 4: Download zip
+            zip_bytes = self._download_zip(zip_urls[0])
+
+            # Step 5: Save zip to object storage
+            zip_storage_uri = self._save_parse_result(
+                tenant_id=tenant_id,
+                document_id=document_id,
+                zip_bytes=zip_bytes,
+            )
+
+            # Step 6: Extract content from zip
+            content = self._extract_zip_content(zip_bytes)
+            content_list = self._parse_content_list(content)
+            full_md = self._extract_full_md(content)
+
+            # Step 6.5: Extract and save images from zip
+            images_storage_uris = self._save_images(
+                tenant_id=tenant_id,
+                document_id=document_id,
+                zip_bytes=zip_bytes,
+            )
+
+            # Step 7: Convert content_list to chunks
+            chunks = self._content_list_to_chunks(
+                content_list=content_list,
+                document_id=document_id,
+                tenant_id=tenant_id,
+                parser=selected_parser,
+                parser_version=parser_version,
+                full_md=full_md,
+            )
+
+            # Step 8: Persist chunks
+            if chunks:
+                self._documents_repo.replace_chunks(
+                    tenant_id=tenant_id,
+                    document_id=document_id,
+                    chunks=chunks,
+                )
+
+            # Step 9: Update manifest: success
+            manifest["status"] = "completed"
+            manifest["ended_at"] = datetime.now(tz=UTC).isoformat()
+            manifest["error_code"] = None
+            manifest["images_count"] = len(images_storage_uris)
+            self._parse_manifests_repo.upsert(tenant_id=tenant_id, manifest=manifest)
+
+            # Step 10: Update document status
+            document = self._documents_repo.get(tenant_id=tenant_id, document_id=document_id)
+            if document:
+                document["status"] = "parsed"
+                document["parse_result_uri"] = zip_storage_uri
+                self._documents_repo.upsert_document(document=document)
+
+            parse_time = time.time() - start_time
+
+            return MineruParseResult(
+                document_id=document_id,
+                job_id=job_id,
+                status="completed",
+                chunks_count=len(chunks),
+                zip_storage_uri=zip_storage_uri,
+                images_storage_uris=images_storage_uris,
+                images_count=len(images_storage_uris),
+                content_list=[self._item_to_dict(item) for item in content_list],
+                full_md=full_md,
+                parse_time_s=parse_time,
+            )
+
+        except ApiError as e:
+            # Update manifest: failed
+            manifest["status"] = "failed"
+            manifest["ended_at"] = datetime.now(tz=UTC).isoformat()
+            manifest["error_code"] = e.code
+            self._parse_manifests_repo.upsert(tenant_id=tenant_id, manifest=manifest)
+            raise
+
+        except Exception as e:
+            # Update manifest: failed with unknown error
+            manifest["status"] = "failed"
+            manifest["ended_at"] = datetime.now(tz=UTC).isoformat()
+            manifest["error_code"] = "DOC_PARSE_UNKNOWN_ERROR"
+            self._parse_manifests_repo.upsert(tenant_id=tenant_id, manifest=manifest)
+            raise ApiError(
+                code="DOC_PARSE_UNKNOWN_ERROR",
+                message=f"MinerU parse failed: {e}",
+                error_class="transient",
+                retryable=True,
+                http_status=503,
+            ) from e
+
     def _download_zip(self, zip_url: str) -> bytes:
         """Download zip file from URL."""
         from urllib import request

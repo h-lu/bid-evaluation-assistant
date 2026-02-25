@@ -1,9 +1,9 @@
 # MinerU/Docling 解析器集成设计
 
-> 版本：v2026.02.24-r2
+> 版本：v2026.02.25-r1
 > 状态：Implemented
-> 实现完成：2026-02-24
-> 验收测试：全部通过 (551 tests)
+> 实现完成：2026-02-25
+> 验收测试：全部通过 (50 tests)
 > 对齐：`docs/design/2026-02-21-mineru-ingestion-spec.md`、`docs/plans/2026-02-21-end-to-end-unified-design.md`
 
 ## 1. 目标
@@ -354,9 +354,11 @@ export MINERU_IS_OCR=true
 export MINERU_ENABLE_FORMULA=false
 ```
 
-### 11.2 上传文档
+### 11.2 文件上传方式
 
-**方式一：提供 source_url（推荐）**
+MinerU 云端 API 支持两种方式提交文档：
+
+**方式一：提供 source_url（URL-based API）**
 
 ```python
 POST /api/v1/documents/upload
@@ -367,7 +369,7 @@ POST /api/v1/documents/upload
 }
 ```
 
-**方式二：直接上传文件（需要 S3 对象存储）**
+**方式二：直接上传文件（File Upload API）**
 
 ```python
 POST /api/v1/documents/upload
@@ -377,7 +379,7 @@ file: document.pdf
 tenant_id: tenant_abc
 ```
 
-> **注意**: 直接上传文件需要使用 S3 对象存储后端（支持预签名 URL）。本地存储不支持此功能。
+> **注意**: 直接上传文件时，系统会使用 MinerU 的 `/file-urls/batch` API 进行文件上传。
 
 ### 11.3 触发解析
 
@@ -385,22 +387,50 @@ tenant_id: tenant_abc
 POST /api/v1/documents/{document_id}/parse
 ```
 
-解析器会自动：
-1. 优先检测 `source_url`，如果存在则直接使用
-2. 如果没有 `source_url` 但有 `storage_uri`，尝试生成预签名 URL（仅 S3）
-3. 使用 MinerU Official API 解析
-4. 保存结果到对象存储
-5. 持久化 chunks 到数据库
+解析器会自动选择最佳方式：
+1. **优先检测 `source_url`**：如果存在则使用 URL-based API
+2. **尝试获取文件内容**：如果有 `storage_uri`，读取文件字节，使用 File Upload API
+3. **预签名 URL 回退**：如果无法读取文件内容，尝试生成预签名 URL（仅 S3）
 
-### 11.4 文件上传 URL 支持（新增）
+### 11.4 File Upload API 详情（新增）
 
-**云端 API 限制**: MinerU 云端 API 只接受 URL，不支持直接文件上传。
+MinerU 云端 API 的文件上传流程：
 
-**解决方案**:
+```
+┌─────────────────┐      ┌─────────────────┐      ┌─────────────────┐
+│  1. Request     │      │  2. Upload      │      │  3. Poll        │
+│  Upload URLs    │─────>│  File to URL    │─────>│  Batch Results  │
+│  POST /file-urls/batch  │  PUT <url>      │      │  GET /extract-results/batch/{id}
+└─────────────────┘      └─────────────────┘      └─────────────────┘
+```
+
+**API 调用流程**:
+1. `POST /api/v4/file-urls/batch` - 请求上传 URL
+2. `PUT <upload_url>` - 上传文件到云存储
+3. `GET /api/v4/extract-results/batch/{batch_id}` - 轮询结果
+
+**新增方法**:
+- `MineruOfficialApiClient.request_upload_urls()` - 请求上传 URL
+- `MineruOfficialApiClient.upload_file_to_url()` - 上传文件
+- `MineruOfficialApiClient.get_batch_status()` - 查询批次状态
+- `MineruOfficialApiClient.poll_batch_until_complete()` - 轮询直到完成
+- `MineruParseService.parse_and_persist_from_bytes()` - 从字节解析并持久化
+
+### 11.5 预签名 URL 支持
+
+对于无法直接访问文件内容的场景（如仅 S3 存储），系统支持预签名 URL：
+
 - 添加 `get_presigned_url()` 方法到 `ObjectStorageBackend`
 - S3 后端使用 boto3 的 `generate_presigned_url()` 生成临时访问 URL
 - 本地存储返回 `None`（不支持）
 
-**使用场景**:
-1. 用户直接上传 PDF → 存储到 S3 → 生成预签名 URL → 传给 MinerU API
-2. 用户提供 URL → 直接传给 MinerU API
+### 11.6 错误处理
+
+| 错误码 | 含义 | 重试 |
+|--------|------|------|
+| `DOC_PARSE_UPSTREAM_ERROR` | MinerU API 错误 | ✅ |
+| `DOC_PARSE_UPSTREAM_UNAVAILABLE` | MinerU API 不可用 | ✅ |
+| `DOC_PARSE_OUTPUT_NOT_FOUND` | 解析结果缺失 | ✅ |
+| `DOC_PARSE_SCHEMA_INVALID` | 结果格式错误 | ✅ |
+| `DOC_PARSE_TIMEOUT` | 解析超时 | ✅ |
+| `DOC_PARSE_UNKNOWN_ERROR` | 未知错误 | ✅ |
