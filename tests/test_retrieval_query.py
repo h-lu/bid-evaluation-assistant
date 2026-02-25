@@ -108,6 +108,7 @@ def _seed_retrieval_sources():
     # Also index to ChromaDB for retrieval when using real backends
     try:
         from app.lightrag_service import index_chunks_to_collection
+
         # Index tenant_a's data to their collection
         tenant_a_chunks = [s for s in sources if s["tenant_id"] == "tenant_a"]
         for src in tenant_a_chunks:

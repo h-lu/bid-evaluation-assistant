@@ -42,24 +42,30 @@ class TestCostBudgetTrackerRecording:
 class TestCheckBudgetStatuses:
     def test_ok_when_under_warn_threshold(self):
         tracker = CostBudgetTracker(
-            task_id="t1", max_tokens_budget=10000,
-            warn_threshold_ratio=0.8, hard_threshold_ratio=1.2,
+            task_id="t1",
+            max_tokens_budget=10000,
+            warn_threshold_ratio=0.8,
+            hard_threshold_ratio=1.2,
         )
         tracker.record_usage(LLMUsage(total_tokens=5000))
         assert tracker.check_budget() == "ok"
 
     def test_degrade_at_warn_threshold(self):
         tracker = CostBudgetTracker(
-            task_id="t1", max_tokens_budget=10000,
-            warn_threshold_ratio=0.8, hard_threshold_ratio=1.2,
+            task_id="t1",
+            max_tokens_budget=10000,
+            warn_threshold_ratio=0.8,
+            hard_threshold_ratio=1.2,
         )
         tracker.record_usage(LLMUsage(total_tokens=8000))
         assert tracker.check_budget() == "degrade"
 
     def test_degrade_persists_after_first_trigger(self):
         tracker = CostBudgetTracker(
-            task_id="t1", max_tokens_budget=10000,
-            warn_threshold_ratio=0.8, hard_threshold_ratio=1.2,
+            task_id="t1",
+            max_tokens_budget=10000,
+            warn_threshold_ratio=0.8,
+            hard_threshold_ratio=1.2,
         )
         tracker.record_usage(LLMUsage(total_tokens=8000))
         assert tracker.check_budget() == "degrade"
@@ -67,16 +73,20 @@ class TestCheckBudgetStatuses:
 
     def test_blocked_at_hard_threshold(self):
         tracker = CostBudgetTracker(
-            task_id="t1", max_tokens_budget=10000,
-            warn_threshold_ratio=0.8, hard_threshold_ratio=1.2,
+            task_id="t1",
+            max_tokens_budget=10000,
+            warn_threshold_ratio=0.8,
+            hard_threshold_ratio=1.2,
         )
         tracker.record_usage(LLMUsage(total_tokens=12001))
         assert tracker.check_budget() == "blocked"
 
     def test_blocked_persists(self):
         tracker = CostBudgetTracker(
-            task_id="t1", max_tokens_budget=10000,
-            warn_threshold_ratio=0.8, hard_threshold_ratio=1.2,
+            task_id="t1",
+            max_tokens_budget=10000,
+            warn_threshold_ratio=0.8,
+            hard_threshold_ratio=1.2,
         )
         tracker.record_usage(LLMUsage(total_tokens=15000))
         assert tracker.check_budget() == "blocked"
@@ -84,16 +94,20 @@ class TestCheckBudgetStatuses:
 
     def test_exactly_at_warn_boundary(self):
         tracker = CostBudgetTracker(
-            task_id="t1", max_tokens_budget=10000,
-            warn_threshold_ratio=0.8, hard_threshold_ratio=1.2,
+            task_id="t1",
+            max_tokens_budget=10000,
+            warn_threshold_ratio=0.8,
+            hard_threshold_ratio=1.2,
         )
         tracker.record_usage(LLMUsage(total_tokens=8000))
         assert tracker.check_budget() == "degrade"
 
     def test_exactly_at_hard_boundary(self):
         tracker = CostBudgetTracker(
-            task_id="t1", max_tokens_budget=10000,
-            warn_threshold_ratio=0.8, hard_threshold_ratio=1.2,
+            task_id="t1",
+            max_tokens_budget=10000,
+            warn_threshold_ratio=0.8,
+            hard_threshold_ratio=1.2,
         )
         tracker.record_usage(LLMUsage(total_tokens=12000))
         status = tracker.check_budget()
@@ -101,8 +115,10 @@ class TestCheckBudgetStatuses:
 
     def test_transition_from_ok_to_degrade_to_blocked(self):
         tracker = CostBudgetTracker(
-            task_id="t1", max_tokens_budget=10000,
-            warn_threshold_ratio=0.8, hard_threshold_ratio=1.2,
+            task_id="t1",
+            max_tokens_budget=10000,
+            warn_threshold_ratio=0.8,
+            hard_threshold_ratio=1.2,
         )
         tracker.record_usage(LLMUsage(total_tokens=5000))
         assert tracker.check_budget() == "ok"
@@ -134,28 +150,36 @@ class TestUnlimitedBudget:
 class TestProperties:
     def test_is_over_budget(self):
         tracker = CostBudgetTracker(
-            task_id="t1", max_tokens_budget=1000, hard_threshold_ratio=1.2,
+            task_id="t1",
+            max_tokens_budget=1000,
+            hard_threshold_ratio=1.2,
         )
         tracker.record_usage(LLMUsage(total_tokens=1201))
         assert tracker.is_over_budget
 
     def test_not_over_budget(self):
         tracker = CostBudgetTracker(
-            task_id="t1", max_tokens_budget=1000, hard_threshold_ratio=1.2,
+            task_id="t1",
+            max_tokens_budget=1000,
+            hard_threshold_ratio=1.2,
         )
         tracker.record_usage(LLMUsage(total_tokens=1100))
         assert not tracker.is_over_budget
 
     def test_should_degrade_true(self):
         tracker = CostBudgetTracker(
-            task_id="t1", max_tokens_budget=1000, warn_threshold_ratio=0.8,
+            task_id="t1",
+            max_tokens_budget=1000,
+            warn_threshold_ratio=0.8,
         )
         tracker.record_usage(LLMUsage(total_tokens=800))
         assert tracker.should_degrade
 
     def test_should_degrade_false(self):
         tracker = CostBudgetTracker(
-            task_id="t1", max_tokens_budget=1000, warn_threshold_ratio=0.8,
+            task_id="t1",
+            max_tokens_budget=1000,
+            warn_threshold_ratio=0.8,
         )
         tracker.record_usage(LLMUsage(total_tokens=700))
         assert not tracker.should_degrade
@@ -165,20 +189,24 @@ class TestSSOTAlignment:
     """Verify default thresholds match SSOT §7.4 requirements."""
 
     def test_default_hard_ratio_is_1_2x(self):
-        with mock.patch.dict(os.environ, {
-            "TASK_TOKEN_BUDGET": "50000",
-            "TASK_COST_WARN_RATIO": "0.8",
-            "TASK_COST_HARD_RATIO": "1.2",
-        }):
+        with mock.patch.dict(
+            os.environ,
+            {
+                "TASK_TOKEN_BUDGET": "50000",
+                "TASK_COST_WARN_RATIO": "0.8",
+                "TASK_COST_HARD_RATIO": "1.2",
+            },
+        ):
             tracker = CostBudgetTracker(task_id="ssot")
-            assert tracker.hard_threshold_ratio == 1.2, (
-                "SSOT §7.4: hard threshold must be 1.2x baseline"
-            )
+            assert tracker.hard_threshold_ratio == 1.2, "SSOT §7.4: hard threshold must be 1.2x baseline"
 
     def test_default_warn_ratio_is_0_8(self):
-        with mock.patch.dict(os.environ, {
-            "TASK_COST_WARN_RATIO": "0.8",
-        }):
+        with mock.patch.dict(
+            os.environ,
+            {
+                "TASK_COST_WARN_RATIO": "0.8",
+            },
+        ):
             tracker = CostBudgetTracker(task_id="ssot")
             assert tracker.warn_threshold_ratio == 0.8
 
@@ -187,6 +215,7 @@ class TestSSOTAlignment:
             from importlib import reload
 
             import app.llm_provider as mod
+
             reload(mod)
             tracker = mod.CostBudgetTracker(task_id="ssot")
             assert tracker.max_tokens_budget == 75000
@@ -195,14 +224,18 @@ class TestSSOTAlignment:
 
 class TestEnvConfiguration:
     def test_custom_env_budget(self):
-        with mock.patch.dict(os.environ, {
-            "TASK_TOKEN_BUDGET": "20000",
-            "TASK_COST_WARN_RATIO": "0.7",
-            "TASK_COST_HARD_RATIO": "1.5",
-        }):
+        with mock.patch.dict(
+            os.environ,
+            {
+                "TASK_TOKEN_BUDGET": "20000",
+                "TASK_COST_WARN_RATIO": "0.7",
+                "TASK_COST_HARD_RATIO": "1.5",
+            },
+        ):
             from importlib import reload
 
             import app.llm_provider as mod
+
             reload(mod)
             tracker = mod.CostBudgetTracker(task_id="env_test")
             assert tracker.max_tokens_budget == 20000

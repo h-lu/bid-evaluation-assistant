@@ -13,6 +13,7 @@ Run with: pytest tests/test_mineru_real_persistence.py -v -m real_mineru
 
 To skip these tests (default): pytest -v -m "not real_mineru"
 """
+
 from __future__ import annotations
 
 import io
@@ -33,6 +34,7 @@ pytestmark = pytest.mark.skipif(
 # ============================================================================
 # Real Backend Fixtures
 # ============================================================================
+
 
 @pytest.fixture
 def real_s3_storage():
@@ -86,13 +88,16 @@ class RealParseManifestsRepo:
     def _set_tenant(self, cur, tenant_id: str):
         """Set tenant context for RLS using safe string formatting."""
         from psycopg import sql
+
         cur.execute(sql.SQL("SET app.current_tenant = {}").format(sql.Literal(tenant_id)))
 
     def upsert(self, *, tenant_id: str, manifest: dict) -> dict:
         import json
+
         with self._conn.cursor() as cur:
             self._set_tenant(cur, tenant_id)
-            cur.execute("""
+            cur.execute(
+                """
                 INSERT INTO parse_manifests (job_id, run_id, document_id, tenant_id, selected_parser,
                     parser_version, fallback_chain, input_files, started_at, ended_at, status, error_code)
                 VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s, %s)
@@ -106,30 +111,35 @@ class RealParseManifestsRepo:
                     ended_at = EXCLUDED.ended_at,
                     status = EXCLUDED.status,
                     error_code = EXCLUDED.error_code
-            """, (
-                manifest.get("job_id"),
-                manifest.get("run_id", manifest.get("job_id")),
-                manifest.get("document_id"),
-                tenant_id,
-                manifest.get("selected_parser"),
-                manifest.get("parser_version"),
-                json.dumps(manifest.get("fallback_chain", [])),
-                json.dumps(manifest.get("input_files", [])),
-                manifest.get("started_at"),
-                manifest.get("ended_at"),
-                manifest.get("status"),
-                manifest.get("error_code"),
-            ))
+            """,
+                (
+                    manifest.get("job_id"),
+                    manifest.get("run_id", manifest.get("job_id")),
+                    manifest.get("document_id"),
+                    tenant_id,
+                    manifest.get("selected_parser"),
+                    manifest.get("parser_version"),
+                    json.dumps(manifest.get("fallback_chain", [])),
+                    json.dumps(manifest.get("input_files", [])),
+                    manifest.get("started_at"),
+                    manifest.get("ended_at"),
+                    manifest.get("status"),
+                    manifest.get("error_code"),
+                ),
+            )
             self._conn.commit()
         return manifest
 
     def get(self, *, tenant_id: str, job_id: str) -> dict | None:
         with self._conn.cursor() as cur:
             self._set_tenant(cur, tenant_id)
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT * FROM parse_manifests
                 WHERE job_id = %s
-            """, (job_id,))
+            """,
+                (job_id,),
+            )
             row = cur.fetchone()
             if row:
                 return dict(row)
@@ -145,41 +155,48 @@ class RealDocumentsRepo:
     def _set_tenant(self, cur, tenant_id: str):
         """Set tenant context for RLS using safe string formatting."""
         from psycopg import sql
+
         cur.execute(sql.SQL("SET app.current_tenant = {}").format(sql.Literal(tenant_id)))
 
     def upsert_document(self, *, document: dict) -> dict:
         with self._conn.cursor() as cur:
             tenant_id = document.get("tenant_id")
             self._set_tenant(cur, tenant_id)
-            cur.execute("""
+            cur.execute(
+                """
                 INSERT INTO documents (document_id, tenant_id, project_id, supplier_id,
                     doc_type, filename, file_sha256, file_size, status, storage_uri)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (document_id) DO UPDATE SET
                     status = EXCLUDED.status,
                     storage_uri = EXCLUDED.storage_uri
-            """, (
-                document.get("document_id"),
-                tenant_id,
-                document.get("project_id"),
-                document.get("supplier_id"),
-                document.get("doc_type"),
-                document.get("filename"),
-                document.get("file_sha256"),
-                document.get("file_size"),
-                document.get("status"),
-                document.get("storage_uri"),
-            ))
+            """,
+                (
+                    document.get("document_id"),
+                    tenant_id,
+                    document.get("project_id"),
+                    document.get("supplier_id"),
+                    document.get("doc_type"),
+                    document.get("filename"),
+                    document.get("file_sha256"),
+                    document.get("file_size"),
+                    document.get("status"),
+                    document.get("storage_uri"),
+                ),
+            )
             self._conn.commit()
         return document
 
     def get(self, *, tenant_id: str, document_id: str) -> dict | None:
         with self._conn.cursor() as cur:
             self._set_tenant(cur, tenant_id)
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT * FROM documents
                 WHERE document_id = %s
-            """, (document_id,))
+            """,
+                (document_id,),
+            )
             row = cur.fetchone()
             if row:
                 return dict(row)
@@ -193,48 +210,58 @@ class RealDocumentsRepo:
         chunks: list[dict],
     ) -> list[dict]:
         import json
+
         with self._conn.cursor() as cur:
             self._set_tenant(cur, tenant_id)
 
             # Delete existing chunks
-            cur.execute("""
+            cur.execute(
+                """
                 DELETE FROM document_chunks
                 WHERE document_id = %s
-            """, (document_id,))
+            """,
+                (document_id,),
+            )
 
             # Insert new chunks
             for chunk in chunks:
-                cur.execute("""
+                cur.execute(
+                    """
                     INSERT INTO document_chunks (
                         chunk_id, tenant_id, document_id, chunk_hash,
                         pages, positions, section, heading_path, chunk_type,
                         parser, parser_version, text
                     ) VALUES (%s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s::jsonb, %s, %s, %s, %s)
-                """, (
-                    chunk.get("chunk_id"),
-                    tenant_id,
-                    document_id,
-                    chunk.get("chunk_hash"),
-                    json.dumps(chunk.get("pages", [])),
-                    json.dumps(chunk.get("positions", [])),
-                    chunk.get("section"),
-                    json.dumps(chunk.get("heading_path", [])),
-                    chunk.get("chunk_type"),
-                    chunk.get("parser"),
-                    chunk.get("parser_version"),
-                    chunk.get("text"),
-                ))
+                """,
+                    (
+                        chunk.get("chunk_id"),
+                        tenant_id,
+                        document_id,
+                        chunk.get("chunk_hash"),
+                        json.dumps(chunk.get("pages", [])),
+                        json.dumps(chunk.get("positions", [])),
+                        chunk.get("section"),
+                        json.dumps(chunk.get("heading_path", [])),
+                        chunk.get("chunk_type"),
+                        chunk.get("parser"),
+                        chunk.get("parser_version"),
+                        chunk.get("text"),
+                    ),
+                )
             self._conn.commit()
         return chunks
 
     def get_chunks(self, *, tenant_id: str, document_id: str) -> list[dict]:
         with self._conn.cursor() as cur:
             self._set_tenant(cur, tenant_id)
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT * FROM document_chunks
                 WHERE document_id = %s
                 ORDER BY pages::text, positions::text
-            """, (document_id,))
+            """,
+                (document_id,),
+            )
             return [dict(row) for row in cur.fetchall()]
 
 
@@ -282,6 +309,7 @@ def sample_pdf_bytes():
 # ============================================================================
 # Test Classes
 # ============================================================================
+
 
 @pytest.mark.real_mineru
 @pytest.mark.slow
@@ -407,7 +435,7 @@ class TestRealMineruWithMinioAndPostgres:
             env={
                 **os.environ,
                 "MINERU_MAX_POLL_TIME_S": "120",  # 2 minutes for debugging
-                "MINERU_POLL_INTERVAL_S": "3",    # Poll every 3 seconds
+                "MINERU_POLL_INTERVAL_S": "3",  # Poll every 3 seconds
             },
         )
         assert service is not None, "MINERU_API_KEY required for real tests"

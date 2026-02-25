@@ -12,6 +12,7 @@ SSOT Alignment:
 - §8 持久化顺序: raw_file → parse manifest → chunks → vectors
 - §7.3 chunk 元数据最小字段
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -76,6 +77,7 @@ class DocumentRepository(Protocol):
 @dataclass
 class MineruParseResult:
     """Result of MinerU parse with persistence."""
+
     document_id: str
     job_id: str
     status: str

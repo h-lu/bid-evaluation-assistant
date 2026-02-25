@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 # State definition (SSOT §2)
 # ---------------------------------------------------------------------------
 
+
 class EvaluationState(TypedDict, total=False):
     # identity (immutable after init)
     tenant_id: str
@@ -74,6 +75,7 @@ class EvaluationState(TypedDict, total=False):
 # ---------------------------------------------------------------------------
 # Node implementations (SSOT §4)
 # ---------------------------------------------------------------------------
+
 
 def node_load_context(state: EvaluationState, *, store: Any) -> dict[str, Any]:
     """Load project / tenant / rule context.  No side effects."""
@@ -140,10 +142,7 @@ def node_retrieve_evidence(state: EvaluationState, *, store: Any) -> dict[str, A
 
     criteria_evidence = apply_report_budget(criteria_evidence)
     citations_all_ids = [
-        ev["chunk_id"]
-        for ev_list in criteria_evidence.values()
-        for ev in ev_list
-        if ev.get("chunk_id")
+        ev["chunk_id"] for ev_list in criteria_evidence.values() for ev in ev_list if ev.get("chunk_id")
     ]
 
     _register_citation_sources(
@@ -229,7 +228,9 @@ def node_score_with_llm(state: EvaluationState, *, store: Any) -> dict[str, Any]
         if budget_status == "blocked":
             logger.warning(
                 "Cost budget exceeded for task %s (tokens=%d), skipping criteria %s",
-                evaluation_id, cost_tracker.total_tokens, cid,
+                evaluation_id,
+                cost_tracker.total_tokens,
+                cid,
             )
             cost_exceeded = True
             break
@@ -237,9 +238,12 @@ def node_score_with_llm(state: EvaluationState, *, store: Any) -> dict[str, Any]
         if budget_status == "degrade":
             logger.warning(
                 "Cost budget degraded for task %s (tokens=%d), using mock for criteria %s",
-                evaluation_id, cost_tracker.total_tokens, cid,
+                evaluation_id,
+                cost_tracker.total_tokens,
+                cid,
             )
             from app.mock_llm import mock_score_criteria
+
             llm_result = mock_score_criteria(
                 criteria_id=cid,
                 requirement_text=str(requirement_text or ""),
@@ -253,7 +257,9 @@ def node_score_with_llm(state: EvaluationState, *, store: Any) -> dict[str, Any]
             if budget_status == "warn":
                 logger.warning(
                     "Cost budget warning for task %s (tokens=%d/%d)",
-                    evaluation_id, cost_tracker.total_tokens, cost_tracker.max_tokens_budget,
+                    evaluation_id,
+                    cost_tracker.total_tokens,
+                    cost_tracker.max_tokens_budget,
                 )
             llm_result = llm_score_criteria(
                 criteria_id=cid,
@@ -278,18 +284,20 @@ def node_score_with_llm(state: EvaluationState, *, store: Any) -> dict[str, Any]
         confidence = float(llm_result.get("confidence", 0.85 if hard_pass else 0.65))
 
         resolved_citations = store._resolve_citations_batch(citation_ids, include_quote=False)
-        criteria_results.append({
-            "criteria_id": cid,
-            "criteria_name": str(criteria_name),
-            "requirement_text": str(requirement_text) if requirement_text is not None else None,
-            "response_text": str(response_text) if response_text is not None else None,
-            "score": score,
-            "max_score": max_score,
-            "hard_pass": hard_pass,
-            "reason": reason,
-            "citations": resolved_citations,
-            "confidence": confidence,
-        })
+        criteria_results.append(
+            {
+                "criteria_id": cid,
+                "criteria_name": str(criteria_name),
+                "requirement_text": str(requirement_text) if requirement_text is not None else None,
+                "response_text": str(response_text) if response_text is not None else None,
+                "score": score,
+                "max_score": max_score,
+                "hard_pass": hard_pass,
+                "reason": reason,
+                "citations": resolved_citations,
+                "confidence": confidence,
+            }
+        )
         if criteria.get("require_citation") and not resolved_citations:
             unsupported_claims.append(cid)
 
@@ -389,9 +397,7 @@ def node_quality_gate(state: EvaluationState, *, store: Any) -> dict[str, Any]:
 
 def node_finalize_report(state: EvaluationState, *, store: Any) -> dict[str, Any]:
     """Assemble the evaluation report dict.  No side effects."""
-    criteria_results = [
-        dict(cr) for cr in state.get("criteria_results", [])
-    ]
+    criteria_results = [dict(cr) for cr in state.get("criteria_results", [])]
 
     resume_payload = state.get("resume_payload") or {}
     edited_scores: dict[str, Any] = resume_payload.get("edited_scores", {})
@@ -412,7 +418,8 @@ def node_finalize_report(state: EvaluationState, *, store: Any) -> dict[str, Any
         "risk_level": "medium" if state.get("hard_constraint_pass", True) else "high",
         "criteria_results": criteria_results,
         "citations": store._resolve_citations_batch(
-            state.get("citations_all_ids", []), include_quote=True,
+            state.get("citations_all_ids", []),
+            include_quote=True,
         ),
         "needs_human_review": state.get("needs_human_review", False),
         "trace_id": state.get("trace_id", ""),
@@ -436,6 +443,7 @@ def node_persist_result(state: EvaluationState, *, store: Any) -> dict[str, Any]
 # ---------------------------------------------------------------------------
 # Helpers (internal)
 # ---------------------------------------------------------------------------
+
 
 def _compute_model_stability(
     criteria_results: list[dict[str, Any]],
@@ -512,9 +520,7 @@ def _register_citation_sources(
                 )
 
 
-def run_evaluation_nodes_sequentially(
-    state: EvaluationState, *, store: Any
-) -> EvaluationState:
+def run_evaluation_nodes_sequentially(state: EvaluationState, *, store: Any) -> EvaluationState:
     """Run all evaluation nodes in sequence (non-graph mode).
 
     Used by ``create_evaluation_job`` as a direct execution path that

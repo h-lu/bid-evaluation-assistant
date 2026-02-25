@@ -141,7 +141,8 @@ def test_cleanup_audit_log_includes_trace_id(client):
 
     # Verify audit log contains trace_id
     audit_logs = [
-        log for log in store.audit_logs
+        log
+        for log in store.audit_logs
         if log.get("tenant_id") == "tenant_trace" and log.get("action") == "storage_cleanup_executed"
     ]
     assert any(log.get("trace_id") == trace_id for log in audit_logs)

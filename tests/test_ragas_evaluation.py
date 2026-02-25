@@ -119,9 +119,15 @@ class TestRagasBackendStructure:
 
         assert callable(evaluate)
         assert EvaluationDataset is not None
-        assert all(cls is not None for cls in [
-            Faithfulness, ContextPrecision, ContextRecall, AnswerRelevancy,
-        ])
+        assert all(
+            cls is not None
+            for cls in [
+                Faithfulness,
+                ContextPrecision,
+                ContextRecall,
+                AnswerRelevancy,
+            ]
+        )
 
     def test_deepeval_hallucination_import(self):
         from deepeval.metrics import HallucinationMetric
@@ -134,12 +140,14 @@ class TestRagasBackendStructure:
         from ragas import EvaluationDataset
 
         sample = _high_quality_sample()
-        data = [{
-            "user_input": sample.query,
-            "retrieved_contexts": list(sample.retrieved_contexts),
-            "response": sample.generated_answer,
-            "reference": sample.ground_truth_answer,
-        }]
+        data = [
+            {
+                "user_input": sample.query,
+                "retrieved_contexts": list(sample.retrieved_contexts),
+                "response": sample.generated_answer,
+                "reference": sample.ground_truth_answer,
+            }
+        ]
         dataset = EvaluationDataset.from_list(data)
         assert len(dataset) == 1
 

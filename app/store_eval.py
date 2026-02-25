@@ -243,7 +243,9 @@ class StoreEvalMixin:
         if mode != "langgraph":
             job_id_str = str(job.get("job_id") or "")
             self._append_node_checkpoint(
-                thread_id=thread_id, job_id=job_id_str, tenant_id=tenant_id,
+                thread_id=thread_id,
+                job_id=job_id_str,
+                tenant_id=tenant_id,
                 node="load_context",
                 payload={"evaluation_id": evaluation_id, "project_id": report.get("project_id") if report else None},
             )
@@ -251,23 +253,29 @@ class StoreEvalMixin:
             retrieved_chunks: list[dict[str, Any]] = []
             if report and report.get("criteria_results"):
                 for cr in report["criteria_results"]:
-                    for cit in (cr.get("citations") or []):
+                    for cit in cr.get("citations") or []:
                         if isinstance(cit, dict) and cit.get("chunk_id"):
                             retrieved_chunks.append(cit)
             self._append_node_checkpoint(
-                thread_id=thread_id, job_id=job_id_str, tenant_id=tenant_id,
+                thread_id=thread_id,
+                job_id=job_id_str,
+                tenant_id=tenant_id,
                 node="retrieve_evidence",
                 payload={"retrieved_count": len(retrieved_chunks)},
             )
 
             self._append_node_checkpoint(
-                thread_id=thread_id, job_id=job_id_str, tenant_id=tenant_id,
+                thread_id=thread_id,
+                job_id=job_id_str,
+                tenant_id=tenant_id,
                 node="evaluate_rules",
                 payload={"redline_conflict": report.get("redline_conflict", False) if report else False},
             )
 
             self._append_node_checkpoint(
-                thread_id=thread_id, job_id=job_id_str, tenant_id=tenant_id,
+                thread_id=thread_id,
+                job_id=job_id_str,
+                tenant_id=tenant_id,
                 node="score_with_llm",
                 payload={
                     "total_score": report.get("total_score") if report else None,
@@ -279,16 +287,22 @@ class StoreEvalMixin:
             if report and report.get("needs_human_review"):
                 quality_decision = "hitl"
             self._append_node_checkpoint(
-                thread_id=thread_id, job_id=job_id_str, tenant_id=tenant_id,
+                thread_id=thread_id,
+                job_id=job_id_str,
+                tenant_id=tenant_id,
                 node="quality_gate",
                 payload={"decision": quality_decision},
             )
             self._append_node_checkpoint(
-                thread_id=thread_id, job_id=job_id_str, tenant_id=tenant_id,
+                thread_id=thread_id,
+                job_id=job_id_str,
+                tenant_id=tenant_id,
                 node="finalize_report",
             )
             self._append_node_checkpoint(
-                thread_id=thread_id, job_id=job_id_str, tenant_id=tenant_id,
+                thread_id=thread_id,
+                job_id=job_id_str,
+                tenant_id=tenant_id,
                 node="persist_result",
             )
 
@@ -383,16 +397,18 @@ class StoreEvalMixin:
                     if not chunk_id:
                         continue
                     meta = item.get("metadata", {})
-                    evidence.append({
-                        "chunk_id": chunk_id,
-                        "page": int(meta.get("page", 1)),
-                        "bbox": meta.get("bbox", [0.0, 0.0, 1.0, 1.0]),
-                        "text": item.get("text", ""),
-                        "score_raw": float(item.get("score_raw", 0.5)),
-                        "tenant_id": tenant_id,
-                        "supplier_id": supplier_id,
-                        "document_id": str(meta.get("document_id", "")),
-                    })
+                    evidence.append(
+                        {
+                            "chunk_id": chunk_id,
+                            "page": int(meta.get("page", 1)),
+                            "bbox": meta.get("bbox", [0.0, 0.0, 1.0, 1.0]),
+                            "text": item.get("text", ""),
+                            "score_raw": float(item.get("score_raw", 0.5)),
+                            "tenant_id": tenant_id,
+                            "supplier_id": supplier_id,
+                            "document_id": str(meta.get("document_id", "")),
+                        }
+                    )
                 if evidence:
                     return evidence
 

@@ -1,4 +1,5 @@
 """Tests for MinerU Parse Service with Persistence."""
+
 from __future__ import annotations
 
 import json

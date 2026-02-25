@@ -23,19 +23,24 @@ def store():
     from app.store import InMemoryStore
 
     s = InMemoryStore()
-    s.create_rule_pack(payload={
-        "tenant_id": "t1",
-        "rule_pack_version": "v1",
-        "name": "test_pack",
-        "rules": {
-            "criteria": [
-                {"criteria_id": "quality", "max_score": 30.0, "weight": 1.0,
-                 "requirement_text": "quality assessment"},
-                {"criteria_id": "price", "max_score": 20.0, "weight": 0.5,
-                 "requirement_text": "price evaluation"},
-            ],
-        },
-    })
+    s.create_rule_pack(
+        payload={
+            "tenant_id": "t1",
+            "rule_pack_version": "v1",
+            "name": "test_pack",
+            "rules": {
+                "criteria": [
+                    {
+                        "criteria_id": "quality",
+                        "max_score": 30.0,
+                        "weight": 1.0,
+                        "requirement_text": "quality assessment",
+                    },
+                    {"criteria_id": "price", "max_score": 20.0, "weight": 0.5, "requirement_text": "price evaluation"},
+                ],
+            },
+        }
+    )
     return s
 
 
@@ -69,6 +74,7 @@ def _initial_state(*, force_hitl: bool = False) -> EvaluationState:
 # ---------------------------------------------------------------------------
 # Individual node tests
 # ---------------------------------------------------------------------------
+
 
 class TestNodeLoadContext:
     def test_loads_rule_pack_and_criteria(self, store):
@@ -197,6 +203,7 @@ class TestNodePersistResult:
 # Sequential pipeline
 # ---------------------------------------------------------------------------
 
+
 class TestRunSequentially:
     def test_full_pipeline_produces_report(self, store):
         state = _initial_state()
@@ -236,6 +243,7 @@ class TestRunSequentially:
 # ---------------------------------------------------------------------------
 # P1-8: Dynamic model_stability
 # ---------------------------------------------------------------------------
+
 
 class TestComputeModelStability:
     def test_uniform_scores_high_stability(self):
@@ -278,6 +286,7 @@ class TestComputeModelStability:
 # P1-9: Merge edited_scores from resume
 # ---------------------------------------------------------------------------
 
+
 class TestFinalizeReportEditedScores:
     def test_edited_scores_merged(self, store):
         state = _initial_state()
@@ -291,9 +300,7 @@ class TestFinalizeReportEditedScores:
         updates = node_finalize_report(state, store=store)
         report = updates["report"]
 
-        quality_cr = next(
-            cr for cr in report["criteria_results"] if cr["criteria_id"] == "quality"
-        )
+        quality_cr = next(cr for cr in report["criteria_results"] if cr["criteria_id"] == "quality")
         assert quality_cr["score"] == 99.0
         assert quality_cr["human_edited"] is True
 
@@ -305,18 +312,12 @@ class TestFinalizeReportEditedScores:
         state.update(node_score_with_llm(state, store=store))
         state.update(node_quality_gate(state, store=store))
 
-        original_price = next(
-            cr["score"]
-            for cr in state["criteria_results"]
-            if cr["criteria_id"] == "price"
-        )
+        original_price = next(cr["score"] for cr in state["criteria_results"] if cr["criteria_id"] == "price")
         state["resume_payload"] = {"edited_scores": {"quality": 50.0}}
         updates = node_finalize_report(state, store=store)
         report = updates["report"]
 
-        price_cr = next(
-            cr for cr in report["criteria_results"] if cr["criteria_id"] == "price"
-        )
+        price_cr = next(cr for cr in report["criteria_results"] if cr["criteria_id"] == "price")
         assert price_cr["score"] == original_price
         assert price_cr.get("human_edited") is not True
 

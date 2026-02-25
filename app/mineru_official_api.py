@@ -8,6 +8,7 @@ SSOT Alignment:
 - §5 字段标准化: text, type, page_idx, bbox
 - §10 错误码: DOC_PARSE_*, MINERU_*
 """
+
 from __future__ import annotations
 
 import io
@@ -28,6 +29,7 @@ MINERU_API_BASE = "https://mineru.net/api/v4"
 @dataclass
 class MineruApiConfig:
     """Configuration for MinerU Official API."""
+
     api_key: str
     api_base: str = MINERU_API_BASE
     timeout_s: float = 30.0
@@ -40,6 +42,7 @@ class MineruApiConfig:
 @dataclass
 class MineruContentItem:
     """MinerU content_list item aligned with SSOT §5.1."""
+
     text: str
     type: str
     page_idx: int

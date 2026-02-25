@@ -18,6 +18,7 @@ def test_mock_llm_is_enabled_by_default(monkeypatch):
     import importlib
 
     import app.mock_llm as mock_llm_module
+
     importlib.reload(mock_llm_module)
     assert mock_llm_module.MOCK_LLM_ENABLED is True
 

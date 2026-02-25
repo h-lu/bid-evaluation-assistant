@@ -1,4 +1,5 @@
 """Tests for S3ObjectStorage with mocked boto3."""
+
 import sys
 from unittest.mock import MagicMock, patch
 
@@ -22,6 +23,7 @@ def test_s3_put_object_with_worm_mode(mock_boto3):
     import importlib
 
     import app.object_storage as object_storage_module
+
     importlib.reload(object_storage_module)
 
     from app.object_storage import ObjectStorageConfig, S3ObjectStorage
@@ -66,6 +68,7 @@ def test_s3_worm_mode_skips_existing_object(mock_boto3):
     import importlib
 
     import app.object_storage as object_storage_module
+
     importlib.reload(object_storage_module)
 
     from app.object_storage import ObjectStorageConfig, S3ObjectStorage
@@ -109,6 +112,7 @@ def test_s3_get_presigned_url(mock_boto3):
     import importlib
 
     import app.object_storage as object_storage_module
+
     importlib.reload(object_storage_module)
 
     from app.object_storage import ObjectStorageConfig, S3ObjectStorage

@@ -720,6 +720,7 @@ class PostgresBackedStore(InMemoryStore):
 
     def _connect(self) -> Any:
         from app.store import _import_psycopg
+
         psycopg = _import_psycopg()
         return psycopg.connect(self._dsn)
 

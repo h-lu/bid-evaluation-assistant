@@ -171,7 +171,8 @@ def evaluate_dataset_ragas(
 
         try:
             r = faithfulness_metric.score(
-                user_input=s.query, response=s.generated_answer,
+                user_input=s.query,
+                response=s.generated_answer,
                 retrieved_contexts=ctxs,
             )
             faith_scores.append(float(r.value))
@@ -180,7 +181,8 @@ def evaluate_dataset_ragas(
 
         try:
             r = precision_metric.score(
-                user_input=s.query, reference=s.ground_truth_answer,
+                user_input=s.query,
+                reference=s.ground_truth_answer,
                 retrieved_contexts=ctxs,
             )
             prec_scores.append(float(r.value))
@@ -189,7 +191,8 @@ def evaluate_dataset_ragas(
 
         try:
             r = recall_metric.score(
-                user_input=s.query, retrieved_contexts=ctxs,
+                user_input=s.query,
+                retrieved_contexts=ctxs,
                 reference=s.ground_truth_answer,
             )
             rec_scores.append(float(r.value))
@@ -198,7 +201,8 @@ def evaluate_dataset_ragas(
 
         try:
             r = relevancy_metric.score(
-                user_input=s.query, response=s.generated_answer,
+                user_input=s.query,
+                response=s.generated_answer,
             )
             rel_scores.append(float(r.value))
         except Exception as exc:
@@ -294,11 +298,7 @@ def _precision_per_sample(sample: EvalSample) -> float:
     if not sample.retrieved_contexts:
         return 0.0
     gt_tokens = _tokenize(" ".join(sample.ground_truth_contexts))
-    relevant = sum(
-        1
-        for ctx in sample.retrieved_contexts
-        if _overlap_ratio(gt_tokens, _tokenize(ctx)) > 0.15
-    )
+    relevant = sum(1 for ctx in sample.retrieved_contexts if _overlap_ratio(gt_tokens, _tokenize(ctx)) > 0.15)
     return relevant / len(sample.retrieved_contexts)
 
 
@@ -381,9 +381,7 @@ def _citation_resolvable_per_sample(sample: EvalSample) -> float:
     if not sample.citations:
         return 1.0
     resolvable = sum(
-        1
-        for c in sample.citations
-        if c.get("chunk_id") and isinstance(c["chunk_id"], str) and c["chunk_id"].strip()
+        1 for c in sample.citations if c.get("chunk_id") and isinstance(c["chunk_id"], str) and c["chunk_id"].strip()
     )
     return resolvable / len(sample.citations)
 
@@ -487,23 +485,27 @@ def run_e2e_evaluation(
             text = source.get("text", "")
             if text:
                 retrieved_texts.append(text)
-            citation_objects.append({
-                "chunk_id": chunk_id,
-                "page": item.get("metadata", {}).get("page"),
-            })
+            citation_objects.append(
+                {
+                    "chunk_id": chunk_id,
+                    "page": item.get("metadata", {}).get("page"),
+                }
+            )
 
         generated_answer = sample.generated_answer
         if not generated_answer and retrieved_texts:
             generated_answer = " ".join(retrieved_texts[:3])
 
-        filled_samples.append(EvalSample(
-            query=sample.query,
-            ground_truth_answer=sample.ground_truth_answer,
-            ground_truth_contexts=sample.ground_truth_contexts,
-            retrieved_contexts=retrieved_texts or sample.retrieved_contexts,
-            generated_answer=generated_answer,
-            citations=citation_objects or sample.citations,
-        ))
+        filled_samples.append(
+            EvalSample(
+                query=sample.query,
+                ground_truth_answer=sample.ground_truth_answer,
+                ground_truth_contexts=sample.ground_truth_contexts,
+                retrieved_contexts=retrieved_texts or sample.retrieved_contexts,
+                generated_answer=generated_answer,
+                citations=citation_objects or sample.citations,
+            )
+        )
 
     return evaluate_dataset(
         filled_samples,

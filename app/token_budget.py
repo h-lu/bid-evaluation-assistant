@@ -28,6 +28,7 @@ def _get_encoder() -> Any:
     if not _encoder_loaded:
         try:
             import tiktoken
+
             _encoder = tiktoken.get_encoding("cl100k_base")
         except Exception:
             _encoder = None
@@ -150,8 +151,4 @@ def apply_report_budget(
 
 
 def _total_tokens(criteria_evidence: dict[str, list[dict[str, Any]]]) -> int:
-    return sum(
-        count_tokens(item.get("text", ""))
-        for ev_list in criteria_evidence.values()
-        for item in ev_list
-    )
+    return sum(count_tokens(item.get("text", "")) for ev_list in criteria_evidence.values() for item in ev_list)

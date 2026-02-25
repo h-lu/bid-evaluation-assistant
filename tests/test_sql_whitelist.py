@@ -30,6 +30,7 @@ def _seed_and_index_for_retrieval():
     # Also index to ChromaDB for retrieval
     try:
         from app.lightrag_service import index_chunks_to_collection
+
         index_chunks_to_collection(
             index_name="lightrag_tenant_a_prj_a",
             tenant_id="tenant_a",
@@ -42,9 +43,11 @@ def _seed_and_index_for_retrieval():
     except Exception:
         pass  # ChromaDB may not be available in all test environments
 
+
 # ---------------------------------------------------------------------------
 # validate_structured_filters
 # ---------------------------------------------------------------------------
+
 
 class TestValidateStructuredFilters:
     def test_valid_fields_pass(self):
@@ -63,10 +66,12 @@ class TestValidateStructuredFilters:
 
     def test_mixed_valid_and_invalid_raises(self):
         with pytest.raises(ValueError, match="non-whitelisted"):
-            validate_structured_filters({
-                "supplier_code": "SUP001",
-                "password": "secret",
-            })
+            validate_structured_filters(
+                {
+                    "supplier_code": "SUP001",
+                    "password": "secret",
+                }
+            )
 
     def test_non_dict_raises(self):
         with pytest.raises(ValueError, match="must be a dict"):
@@ -79,6 +84,7 @@ class TestValidateStructuredFilters:
 # ---------------------------------------------------------------------------
 # Seed helpers
 # ---------------------------------------------------------------------------
+
 
 def _seed_supplier(
     supplier_id: str,
@@ -126,6 +132,7 @@ def _seed_supplier(
 # ---------------------------------------------------------------------------
 # query_structured
 # ---------------------------------------------------------------------------
+
 
 class TestQueryStructured:
     def test_string_exact_match(self):
@@ -256,6 +263,7 @@ class TestQueryStructured:
 # Tenant isolation
 # ---------------------------------------------------------------------------
 
+
 class TestTenantIsolation:
     def test_cross_tenant_blocked(self):
         _seed_supplier("sup_ta", "tenant_a")
@@ -296,6 +304,7 @@ class TestTenantIsolation:
 # ---------------------------------------------------------------------------
 # Integration: merge with vector results in retrieval_query
 # ---------------------------------------------------------------------------
+
 
 class TestRetrievalIntegration:
     def test_structured_results_merge_with_vector_and_dedup(self):
@@ -369,6 +378,7 @@ class TestRetrievalIntegration:
 # ---------------------------------------------------------------------------
 # Nested qualification dict support
 # ---------------------------------------------------------------------------
+
 
 class TestNestedQualification:
     def test_qualification_in_nested_dict(self):

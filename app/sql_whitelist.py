@@ -9,26 +9,32 @@ from __future__ import annotations
 
 from typing import Any
 
-WHITELIST_FIELDS: frozenset[str] = frozenset({
-    "supplier_code",
-    "qualification_level",
-    "registered_capital",
-    "bid_price",
-    "delivery_period",
-    "warranty_period",
-})
+WHITELIST_FIELDS: frozenset[str] = frozenset(
+    {
+        "supplier_code",
+        "qualification_level",
+        "registered_capital",
+        "bid_price",
+        "delivery_period",
+        "warranty_period",
+    }
+)
 
-_NUMERIC_FIELDS: frozenset[str] = frozenset({
-    "registered_capital",
-    "bid_price",
-    "delivery_period",
-    "warranty_period",
-})
+_NUMERIC_FIELDS: frozenset[str] = frozenset(
+    {
+        "registered_capital",
+        "bid_price",
+        "delivery_period",
+        "warranty_period",
+    }
+)
 
-_STRING_FIELDS: frozenset[str] = frozenset({
-    "supplier_code",
-    "qualification_level",
-})
+_STRING_FIELDS: frozenset[str] = frozenset(
+    {
+        "supplier_code",
+        "qualification_level",
+    }
+)
 
 
 def validate_structured_filters(filters: dict[str, Any]) -> dict[str, Any]:
@@ -41,10 +47,7 @@ def validate_structured_filters(filters: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("structured_filters must be a dict")
     invalid = set(filters.keys()) - WHITELIST_FIELDS
     if invalid:
-        raise ValueError(
-            f"non-whitelisted fields: {sorted(invalid)}. "
-            f"Allowed: {sorted(WHITELIST_FIELDS)}"
-        )
+        raise ValueError(f"non-whitelisted fields: {sorted(invalid)}. Allowed: {sorted(WHITELIST_FIELDS)}")
     return dict(filters)
 
 
@@ -149,20 +152,22 @@ def query_structured(
         if chunk_id in seen_chunk_ids:
             continue
         seen_chunk_ids.add(chunk_id)
-        candidates.append({
-            "chunk_id": chunk_id,
-            "score_raw": 1.0,
-            "reason": "structured_match",
-            "metadata": {
-                "tenant_id": source.get("tenant_id"),
-                "project_id": source.get("project_id"),
-                "supplier_id": source.get("supplier_id"),
-                "document_id": source.get("document_id"),
-                "doc_type": source.get("doc_type"),
-                "page": int(source.get("page", 1)),
-                "bbox": source.get("bbox", [0, 0, 1, 1]),
-            },
-        })
+        candidates.append(
+            {
+                "chunk_id": chunk_id,
+                "score_raw": 1.0,
+                "reason": "structured_match",
+                "metadata": {
+                    "tenant_id": source.get("tenant_id"),
+                    "project_id": source.get("project_id"),
+                    "supplier_id": source.get("supplier_id"),
+                    "document_id": source.get("document_id"),
+                    "doc_type": source.get("doc_type"),
+                    "page": int(source.get("page", 1)),
+                    "bbox": source.get("bbox", [0, 0, 1, 1]),
+                },
+            }
+        )
 
     for doc_id, chunks in store.document_chunks.items():
         doc = store.documents.get(doc_id, {})
@@ -185,19 +190,21 @@ def query_structured(
                 bbox_raw = first.get("bbox")
                 if isinstance(bbox_raw, list) and len(bbox_raw) == 4:
                     bbox = bbox_raw
-            candidates.append({
-                "chunk_id": cid,
-                "score_raw": 1.0,
-                "reason": "structured_match",
-                "metadata": {
-                    "tenant_id": tenant_id,
-                    "project_id": project_id,
-                    "supplier_id": doc.get("supplier_id"),
-                    "document_id": doc_id,
-                    "doc_type": doc.get("doc_type"),
-                    "page": page,
-                    "bbox": bbox,
-                },
-            })
+            candidates.append(
+                {
+                    "chunk_id": cid,
+                    "score_raw": 1.0,
+                    "reason": "structured_match",
+                    "metadata": {
+                        "tenant_id": tenant_id,
+                        "project_id": project_id,
+                        "supplier_id": doc.get("supplier_id"),
+                        "document_id": doc_id,
+                        "doc_type": doc.get("doc_type"),
+                        "page": page,
+                        "bbox": bbox,
+                    },
+                }
+            )
 
     return candidates

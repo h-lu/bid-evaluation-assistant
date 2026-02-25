@@ -17,8 +17,12 @@ from app.token_budget import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_evidence(
-    n: int, text_len: int = 200, base_score: float = 0.5, doc_id: str | None = None,
+    n: int,
+    text_len: int = 200,
+    base_score: float = 0.5,
+    doc_id: str | None = None,
 ) -> list[dict]:
     return [
         {
@@ -35,6 +39,7 @@ def _make_evidence(
 # ---------------------------------------------------------------------------
 # count_tokens
 # ---------------------------------------------------------------------------
+
 
 class TestCountTokens:
     def test_empty_string(self):
@@ -57,6 +62,7 @@ class TestCountTokens:
 # ---------------------------------------------------------------------------
 # trim_evidence_to_budget
 # ---------------------------------------------------------------------------
+
 
 class TestTrimEvidence:
     def test_empty_list(self):
@@ -92,6 +98,7 @@ class TestTrimEvidence:
 # ---------------------------------------------------------------------------
 # apply_report_budget
 # ---------------------------------------------------------------------------
+
 
 class TestApplyReportBudget:
     def test_within_budget(self):
@@ -133,6 +140,7 @@ class TestApplyReportBudget:
 # ---------------------------------------------------------------------------
 # _dedup_by_document (P1-6: redundant source trimming)
 # ---------------------------------------------------------------------------
+
 
 class TestDedupByDocument:
     def test_removes_duplicates_keeps_highest(self):

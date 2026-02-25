@@ -9,6 +9,7 @@ API Format:
 - Submit: POST /extract/task → {"data": {"task_id": "..."}}
 - Poll: GET /extract/task/{task_id} → {"data": {"state": "done", "full_zip_url": "..."}}
 """
+
 from __future__ import annotations
 
 import io
@@ -265,6 +266,7 @@ class TestMinerUContentFormat:
 
         if content_list_files:
             import json as json_lib
+
             content_list = json_lib.loads(content[content_list_files[0]])
 
             # Verify structure matches our expected format

@@ -12,16 +12,15 @@ from app.reranker import _rerank_api, _rerank_simple, _sigmoid, _tokenize, reran
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 def _make_items(n: int = 5) -> list[dict]:
-    return [
-        {"chunk_id": f"ck_{i}", "score_raw": round(0.3 + 0.1 * i, 2), "text": f"chunk text {i}"}
-        for i in range(n)
-    ]
+    return [{"chunk_id": f"ck_{i}", "score_raw": round(0.3 + 0.1 * i, 2), "text": f"chunk text {i}"} for i in range(n)]
 
 
 # ---------------------------------------------------------------------------
 # _sigmoid
 # ---------------------------------------------------------------------------
+
 
 class TestSigmoid:
     def test_zero(self):
@@ -40,6 +39,7 @@ class TestSigmoid:
 # ---------------------------------------------------------------------------
 # _tokenize (CJK-aware)
 # ---------------------------------------------------------------------------
+
 
 class TestTokenize:
     def test_english_words(self):
@@ -62,6 +62,7 @@ class TestTokenize:
 # ---------------------------------------------------------------------------
 # simple backend (TF-IDF)
 # ---------------------------------------------------------------------------
+
 
 class TestSimpleBackend:
     def test_adds_score_rerank(self):
@@ -123,6 +124,7 @@ class TestSimpleBackend:
 # rerank_items dispatcher
 # ---------------------------------------------------------------------------
 
+
 class TestRerankItems:
     def test_empty_input(self):
         assert rerank_items("q", []) == []
@@ -152,6 +154,7 @@ class TestRerankItems:
 
     def test_cross_encoder_falls_back_when_not_installed(self, monkeypatch):
         import app.reranker as mod
+
         monkeypatch.setattr(mod, "_cross_encoder_cache", {})
         items = _make_items(3)
         result = rerank_items("q", items, backend="cross-encoder")
@@ -162,6 +165,7 @@ class TestRerankItems:
 # ---------------------------------------------------------------------------
 # API rerank backends (Cohere / Jina)
 # ---------------------------------------------------------------------------
+
 
 class _FakeResponse:
     status_code = 200
@@ -180,13 +184,15 @@ class TestRerankApi:
     def test_cohere_api_rerank_success(self, monkeypatch):
         monkeypatch.setenv("COHERE_API_KEY", "test-key")
         items = _make_items(3)
-        fake_resp = _FakeResponse({
-            "results": [
-                {"index": 2, "relevance_score": 0.95},
-                {"index": 0, "relevance_score": 0.80},
-                {"index": 1, "relevance_score": 0.60},
-            ]
-        })
+        fake_resp = _FakeResponse(
+            {
+                "results": [
+                    {"index": 2, "relevance_score": 0.95},
+                    {"index": 0, "relevance_score": 0.80},
+                    {"index": 1, "relevance_score": 0.60},
+                ]
+            }
+        )
         with mock.patch("httpx.post", return_value=fake_resp) as mock_post:
             result = _rerank_api("test query", items, backend="cohere")
 
@@ -202,12 +208,14 @@ class TestRerankApi:
     def test_jina_api_rerank_success(self, monkeypatch):
         monkeypatch.setenv("JINA_API_KEY", "test-key")
         items = _make_items(2)
-        fake_resp = _FakeResponse({
-            "results": [
-                {"index": 1, "relevance_score": 0.9},
-                {"index": 0, "relevance_score": 0.3},
-            ]
-        })
+        fake_resp = _FakeResponse(
+            {
+                "results": [
+                    {"index": 1, "relevance_score": 0.9},
+                    {"index": 0, "relevance_score": 0.3},
+                ]
+            }
+        )
         with mock.patch("httpx.post", return_value=fake_resp) as mock_post:
             result = _rerank_api("query", items, backend="jina")
 
@@ -234,12 +242,14 @@ class TestRerankApi:
         monkeypatch.setenv("JINA_API_KEY", "test-key")
         monkeypatch.setenv("JINA_RERANK_MODEL", "jina-reranker-v3-custom")
         items = _make_items(2)
-        fake_resp = _FakeResponse({
-            "results": [
-                {"index": 0, "relevance_score": 0.5},
-                {"index": 1, "relevance_score": 0.4},
-            ]
-        })
+        fake_resp = _FakeResponse(
+            {
+                "results": [
+                    {"index": 0, "relevance_score": 0.5},
+                    {"index": 1, "relevance_score": 0.4},
+                ]
+            }
+        )
         with mock.patch("httpx.post", return_value=fake_resp) as mock_post:
             _rerank_api("q", items, backend="jina")
         assert mock_post.call_args.kwargs["json"]["model"] == "jina-reranker-v3-custom"
@@ -247,12 +257,14 @@ class TestRerankApi:
     def test_rerank_items_dispatches_to_api(self, monkeypatch):
         monkeypatch.setenv("COHERE_API_KEY", "test-key")
         items = _make_items(2)
-        fake_resp = _FakeResponse({
-            "results": [
-                {"index": 0, "relevance_score": 0.8},
-                {"index": 1, "relevance_score": 0.6},
-            ]
-        })
+        fake_resp = _FakeResponse(
+            {
+                "results": [
+                    {"index": 0, "relevance_score": 0.8},
+                    {"index": 1, "relevance_score": 0.6},
+                ]
+            }
+        )
         with mock.patch("httpx.post", return_value=fake_resp):
             result = rerank_items("q", items, backend="cohere")
         assert len(result) == 2

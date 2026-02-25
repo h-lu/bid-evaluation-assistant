@@ -3,6 +3,7 @@
 These tests verify the adapter implementation and SSOT alignment.
 Integration tests that call the real API are in test_mineru_official_api.py.
 """
+
 from __future__ import annotations
 
 import json
@@ -209,12 +210,12 @@ class TestMineruOfficialApiAdapter:
     def test_extract_content_list_priority(self, adapter):
         """Content list extraction follows SSOT §2.3 priority."""
         content = {
-            "output_content_list.json": json.dumps([
-                {"text": "priority 1", "type": "text", "page_idx": 0, "bbox": [0, 0, 100, 100]}
-            ]),
-            "context_list.json": json.dumps([
-                {"text": "priority 2", "type": "text", "page_idx": 0, "bbox": [0, 0, 100, 100]}
-            ]),
+            "output_content_list.json": json.dumps(
+                [{"text": "priority 1", "type": "text", "page_idx": 0, "bbox": [0, 0, 100, 100]}]
+            ),
+            "context_list.json": json.dumps(
+                [{"text": "priority 2", "type": "text", "page_idx": 0, "bbox": [0, 0, 100, 100]}]
+            ),
         }
 
         items = adapter._extract_content_list(content)
@@ -226,9 +227,9 @@ class TestMineruOfficialApiAdapter:
     def test_extract_content_list_fallback_to_context(self, adapter):
         """Fallback to context_list.json if no content_list."""
         content = {
-            "context_list.json": json.dumps([
-                {"text": "fallback", "type": "text", "page_idx": 0, "bbox": [0, 0, 100, 100]}
-            ]),
+            "context_list.json": json.dumps(
+                [{"text": "fallback", "type": "text", "page_idx": 0, "bbox": [0, 0, 100, 100]}]
+            ),
         }
 
         items = adapter._extract_content_list(content)
@@ -277,9 +278,17 @@ class TestMineruOfficialApiAdapter:
         mock_client.submit_task.return_value = "task_123"
         mock_client.poll_until_complete.return_value = "https://cdn.example.com/result.zip"
         mock_client.download_and_extract_zip.return_value = {
-            "output_content_list.json": json.dumps([
-                {"text": "Extracted text", "type": "text", "page_idx": 0, "bbox": [100, 200, 300, 400], "text_level": 1}
-            ]),
+            "output_content_list.json": json.dumps(
+                [
+                    {
+                        "text": "Extracted text",
+                        "type": "text",
+                        "page_idx": 0,
+                        "bbox": [100, 200, 300, 400],
+                        "text_level": 1,
+                    }
+                ]
+            ),
             "full.md": "# Document\nExtracted text",
         }
         adapter._client = mock_client
@@ -354,13 +363,15 @@ class TestGetMineruOfficialAdapter:
         """Adapter uses environment configuration."""
         from app.parser_adapters import get_mineru_official_adapter
 
-        adapter = get_mineru_official_adapter(env={
-            "MINERU_API_KEY": "key",
-            "MINERU_TIMEOUT_S": "60",
-            "MINERU_MAX_POLL_TIME_S": "300",
-            "MINERU_IS_OCR": "false",
-            "MINERU_ENABLE_FORMULA": "true",
-        })
+        adapter = get_mineru_official_adapter(
+            env={
+                "MINERU_API_KEY": "key",
+                "MINERU_TIMEOUT_S": "60",
+                "MINERU_MAX_POLL_TIME_S": "300",
+                "MINERU_IS_OCR": "false",
+                "MINERU_ENABLE_FORMULA": "true",
+            }
+        )
 
         assert adapter is not None
         assert adapter._config.timeout_s == 60.0

@@ -23,18 +23,16 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 RERANK_BACKEND = os.environ.get("RERANK_BACKEND", "simple").strip().lower()
-RERANK_MODEL_NAME = os.environ.get(
-    "RERANK_MODEL_NAME", "cross-encoder/ms-marco-MiniLM-L-6-v2"
-)
+RERANK_MODEL_NAME = os.environ.get("RERANK_MODEL_NAME", "cross-encoder/ms-marco-MiniLM-L-6-v2")
 RERANK_TOP_K = int(os.environ.get("RERANK_TOP_K", "0"))
 RERANK_TIMEOUT_MS = int(os.environ.get("RERANK_TIMEOUT_MS", "2000"))
 
 _cross_encoder_cache: dict[str, Any] = {}
 
 _CJK_RANGES = (
-    "\u4e00-\u9fff"    # CJK Unified Ideographs
-    "\u3400-\u4dbf"    # CJK Unified Ideographs Extension A
-    "\uf900-\ufaff"    # CJK Compatibility Ideographs
+    "\u4e00-\u9fff"  # CJK Unified Ideographs
+    "\u3400-\u4dbf"  # CJK Unified Ideographs Extension A
+    "\uf900-\ufaff"  # CJK Compatibility Ideographs
 )
 _TOKENIZE_RE = re.compile(
     rf"[{_CJK_RANGES}]|[a-zA-Z0-9]+",
@@ -71,6 +69,7 @@ def rerank_items(
 # Tokenisation (CJK-aware)
 # ---------------------------------------------------------------------------
 
+
 def _tokenize(text: str) -> list[str]:
     """Split text into tokens: each CJK character is its own token,
     contiguous Latin/digit sequences form a single token. Lowercased."""
@@ -80,6 +79,7 @@ def _tokenize(text: str) -> list[str]:
 # ---------------------------------------------------------------------------
 # Backends
 # ---------------------------------------------------------------------------
+
 
 def _rerank_simple(query: str, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """TF-IDF style reranker: ``score_rerank = 0.4 * tfidf + 0.6 * score_raw``."""
@@ -114,10 +114,7 @@ def _rerank_simple(query: str, items: list[dict[str, Any]]) -> list[dict[str, An
                 tf = doc_tf[term] / len(doc_tokens)
                 idf = math.log((n_docs + 1) / (df.get(term, 0) + 1)) + 1.0
                 score_sum += q_count * tf * idf
-            max_possible = sum(
-                q * (1.0 * (math.log((n_docs + 1) / 2) + 1.0))
-                for q in query_tf.values()
-            )
+            max_possible = sum(q * (1.0 * (math.log((n_docs + 1) / 2) + 1.0)) for q in query_tf.values())
             tfidf_score = score_sum / max_possible if max_possible > 0 else 0.0
 
         score_raw = float(item.get("score_raw", 0.5))
@@ -165,9 +162,7 @@ def _rerank_cross_encoder(query: str, items: list[dict[str, Any]]) -> list[dict[
     return sorted(ranked, key=lambda x: float(x.get("score_rerank", 0.0)), reverse=True)
 
 
-def _rerank_api(
-    query: str, items: list[dict[str, Any]], *, backend: str = "cohere"
-) -> list[dict[str, Any]]:
+def _rerank_api(query: str, items: list[dict[str, Any]], *, backend: str = "cohere") -> list[dict[str, Any]]:
     """API-based rerankers via Cohere or Jina.
 
     Env vars:
@@ -195,7 +190,8 @@ def _rerank_api(
     if not api_key:
         logger.warning(
             "No API key for %s reranker (set %s_API_KEY); falling back to simple",
-            backend, backend.upper(),
+            backend,
+            backend.upper(),
         )
         return _rerank_simple(query, items)
 
@@ -246,6 +242,7 @@ def _rerank_api(
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _sigmoid(x: float) -> float:
     if x >= 0:
         return 1.0 / (1.0 + math.exp(-x))
@@ -256,5 +253,6 @@ def _sigmoid(x: float) -> float:
 def _get_cross_encoder(model_name: str) -> Any:
     if model_name not in _cross_encoder_cache:
         from sentence_transformers import CrossEncoder
+
         _cross_encoder_cache[model_name] = CrossEncoder(model_name)
     return _cross_encoder_cache[model_name]

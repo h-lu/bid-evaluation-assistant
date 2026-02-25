@@ -144,6 +144,7 @@ class StoreParseMixin:
         except Exception:
             # MinerU Official API failed, return None to fall back to local parsing
             return None
+
     @staticmethod
     def _select_parser(*, filename: str, doc_type: str | None) -> ParseRoute:
         return select_parse_route(filename=filename, doc_type=doc_type)
